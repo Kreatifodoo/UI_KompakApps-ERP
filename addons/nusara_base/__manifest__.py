@@ -11,6 +11,7 @@
         "purchase",
         "sale_management",
         "stock",
+        "product_expiry",  # tanggal kedaluwarsa pada lot dan penarikan FEFO
         # OCA (purchase-workflow)
         "purchase_request",
         # OCA akuntansi: Community tidak membawa laporan keuangan, aset, atau rekonsiliasi bank.

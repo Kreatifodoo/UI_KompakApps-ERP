@@ -3,7 +3,7 @@
 // di tabel itu adalah yang dipakai otomatis oleh RFQ.
 import {
   ACCOUNT_TYPE_LABELS, INPUT, app, call, cell, changedValues, chatterHtml, checkboxField, closeLookup, esc, fieldBlock, fieldValue, filterSelect,
-  guarded, loadMessages, money, pageHeader, readOne, referenceCategories, referenceDefaultCategories, referenceSelection, referenceTaxes,
+  guarded, hasGroup, loadMessages, money, pageHeader, readOne, referenceCategories, referenceDefaultCategories, referenceSelection, referenceTaxes,
   referenceUoms, registerLookup, rowLink, runLookup, searchAccounts, searchBox, searchRead, selectOptions, statTiles, table, toast, button,
 } from "../common.js";
 
@@ -11,13 +11,21 @@ const FILTERS = [["purchase", "Dapat dibeli"], ["sale", "Dapat dijual"], ["all",
 const FIELDS = [
   "name", "type", "is_storable", "sale_ok", "purchase_ok", "purchase_request", "uom_id", "default_code", "barcode", "categ_id", "list_price",
   "standard_price", "taxes_id", "supplier_taxes_id", "purchase_method", "description_purchase", "description_sale",
-  "property_account_expense_id", "property_account_income_id",
+  "property_account_expense_id", "property_account_income_id", "tracking", "use_expiration_date", "expiration_time", "use_time", "removal_time", "alert_time",
 ];
 // Akun yang menimpa akun kategori; kosong berarti mengikuti kategori.
 const ACCOUNT_KEYS = {
   property_account_expense_id: { label: "Akun Beban", types: ["expense", "expense_direct_cost", "expense_other", "asset_fixed", "asset_current"] },
   property_account_income_id: { label: "Akun Pendapatan", types: ["income", "income_other"] },
 };
+const TRACKING_LABELS = { none: "Berdasarkan jumlah", lot: "Berdasarkan lot", serial: "Berdasarkan nomor seri" };
+// Waktu kedaluwarsa dihitung dari tanggal lot dibuat; tiga lainnya adalah hari sebelum tanggal kedaluwarsa.
+const EXPIRY_KEYS = [
+  ["expiration_time", "Masa Kedaluwarsa (hari sejak diterima)"],
+  ["use_time", "Terbaik Sebelum (hari sebelum kedaluwarsa)"],
+  ["removal_time", "Tarik dari Stok (hari sebelum kedaluwarsa)"],
+  ["alert_time", "Peringatan (hari sebelum kedaluwarsa)"],
+];
 const VALUATION = { periodic: "periodik", real_time: "perpetual" };
 const COSTING = { standard: "harga standar", fifo: "FIFO", average: "rata-rata (AVCO)" };
 const TEXT_KEYS = ["name", "default_code", "barcode", "description_purchase", "description_sale"];
@@ -60,6 +68,9 @@ const normalize = (record) => {
   for (const key of ID_KEYS) values[key] = Array.isArray(record[key]) ? record[key][0] : record[key] || null;
   for (const key of ["is_storable", "sale_ok", "purchase_ok", "purchase_request"]) values[key] = Boolean(record[key]);
   values.type = record.type || "consu";
+  values.tracking = record.tracking || "none";
+  values.use_expiration_date = Boolean(record.use_expiration_date);
+  for (const [key] of EXPIRY_KEYS) values[key] = record[key] ?? 0;
   values.purchase_method = record.purchase_method || "receive";
   values.list_price = record.list_price ?? 0;
   values.standard_price = record.standard_price ?? 0;
@@ -174,13 +185,40 @@ function accountingNote(v, category) {
   return { tone: "info", html: `Barang tidak dilacak stoknya atau jasa: tagihan vendor mendebit <b>${esc(expense)}</b>.` };
 }
 
+/** Pelacakan lot atau nomor seri dan masa kedaluwarsa; hanya untuk barang yang dilacak stoknya. */
+function trackingSection(v, product, lotsOn) {
+  if (!(v.type === "consu" && v.is_storable)) return "";
+  const options = Object.entries(TRACKING_LABELS)
+    .map(([k, label]) => `<option value="${k}" ${k === v.tracking ? "selected" : ""} ${k !== "none" && !lotsOn && k !== v.tracking ? "disabled" : ""}>${esc(label)}</option>`)
+    .join("");
+  const warnings = [];
+  if (!lotsOn) warnings.push('Fitur Lots &amp; Serial Numbers belum aktif. Aktifkan di <a href="#/warehouse" class="underline">Warehouse &amp; Location Master</a> agar bisa memilih lot atau nomor seri.');
+  if (product && product.qty_available > 0 && v.tracking !== product.tracking) {
+    warnings.push(`Produk ini sudah punya stok (${esc(product.qty_available)}). Stok lama tetap tanpa lot sampai dihitung ulang lewat <a href="#/count" class="underline">Physical Inventory</a> dengan nomor lot.`);
+  }
+  const expiry =
+    v.tracking !== "none"
+      ? `${checkboxField("use_expiration_date", "Pakai tanggal kedaluwarsa", v.use_expiration_date)}`
+      : "";
+  const times =
+    v.tracking !== "none" && v.use_expiration_date
+      ? EXPIRY_KEYS.map(([key, label]) => fieldBlock(label, `<input type="number" min="0" step="1" data-value="${key}" data-kind="number" value="${esc(v[key])}" class="${INPUT}">`)).join("")
+      : "";
+  return `<div class="md:col-span-2 border-t border-gray-100 pt-4 text-sm font-semibold text-gray-700">Pelacakan</div>
+    ${fieldBlock("Lacak Stok", `<select data-value="tracking" class="${INPUT}">${options}</select>`)}
+    <div class="flex items-end pb-2">${expiry}</div>
+    ${times}
+    ${warnings.map((w) => `<p class="md:col-span-2 text-sm rounded-lg px-4 py-3 border text-amber-900 bg-amber-50 border-amber-200">${w}</p>`).join("")}`;
+}
+
 async function renderForm(id) {
   closeLookup();
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
-  const [uoms, categories, saleTaxes, purchaseTaxes, typeOptions, policyOptions, defaults, categoryDetails] = await Promise.all([
+  const [uoms, categories, saleTaxes, purchaseTaxes, typeOptions, policyOptions, defaults, categoryDetails, lotsOn] = await Promise.all([
     referenceUoms(), referenceCategories(), referenceTaxes("sale"), referenceTaxes("purchase"),
     referenceSelection("product.template", "type"), referenceSelection("product.template", "purchase_method"), referenceDefaultCategories(),
     searchRead("product.category", [], ["display_name", "property_valuation", "property_cost_method", "property_stock_valuation_account_id", "property_account_expense_categ_id"]),
+    hasGroup("stock.group_production_lot"),
   ]);
   let product = null;
   let sellers = [];
@@ -246,6 +284,7 @@ async function renderForm(id) {
       ${fieldBlock("Kode Internal", input("default_code"))}
       ${fieldBlock("Barcode", input("barcode"))}
       ${fieldBlock("Kategori Produk", `<select data-value="categ_id" data-kind="id" class="${INPUT}">${selectOptions(categories, v.categ_id, "-")}</select>`)}
+      ${trackingSection(v, product, lotsOn)}
       <div class="md:col-span-2 border-t border-gray-100 pt-4 text-sm font-semibold text-gray-700">Harga dan Pajak</div>
       ${fieldBlock("Harga Jual", number("list_price"))}
       ${fieldBlock("Biaya", number("standard_price"))}
@@ -279,6 +318,18 @@ async function persist() {
   if (!(Number(v.standard_price) >= 0)) throw new Error("Biaya tidak boleh negatif.");
   if (form.pending.size) throw new Error("Pilih akun dari kotak saran, atau kosongkan isiannya.");
   if (v.type !== "consu") v.is_storable = false;
+  if (!v.is_storable) {
+    v.tracking = "none";
+    v.use_expiration_date = false;
+  }
+  if (v.tracking === "none") v.use_expiration_date = false;
+  if (v.use_expiration_date) {
+    for (const [key, label] of EXPIRY_KEYS) {
+      if (v[key] === "") v[key] = 0;
+      if (!(Number.isInteger(Number(v[key])) && Number(v[key]) >= 0)) throw new Error(`${label}: isi bilangan bulat, 0 atau lebih.`);
+    }
+    if (!(Number(v.expiration_time) > 0)) throw new Error("Isi masa kedaluwarsa (hari), minimal 1. Dengan 0, barang langsung kedaluwarsa saat diterima.");
+  }
   const current = flat(v);
   if (!form.id) {
     const vals = {};
@@ -352,7 +403,7 @@ export async function onChange(event, el) {
   form.values[key] = fieldValue(el);
   if (key === "categ_id") form.categTouched = true;
   // Perubahan yang mengubah tata letak atau ringkasan akuntansi: tipe, lacak stok, kategori, dapat dibeli/dijual.
-  if (["type", "purchase_ok", "sale_ok", "is_storable", "categ_id"].includes(key)) {
+  if (["type", "purchase_ok", "sale_ok", "is_storable", "categ_id", "tracking", "use_expiration_date"].includes(key)) {
     if (key === "type") {
       if (form.values.type !== "consu") form.values.is_storable = false;
       if (!form.id) {

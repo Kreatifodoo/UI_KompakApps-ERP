@@ -18,14 +18,29 @@ export const leave = () => {
 const reload = () => render(last.sub, last.query);
 
 registerLookup("scrap-product", {
-  search: (q) => searchRead("product.product", [["is_storable", "=", true], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name", "uom_id"], { limit: 10, order: "name" }),
-  sub: (r) => r.uom_id?.[1] ?? "",
+  search: (q) => searchRead("product.product", [["is_storable", "=", true], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name", "uom_id", "tracking"], { limit: 10, order: "name" }),
+  sub: (r) => (r.tracking === "lot" ? "Lot" : r.tracking === "serial" ? "Nomor seri" : r.uom_id?.[1] ?? ""),
   isChosen: (input) => form?.product?.display_name === input.value,
   choose: (input, item) => {
+    const wasTracked = form.product?.tracking && form.product.tracking !== "none";
     form.product = item;
+    form.lot = null;
     input.value = item.display_name;
+    if (wasTracked || item.tracking !== "none") reload(); // pilihan lot bergantung pada produk
   },
 });
+
+const isTracked = (product) => Boolean(product?.tracking) && product.tracking !== "none";
+
+/** Lot yang punya stok di lokasi asal, untuk dipilih pada produk berlacak. */
+async function lotChoices(product, location) {
+  const quants = await searchRead(
+    "stock.quant", [["product_id", "=", product.id], ["location_id", "child_of", location], ["lot_id", "!=", false], ["quantity", ">", 0]], ["lot_id", "quantity"], { limit: 200 },
+  );
+  const byLot = new Map();
+  for (const q of quants) byLot.set(q.lot_id[0], { id: q.lot_id[0], display_name: `${q.lot_id[1]} (${nf.format((byLot.get(q.lot_id[0])?.qty ?? 0) + q.quantity)} tersedia)`, qty: (byLot.get(q.lot_id[0])?.qty ?? 0) + q.quantity });
+  return [...byLot.values()];
+}
 
 async function references() {
   refs ??= {
@@ -71,7 +86,7 @@ async function renderForm(id) {
   const r = await references();
   let scrap = null;
   if (id) {
-    scrap = await readOne("stock.scrap", id, ["name", "state", "product_id", "scrap_qty", "product_uom_id", "location_id", "scrap_location_id", "origin", "date_done", "scrap_reason_tag_ids"]);
+    scrap = await readOne("stock.scrap", id, ["name", "state", "product_id", "scrap_qty", "product_uom_id", "location_id", "scrap_location_id", "origin", "date_done", "lot_id"]);
     if (!scrap) {
       app.innerHTML = '<p class="text-sm text-rose-600">Scrap tidak ditemukan.</p>';
       return;
@@ -79,19 +94,22 @@ async function renderForm(id) {
   }
   const editable = !scrap || scrap.state === "draft";
   if (editable && (!form || form.id !== (scrap?.id ?? null))) {
+    const [tracking] = scrap ? await searchRead("product.product", [["id", "=", scrap.product_id[0]]], ["tracking"], { limit: 1 }) : [];
     form = scrap
-      ? { id: scrap.id, product: { id: scrap.product_id[0], display_name: scrap.product_id[1], uom_id: scrap.product_uom_id }, qty: scrap.scrap_qty, location: scrap.location_id[0], scrapLocation: scrap.scrap_location_id[0], origin: scrap.origin || "" }
-      : { id: null, product: null, qty: "", location: r.internal[0]?.id ?? null, scrapLocation: r.scrap[0]?.id ?? null, origin: "" };
+      ? { id: scrap.id, product: { id: scrap.product_id[0], display_name: scrap.product_id[1], uom_id: scrap.product_uom_id, tracking: tracking?.tracking ?? "none" }, qty: scrap.scrap_qty, location: scrap.location_id[0], scrapLocation: scrap.scrap_location_id[0], origin: scrap.origin || "", lot: scrap.lot_id?.[0] ?? null }
+      : { id: null, product: null, qty: "", location: r.internal[0]?.id ?? null, scrapLocation: r.scrap[0]?.id ?? null, origin: "", lot: null };
   }
   const f = form;
+  const choices = editable && isTracked(f.product) ? await lotChoices(f.product, f.location) : [];
   const fields = editable
     ? `${fieldBlock("Produk", `<input data-lookup="scrap-product" autocomplete="off" role="combobox" aria-autocomplete="list" value="${esc(f.product?.display_name ?? "")}" placeholder="Cari produk yang dilacak stoknya..." class="${INPUT}">`)}
        ${fieldBlock("Jumlah", `<input type="number" min="0" step="any" data-scrap="qty" value="${esc(f.qty)}" class="${INPUT} text-right">`)}
        ${fieldBlock("Dari Lokasi", `<select data-scrap="location" class="${INPUT}">${selectOptions(r.internal, f.location)}</select>`)}
+       ${isTracked(f.product) ? fieldBlock(f.product.tracking === "serial" ? "Nomor Seri" : "Lot", `<select data-scrap="lot" class="${INPUT}">${selectOptions(choices, f.lot, "Pilih...")}</select>`) : ""}
        ${fieldBlock("Lokasi Scrap", `<select data-scrap="scrapLocation" class="${INPUT}">${selectOptions(r.scrap, f.scrapLocation)}</select>`)}
        ${fieldBlock("Dokumen Sumber", `<input data-scrap="origin" value="${esc(f.origin)}" class="${INPUT}">`)}`
     : `${fieldBlock("Produk", readonlyValue(scrap.product_id[1]))}${fieldBlock("Jumlah", readonlyValue(`${nf.format(scrap.scrap_qty)} ${scrap.product_uom_id?.[1] ?? ""}`))}
-       ${fieldBlock("Dari Lokasi", readonlyValue(scrap.location_id[1]))}${fieldBlock("Lokasi Scrap", readonlyValue(scrap.scrap_location_id[1]))}
+       ${fieldBlock("Dari Lokasi", readonlyValue(scrap.location_id[1]))}${scrap.lot_id ? fieldBlock("Lot/Serial", readonlyValue(scrap.lot_id[1])) : ""}${fieldBlock("Lokasi Scrap", readonlyValue(scrap.scrap_location_id[1]))}
        ${fieldBlock("Dokumen Sumber", readonlyValue(scrap.origin))}${fieldBlock("Tanggal", readonlyValue(scrap.date_done ? dateTimeText(scrap.date_done) : ""))}`;
   app.innerHTML = `
     <div class="text-sm text-gray-500 mb-2"><a href="#/scrap" class="hover:text-indigo-600">Scrap</a> / ${esc(scrap?.name ?? "Baru")}</div>
@@ -111,7 +129,8 @@ async function persist() {
   const qty = Number(f.qty);
   if (!(qty > 0)) throw new Error("Jumlah harus lebih dari 0.");
   if (!f.location || !f.scrapLocation) throw new Error("Pilih lokasi asal dan lokasi scrap.");
-  const vals = { product_id: f.product.id, scrap_qty: qty, product_uom_id: f.product.uom_id[0], location_id: f.location, scrap_location_id: f.scrapLocation, origin: f.origin || false };
+  if (isTracked(f.product) && !f.lot) throw new Error(`Pilih ${f.product.tracking === "serial" ? "nomor seri" : "lot"} yang di-scrap.`);
+  const vals = { product_id: f.product.id, scrap_qty: qty, product_uom_id: f.product.uom_id[0], location_id: f.location, scrap_location_id: f.scrapLocation, origin: f.origin || false, lot_id: isTracked(f.product) ? f.lot : false };
   if (f.id) {
     await call("stock.scrap", "write", { ids: [f.id], vals });
     return f.id;
@@ -158,9 +177,17 @@ export async function onClick(event, el) {
 
 export function onInput(event, el) {
   if (!form) return;
-  if (el.dataset.scrap) form[el.dataset.scrap] = ["location", "scrapLocation"].includes(el.dataset.scrap) ? Number(el.value) : el.value;
+  if (el.dataset.scrap) form[el.dataset.scrap] = ["location", "scrapLocation", "lot"].includes(el.dataset.scrap) ? Number(el.value) || null : el.value;
   else if (el.dataset.lookup === "scrap-product") {
     form.product = null;
     runLookup(el, 250);
+  }
+}
+
+export function onChange(event, el) {
+  // Lokasi asal menentukan lot yang punya stok; muat ulang pilihannya.
+  if (form && el.dataset.scrap === "location" && isTracked(form.product)) {
+    form.lot = null;
+    reload();
   }
 }

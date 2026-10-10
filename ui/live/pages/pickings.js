@@ -3,8 +3,8 @@
 // bilah status draft/assigned/done; operasi dengan jumlah yang bisa diedit; wizard backorder saat jumlah
 // kurang dari permintaan.
 import {
-  actionBar, app, badge, call, cell, chatterHtml, closeModal, dateTimeText, esc, fieldBlock, filterSelect, guarded, loadMessages,
-  openModal, money, pageHeader, readOne, readonlyValue, rowLink, searchRead, statTiles, statusbar, table, toast, INPUT,
+  actionBar, app, badge, call, cell, chatterHtml, closeModal, dateText, dateTimeText, esc, fieldBlock, filterSelect, fromInputDateTime, guarded, loadMessages,
+  openModal, money, pageHeader, readOne, readonlyValue, rowLink, searchRead, statTiles, statusbar, table, toast, toInputDateTime, INPUT,
 } from "../common.js";
 
 const STATES = {
@@ -44,11 +44,19 @@ export function createPickingPage(config) {
 
   let edits = new Map(); // id move -> jumlah yang sedang diedit
   let moves = [];
+  let lotEdits = new Map(); // id move berlacak -> baris lot yang sedang diedit
+  let lotOptions = new Map(); // id produk -> lot yang punya stok di lokasi asal
+  let expiryProducts = new Set(); // id produk yang memakai tanggal kedaluwarsa
+  let lotMode = { create: false, existing: true }; // tipe operasi: lot baru diketik, atau dipilih dari stok
   let last = { sub: "", query: new URLSearchParams() };
   let pendingBackorder = null;
+  let pendingExpiry = null;
   let returning = null; // { pickingId, wizardId, context, lines }
   const leave = () => {
     edits = new Map();
+    lotEdits = new Map();
+    lotOptions = new Map();
+    expiryProducts = new Set();
   };
   const reload = () => render(last.sub, last.query);
 
@@ -109,27 +117,36 @@ export function createPickingPage(config) {
     moves = await searchRead(
       "stock.move",
       [["picking_id", "=", id]],
-      ["product_id", "description_picking", "product_uom_qty", "quantity", "product_uom", "picked", "state", "value"],
+      ["product_id", "description_picking", "product_uom_qty", "quantity", "product_uom", "picked", "state", "value", "has_tracking", "location_id", "location_dest_id"],
       { order: "id" },
     );
     edits = new Map();
+    await loadLots(pk);
+    last.state = pk.state;
     const editable = !["done", "cancel"].includes(pk.state);
     const valued = pk.state === "done" && moves.some((m) => m.value);
     const src = config.source ? pk[config.source.field] : null;
 
+    const cols = valued ? 6 : 5;
     const rows = moves
-      .map(
-        (m) => `<tr class="align-top">
-          <td class="py-2 px-4 text-sm">${esc(m.product_id?.[1])}</td>
+      .map((m) => {
+        const tracked = isTracked(m);
+        const qtyCell = tracked
+          ? `<span data-lot-total="${m.id}">${esc(lotTotal(m))}</span>`
+          : editable
+            ? `<input type="number" min="0" step="any" data-move="${m.id}" value="${esc(m.quantity)}" class="${INPUT} text-right" aria-label="${esc(config.qty)} untuk ${esc(m.product_id?.[1])}">`
+            : esc(m.quantity);
+        const main = `<tr class="align-top">
+          <td class="py-2 px-4 text-sm">${esc(m.product_id?.[1])}${tracked ? ` <span class="ml-1 px-2 py-0.5 rounded-full text-xs bg-indigo-50 text-indigo-700">${m.has_tracking === "serial" ? "Nomor seri" : "Lot"}</span>` : ""}</td>
           <td class="py-2 px-4 text-sm">${esc(m.description_picking || "")}</td>
           <td class="py-2 px-4 text-sm text-right">${esc(m.product_uom_qty)}</td>
-          <td class="py-2 px-4 text-sm text-right w-36">${editable
-            ? `<input type="number" min="0" step="any" data-move="${m.id}" value="${esc(m.quantity)}" class="${INPUT} text-right" aria-label="${esc(config.qty)} untuk ${esc(m.product_id?.[1])}">`
-            : esc(m.quantity)}</td>
+          <td class="py-2 px-4 text-sm text-right ${tracked ? "" : "w-36"}">${qtyCell}</td>
           <td class="py-2 px-4 text-sm">${esc(m.product_uom?.[1])}</td>
           ${valued ? `<td class="py-2 px-4 text-sm text-right">${money(Math.abs(m.value))}</td>` : ""}
-        </tr>`,
-      )
+        </tr>`;
+        if (!tracked) return main;
+        return `${main}<tr class="bg-gray-50"><td colspan="${cols}" class="px-4 pb-3 pt-1"><div id="lots-${m.id}">${lotEditorHtml(m, pk.state)}</div></td></tr>`;
+      })
       .join("");
 
     app.innerHTML = `
@@ -169,6 +186,189 @@ export function createPickingPage(config) {
     loadMessages("stock.picking", pk.id);
   }
 
+  /* ---------- Lot dan nomor seri ---------- */
+
+  const isTracked = (m) => Boolean(m.has_tracking) && m.has_tracking !== "none";
+  const lotLines = (m) => lotEdits.get(m.id) ?? [];
+  const lotTotal = (m) => lotLines(m).reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+  const MAX_EXPANDED_SERIALS = 100;
+
+  /** Baris lot per pergerakan berlacak, dari move line Odoo. Nomor seri tanpa nama dipecah menjadi satu baris per unit. */
+  async function loadLots(pk) {
+    lotEdits = new Map();
+    lotOptions = new Map();
+    expiryProducts = new Set();
+    const tracked = moves.filter(isTracked);
+    if (!tracked.length) return;
+    const [type, lines, products] = await Promise.all([
+      readOne("stock.picking.type", pk.picking_type_id[0], ["use_create_lots", "use_existing_lots"]),
+      searchRead(
+        "stock.move.line", [["picking_id", "=", pk.id], ["move_id", "in", tracked.map((m) => m.id)]],
+        ["move_id", "lot_id", "lot_name", "quantity", "location_id", "location_dest_id", "expiration_date"], { order: "id" },
+      ),
+      searchRead("product.product", [["id", "in", [...new Set(tracked.map((m) => m.product_id[0]))]]], ["use_expiration_date"]),
+    ]);
+    expiryProducts = new Set(products.filter((p) => p.use_expiration_date).map((p) => p.id));
+    lotMode = { create: Boolean(type?.use_create_lots), existing: Boolean(type?.use_existing_lots) };
+    for (const m of tracked) {
+      const rows = [];
+      for (const l of lines.filter((x) => x.move_id[0] === m.id)) {
+        const name = l.lot_id?.[1] || l.lot_name || ""; // lot_name kosong dikirim Odoo sebagai false
+        const base = {
+          id: l.id, lotId: l.lot_id?.[0] ?? null, name, qty: l.quantity, expiry: l.expiration_date ? toInputDateTime(l.expiration_date) : "",
+          orig: { lotId: l.lot_id?.[0] ?? null, name, qty: l.quantity, expiry: l.expiration_date ? toInputDateTime(l.expiration_date) : "" },
+          loc: l.location_id[0], locDest: l.location_dest_id[0], usesExpiry: expiryProducts.has(m.product_id[0]),
+        };
+        if (m.has_tracking === "serial" && !name && l.quantity > 1 && l.quantity <= MAX_EXPANDED_SERIALS) {
+          rows.push({ ...base, qty: 1 });
+          for (let i = 1; i < l.quantity; i++) rows.push({ ...base, id: null, qty: 1, orig: null });
+        } else rows.push(base);
+      }
+      lotEdits.set(m.id, rows);
+    }
+    if (lotMode.create || ["done", "cancel", "draft"].includes(pk.state)) return;
+    // Pilihan lot untuk pengiriman dan transfer: lot yang punya stok di lokasi asal.
+    const quants = await searchRead(
+      "stock.quant", [["product_id", "in", [...new Set(tracked.map((m) => m.product_id[0]))]], ["location_id", "child_of", pk.location_id[0]], ["lot_id", "!=", false], ["quantity", ">", 0]],
+      ["product_id", "lot_id", "quantity"], { limit: 500 },
+    );
+    for (const q of quants) {
+      const list = lotOptions.get(q.product_id[0]) ?? new Map();
+      const entry = list.get(q.lot_id[0]) ?? { id: q.lot_id[0], name: q.lot_id[1], qty: 0 };
+      entry.qty += q.quantity;
+      list.set(q.lot_id[0], entry);
+      lotOptions.set(q.product_id[0], list);
+    }
+  }
+
+  const lotInput = (m, i, field, value, extra = "") =>
+    `<input data-lotline="${m.id}" data-idx="${i}" data-f="${field}" value="${esc(value)}" ${extra} class="${INPUT}">`;
+
+  function lotRowHtml(m, line, i) {
+    const serial = m.has_tracking === "serial";
+    let nameCell;
+    if (lotMode.create) {
+      nameCell = lotInput(m, i, "name", line.name, `placeholder="${serial ? "Nomor seri" : "Nomor lot"}" aria-label="${serial ? "Nomor seri" : "Nomor lot"}" maxlength="120"`);
+    } else {
+      const options = [...(lotOptions.get(m.product_id[0])?.values() ?? [])];
+      if (line.lotId && !options.some((o) => o.id === line.lotId)) options.push({ id: line.lotId, name: line.name, qty: 0 });
+      nameCell = `<select data-lotline="${m.id}" data-idx="${i}" data-f="lot" class="${INPUT}" aria-label="Lot/Serial"><option value="">Pilih lot...</option>${options
+        .map((o) => `<option value="${o.id}" data-name="${esc(o.name)}" ${o.id === line.lotId ? "selected" : ""}>${esc(o.name)} (${esc(o.qty)} tersedia)</option>`)
+        .join("")}</select>`;
+    }
+    return `<div class="flex flex-wrap items-center gap-2 mb-2">
+      <div class="flex-1 min-w-[12rem]">${nameCell}</div>
+      ${lotMode.create && line.usesExpiry ? `<input type="datetime-local" data-lotline="${m.id}" data-idx="${i}" data-f="expiry" value="${esc(line.expiry)}" class="${INPUT} w-52" aria-label="Tanggal kedaluwarsa">` : ""}
+      <input type="number" min="0" step="any" data-lotline="${m.id}" data-idx="${i}" data-f="qty" value="${esc(line.qty)}" ${serial ? "disabled" : ""} class="${INPUT} w-28 text-right" aria-label="Jumlah">
+      <button type="button" data-action="lot-remove" data-move="${m.id}" data-idx="${i}" class="px-2 py-2 text-rose-600 hover:bg-rose-50 rounded-lg" aria-label="Hapus baris lot"><i class="fas fa-trash"></i></button></div>`;
+  }
+
+  function lotEditorHtml(m, state) {
+    const lines = lotLines(m);
+    if (["done", "cancel"].includes(state)) {
+      const shown = lines.filter((l) => Number(l.qty) > 0 && (l.name || l.lotId));
+      if (!shown.length) return '<div class="text-xs text-gray-500">Tidak ada lot tercatat.</div>';
+      return `<div class="text-xs font-semibold text-gray-500 uppercase mb-1">Lot/Serial</div>${shown
+        .map((l) => `<div class="text-sm text-gray-700">${l.lotId ? `<a href="#/lot/${l.lotId}" class="text-indigo-700 hover:underline">${esc(l.name)}</a>` : esc(l.name)} <span class="text-gray-500">· ${esc(l.qty)}${l.expiry ? ` · kedaluwarsa ${esc(dateText(fromInputDateTime(l.expiry)))}` : ""}</span></div>`)
+        .join("")}`;
+    }
+    if (state === "draft") return '<div class="text-xs text-gray-500">Nomor lot diisi setelah dokumen ditandai to-do.</div>';
+    const serial = m.has_tracking === "serial";
+    return `<div class="text-xs font-semibold text-gray-500 uppercase mb-2">${serial ? "Nomor Seri" : "Lot"} <span class="normal-case font-normal text-gray-400">${lotMode.create ? "(ketik nomor baru atau yang sudah ada)" : "(pilih dari stok di lokasi asal)"}</span></div>
+      ${lines.map((l, i) => lotRowHtml(m, l, i)).join("") || '<div class="text-sm text-gray-500 mb-2">Belum ada baris. Tambahkan lot di bawah.</div>'}
+      <div class="flex gap-2"><button type="button" data-action="lot-add" data-move="${m.id}" class="px-3 py-1 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50"><i class="fas fa-plus mr-1"></i>${serial ? "Tambah Nomor Seri" : "Tambah Lot"}</button>
+      ${serial && lotMode.create ? `<button type="button" data-action="lot-bulk" data-move="${m.id}" class="px-3 py-1 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Tempel Banyak Nomor Seri</button>` : ""}</div>`;
+  }
+
+  const repaintLots = (m, state) => {
+    const box = document.getElementById(`lots-${m.id}`);
+    if (box) box.innerHTML = lotEditorHtml(m, state);
+    const total = document.querySelector(`[data-lot-total="${m.id}"]`);
+    if (total) total.textContent = lotTotal(m);
+  };
+  const stateNow = () => last.state ?? "assigned";
+
+  /** Memeriksa baris lot sebelum dikirim: nama terisi, seri 1 per unit, tidak ada nomor ganda. */
+  function checkLots(m) {
+    const lines = lotLines(m).filter((l) => Number(l.qty) > 0);
+    const seen = new Set();
+    for (const l of lines) {
+      const key = lotMode.create ? l.name.trim() : l.lotId;
+      if (!key) throw new Error(`Isi ${m.has_tracking === "serial" ? "nomor seri" : "nomor lot"} untuk ${m.product_id[1]}.`);
+      if (seen.has(key)) throw new Error(`${m.product_id[1]}: nomor ${lotMode.create ? l.name.trim() : l.name} dipakai dua kali. Gabungkan jumlahnya dalam satu baris.`);
+      seen.add(key);
+      if (m.has_tracking === "serial" && Number(l.qty) !== 1) throw new Error(`${m.product_id[1]}: satu nomor seri hanya untuk satu unit.`);
+    }
+    for (const l of lotLines(m)) if (!(Number(l.qty) >= 0)) throw new Error("Jumlah lot tidak boleh negatif.");
+  }
+
+  /** Menyimpan baris lot sebuah pergerakan: hapus yang dibuang, ubah yang berubah, buat yang baru. */
+  async function saveLots(m, pickingId) {
+    const lines = lotLines(m);
+    const keep = new Set(lines.map((l) => l.id).filter(Boolean));
+    const existing = await searchRead("stock.move.line", [["move_id", "=", m.id]], ["id"]);
+    const drop = existing.map((r) => r.id).filter((id) => !keep.has(id));
+    if (drop.length) await call("stock.move.line", "unlink", { ids: drop });
+    for (const l of lines) {
+      const qty = Number(l.qty) || 0;
+      const vals = { quantity: qty, picked: qty > 0 };
+      if (lotMode.create) {
+        const name = l.name.trim();
+        if (!l.id) vals.lot_name = name || false;
+        else if (name !== l.orig.name) Object.assign(vals, { lot_id: false, lot_name: name || false });
+        if (l.usesExpiry && l.expiry && l.expiry !== l.orig?.expiry) vals.expiration_date = fromInputDateTime(l.expiry);
+      } else if (!l.id) vals.lot_id = l.lotId || false;
+      else if (l.lotId !== l.orig.lotId) vals.lot_id = l.lotId || false;
+      if (l.id) {
+        const changed = vals.lot_id !== undefined || vals.lot_name !== undefined || vals.expiration_date !== undefined || qty !== l.orig.qty || (qty > 0) !== (l.orig.qty > 0);
+        if (changed) await call("stock.move.line", "write", { ids: [l.id], vals });
+      } else {
+        await call("stock.move.line", "create", {
+          vals_list: [{ move_id: m.id, picking_id: pickingId, product_id: m.product_id[0], product_uom_id: m.product_uom[0], location_id: m.location_id[0], location_dest_id: m.location_dest_id[0], ...vals }],
+        });
+      }
+    }
+  }
+
+  function addLotLine(m) {
+    const lines = lotLines(m);
+    const serial = m.has_tracking === "serial";
+    const rest = Math.max(0, m.product_uom_qty - lotTotal(m));
+    lotEdits.set(m.id, [...lines, { id: null, lotId: null, name: "", qty: serial ? 1 : rest || 1, expiry: "", orig: null, loc: m.location_id[0], locDest: m.location_dest_id[0], usesExpiry: expiryProducts.has(m.product_id[0]) }]);
+  }
+
+  function bulkSerials(button, moveId) {
+    const m = moves.find((x) => x.id === moveId);
+    openModal(
+      "Tempel Nomor Seri",
+      `<form data-form="serials" data-move="${m.id}" class="space-y-3">
+         <p class="text-sm text-gray-600">Satu nomor seri per baris untuk <b>${esc(m.product_id[1])}</b>. Baris kosong dilewati.</p>
+         <textarea data-bulk="serials" rows="8" class="${INPUT} font-mono" aria-label="Daftar nomor seri"></textarea></form>`,
+      `<button data-action="modal-close" class="px-4 py-2 rounded-lg text-sm font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50">Batal</button>
+       <button data-action="serials-confirm" data-move="${m.id}" class="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700">Tambahkan</button>`,
+    );
+  }
+
+  function confirmSerials(moveId) {
+    const m = moves.find((x) => x.id === moveId);
+    const names = document.querySelector('[data-bulk="serials"]').value.split(/\r?\n/).map((t) => t.trim()).filter(Boolean);
+    if (!names.length) {
+      toast("Isi minimal satu nomor seri.", "error");
+      return;
+    }
+    if (new Set(names).size !== names.length) {
+      toast("Ada nomor seri yang dobel dalam daftar.", "error");
+      return;
+    }
+    const lines = lotLines(m);
+    const queue = [...names];
+    for (const l of lines) if (!l.name && queue.length) l.name = queue.shift(); // isi baris kosong dulu
+    for (const name of queue) lines.push({ id: null, lotId: null, name, qty: 1, expiry: "", orig: null, loc: m.location_id[0], locDest: m.location_dest_id[0], usesExpiry: expiryProducts.has(m.product_id[0]) });
+    lotEdits.set(m.id, lines);
+    closeModal();
+    repaintLots(m, stateNow());
+  }
+
   /* ---------- Validasi dan backorder ---------- */
 
   function askBackorder() {
@@ -188,24 +388,64 @@ export function createPickingPage(config) {
     });
   }
 
+  /** Konfirmasi lot kedaluwarsa atau hampir kedaluwarsa (modul product_expiry). Hasil: "go", "skip", atau null. */
+  function askExpiry(lotNames) {
+    return new Promise((resolve) => {
+      openModal(
+        "Lot Kedaluwarsa atau Hampir Kedaluwarsa",
+        `<p class="text-sm text-gray-700 mb-2">Lot berikut sudah kedaluwarsa atau sudah melewati tanggal penarikan/peringatan:</p>
+         <ul class="list-disc pl-5 text-sm text-gray-800 mb-3">${lotNames.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>
+         <p class="text-sm text-gray-700">Lanjutkan ${config.noun.toLowerCase()} dengan lot ini?</p>`,
+        `<button data-action="expiry-cancel" class="px-4 py-2 rounded-lg text-sm font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50">Batal</button>
+         ${config.code !== "incoming" ? '<button data-action="expiry-skip" class="px-4 py-2 rounded-lg text-sm font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50">Lewati Lot yang Kedaluwarsa</button>' : ""}
+         <button data-action="expiry-go" class="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700">Tetap Lanjutkan</button>`,
+        () => resolve(null),
+      );
+      pendingExpiry = (choice) => {
+        resolve(choice);
+        closeModal();
+      };
+    });
+  }
+
   async function validate(button, id) {
     const ok = await guarded(button, async () => {
       for (const m of moves) {
+        if (isTracked(m)) {
+          checkLots(m);
+          await saveLots(m, id);
+          continue;
+        }
         const qty = Number(edits.get(m.id) ?? m.quantity);
         if (!(qty >= 0)) throw new Error(`Jumlah yang ${config.qtyLabel} tidak boleh negatif.`);
         if (qty !== m.quantity || (qty > 0) !== m.picked) {
           await call("stock.move", "write", { ids: [m.id], vals: { quantity: qty, picked: qty > 0 } });
         }
       }
-      const result = await call("stock.picking", "button_validate", { ids: [id] });
-      if (result === true || result === false || result == null) return true;
-      if (result.res_model === "stock.backorder.confirmation") {
-        const choice = await askBackorder();
-        if (!choice) return false;
+      let result = await call("stock.picking", "button_validate", { ids: [id] });
+      // Odoo bisa meminta beberapa langkah berturut-turut (konfirmasi kedaluwarsa, lalu backorder).
+      for (let step = 0; step < 4; step++) {
+        if (result === true || result === false || result == null) return true;
         const context = result.context ?? {};
-        const wizard = await call("stock.backorder.confirmation", "create", { vals_list: [{}], context });
-        await call("stock.backorder.confirmation", choice === "backorder" ? "process" : "process_cancel_backorder", { ids: wizard, context });
-        return true;
+        if (result.res_model === "stock.backorder.confirmation") {
+          const choice = await askBackorder();
+          if (!choice) return false;
+          const wizard = await call("stock.backorder.confirmation", "create", { vals_list: [{}], context });
+          await call("stock.backorder.confirmation", choice === "backorder" ? "process" : "process_cancel_backorder", { ids: wizard, context });
+          return true;
+        }
+        if (result.res_model === "expiry.picking.confirmation") {
+          const [wizardId] = await call("expiry.picking.confirmation", "create", { vals_list: [{}], context });
+          const [wizard] = await call("expiry.picking.confirmation", "read", { ids: [wizardId], fields: ["lot_ids"], context });
+          // Lot yang baru diterima belum ada saat Odoo memeriksa; namanya dibawa lewat konteks wizard.
+          const lots = wizard.lot_ids.length ? await call("stock.lot", "read", { ids: wizard.lot_ids, fields: ["display_name"] }) : [];
+          const names = lots.length ? lots.map((l) => l.display_name) : [[context.expired_product_name, context.expired_lot_name].filter(Boolean).join(" · ") || "lot pada dokumen ini"];
+          const choice = await askExpiry(names);
+          if (!choice) return false;
+          result = await call("expiry.picking.confirmation", choice === "skip" ? "process_no_expired" : "process", { ids: [wizardId], context });
+          continue;
+        }
+        break;
       }
       throw new Error(`Odoo meminta langkah tambahan ("${result.name ?? result.res_model}") yang belum didukung UI ini. Selesaikan di Odoo.`);
     });
@@ -277,9 +517,21 @@ export function createPickingPage(config) {
     const def = BUTTONS.find((b) => b.action === action);
 
     if (action === "refresh") reload();
+    else if (action === "lot-add" || action === "lot-remove" || action === "lot-bulk") {
+      const m = moves.find((x) => x.id === Number(el.dataset.move));
+      if (action === "lot-bulk") bulkSerials(el, m.id);
+      else {
+        if (action === "lot-add") addLotLine(m);
+        else lotEdits.set(m.id, lotLines(m).filter((_, i) => i !== Number(el.dataset.idx)));
+        repaintLots(m, stateNow());
+      }
+    } else if (action === "serials-confirm") confirmSerials(Number(el.dataset.move));
     else if (action === "validate") await validate(el, id);
     else if (action === "return") await openReturn(el, id);
     else if (action === "return-confirm") await confirmReturn(el);
+    else if (action === "expiry-go") pendingExpiry?.("go");
+    else if (action === "expiry-skip") pendingExpiry?.("skip");
+    else if (action === "expiry-cancel") pendingExpiry?.(null);
     else if (action === "backorder-yes") pendingBackorder?.("backorder");
     else if (action === "backorder-none") pendingBackorder?.("none");
     else if (action === "cancel" && !window.confirm(`Batalkan ${config.noun.toLowerCase()} ini?`)) {
@@ -295,6 +547,20 @@ export function createPickingPage(config) {
 
   function onInput(event, el) {
     if (el.dataset.move) edits.set(Number(el.dataset.move), el.value);
+    else if (el.dataset.lotline) {
+      const m = moves.find((x) => x.id === Number(el.dataset.lotline));
+      const line = lotLines(m)[Number(el.dataset.idx)];
+      if (!line) return;
+      const field = el.dataset.f;
+      if (field === "lot") {
+        line.lotId = el.value ? Number(el.value) : null;
+        line.name = el.selectedOptions[0]?.dataset.name ?? "";
+      } else line[field] = el.value;
+      if (field === "qty") {
+        const total = document.querySelector(`[data-lot-total="${m.id}"]`);
+        if (total) total.textContent = lotTotal(m);
+      }
+    }
   }
 
   async function onSubmit(event, formEl, kind) {

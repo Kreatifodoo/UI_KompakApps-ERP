@@ -189,6 +189,7 @@ def main():
     check_bank_reconciliation(api)
     check_inventory(api, product)
     check_warehouse_master(api, product)
+    check_lots(api, vendor)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -415,6 +416,130 @@ def check_warehouse_master(api, product):
     check(api.call("stock.picking", "button_validate", ids=[picking]) is True, "transfer internal divalidasi tanpa dialog")
     after = api.search("stock.quant", [["product_id", "=", product["id"]], ["location_id", "=", rack]], ["quantity"])[0]["quantity"]
     check(after == start + 2.0, "stok berpindah ke lokasi tujuan")
+
+
+def check_lots(api, vendor):
+    """Lot, nomor seri, dan kedaluwarsa: penerimaan, pengiriman, scrap, hitung fisik (halaman Lot, Penerimaan, Pengiriman, Scrap, Physical Inventory)."""
+    step("Lot dan nomor seri: penerimaan, pengiriman, kedaluwarsa, scrap, hitung fisik")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    api.call("res.config.settings", "execute", ids=api.call("res.config.settings", "create", vals_list=[{"group_stock_production_lot": True}]))
+    goods = api.search("product.category", [["name", "=", "Goods"]], ["id"], limit=1)
+    customer = api.search("res.partner", [["name", "=", "PT Pelanggan Nusantara"]], ["id"], limit=1)[0]["id"]
+    warehouse = api.search("stock.warehouse", [], ["lot_stock_id"], limit=1)[0]
+    stock_location = warehouse["lot_stock_id"][0]
+    base = {"type": "consu", "is_storable": True, "standard_price": 50_000.0, "list_price": 80_000.0, "categ_id": goods[0]["id"] if goods else False}
+
+    def new_product(name, **extra):
+        [tmpl] = api.call("product.template", "create", vals_list=[{**base, "name": f"{name} {tag}", **extra}])
+        api.call("product.supplierinfo", "create", vals_list=[{"partner_id": vendor["id"], "product_tmpl_id": tmpl, "min_qty": 1.0, "price": 50_000.0}])
+        return api.read("product.template", tmpl, ["product_variant_id", "uom_id", "tracking"])
+
+    def receive(product, qty):
+        [po] = api.call("purchase.order", "create", vals_list=[{"partner_id": vendor["id"], "order_line": [[0, 0, {"product_id": product["product_variant_id"][0], "product_qty": qty, "product_uom_id": product["uom_id"][0]}]]}])
+        api.call("purchase.order", "button_confirm", ids=[po])
+        picking = api.search("stock.picking", [["purchase_id", "=", po]], ["id"])[0]["id"]
+        move = api.search("stock.move", [["picking_id", "=", picking]], ["id", "location_id", "location_dest_id", "product_uom"])[0]
+        line = api.search("stock.move.line", [["move_id", "=", move["id"]]], ["id"])[0]["id"]
+        return po, picking, move, line
+
+    def add_line(picking, move, product, vals):
+        [new] = api.call("stock.move.line", "create", vals_list=[{
+            "move_id": move["id"], "picking_id": picking, "product_id": product["product_variant_id"][0], "product_uom_id": move["product_uom"][0],
+            "location_id": move["location_id"][0], "location_dest_id": move["location_dest_id"][0], "picked": True, **vals,
+        }])
+        return new
+
+    def lot_qty(name, product):
+        found = api.search("stock.lot", [["product_id", "=", product["product_variant_id"][0]], ["name", "=", name]], ["product_qty"])
+        return found[0]["product_qty"] if found else None
+
+    product = new_product("Obat Regresi Lot", tracking="lot", use_expiration_date=True, expiration_time=365, use_time=300, removal_time=60, alert_time=30)
+    check(product["tracking"] == "lot", "produk berlacak per lot tersimpan")
+    pv = product["product_variant_id"][0]
+
+    po, picking, move, line = receive(product, 10.0)
+    api.call("stock.move.line", "write", ids=[line], vals={"picked": True})
+    try:
+        api.call("stock.picking", "button_validate", ids=[picking])
+        check(False, "penerimaan barang berlacak tanpa nomor lot seharusnya ditolak")
+    except RuntimeError as error:
+        check("supply a Lot/Serial" in str(error), "penerimaan tanpa nomor lot ditolak Odoo")
+    api.call("stock.move.line", "write", ids=[line], vals={"lot_name": f"A-{tag}", "quantity": 6.0, "picked": True})
+    add_line(picking, move, product, {"lot_name": f"B-{tag}", "quantity": 4.0})
+    check(api.call("stock.picking", "button_validate", ids=[picking]) is True, "penerimaan dengan dua lot divalidasi tanpa dialog")
+    check((lot_qty(f"A-{tag}", product), lot_qty(f"B-{tag}", product)) == (6.0, 4.0), "dua lot terbentuk dengan stok 6 dan 4")
+    lot_a = api.search("stock.lot", [["name", "=", f"A-{tag}"], ["product_id", "=", pv]], ["expiration_date", "alert_date", "removal_date", "purchase_order_ids"])[0]
+    check(bool(lot_a["expiration_date"]) and lot_a["expiration_date"][:4] >= str(datetime.date.today().year), "tanggal kedaluwarsa lot dihitung dari pengaturan produk")
+    check(lot_a["alert_date"] < lot_a["expiration_date"] and lot_a["removal_date"] < lot_a["expiration_date"], "tanggal peringatan dan penarikan sebelum kedaluwarsa")
+    check(lot_a["purchase_order_ids"] == [po], "lot terhubung ke PO penerimaan")
+
+    step("Lot: pengiriman memesan lot, pilihan lot diubah, retur membawa lot")
+    [so] = api.call("sale.order", "create", vals_list=[{"partner_id": customer, "order_line": [[0, 0, {"product_id": pv, "product_uom_qty": 7.0}]]}])
+    api.call("sale.order", "action_confirm", ids=[so])
+    delivery = api.search("stock.picking", [["sale_id", "=", so]], ["id", "state"])[0]
+    check(delivery["state"] == "assigned", "pengiriman barang berlacak siap (stok lot cukup)")
+    dmove = api.search("stock.move", [["picking_id", "=", delivery["id"]]], ["id", "has_tracking", "location_id", "location_dest_id", "product_uom"])[0]
+    check(dmove["has_tracking"] == "lot", "pergerakan pengiriman ditandai berlacak lot")
+    reserved = api.search("stock.move.line", [["move_id", "=", dmove["id"]]], ["lot_id", "quantity"])
+    check(sum(r["quantity"] for r in reserved) == 7.0 and all(r["lot_id"] for r in reserved), "Odoo memesan lot tertentu untuk 7 unit")
+    quants = api.search("stock.quant", [["product_id", "=", pv], ["location_id", "child_of", stock_location], ["lot_id", "!=", False], ["quantity", ">", 0]], ["lot_id", "quantity"])
+    check({q["lot_id"][1] for q in quants} == {f"A-{tag}", f"B-{tag}"}, "pilihan lot di lokasi asal tersedia untuk dropdown")
+    api.call("stock.move.line", "unlink", ids=[r["id"] for r in reserved])
+    lot_ids = {q["lot_id"][1]: q["lot_id"][0] for q in quants}
+    for name, qty in ((f"A-{tag}", 3.0), (f"B-{tag}", 4.0)):
+        add_line(delivery["id"], dmove, product, {"lot_id": lot_ids[name], "quantity": qty})
+    check(api.call("stock.picking", "button_validate", ids=[delivery["id"]]) is True, "pengiriman dengan lot pilihan divalidasi")
+    check((lot_qty(f"A-{tag}", product), lot_qty(f"B-{tag}", product)) == (3.0, 0.0), "stok per lot setelah pengiriman: A=3, B=0")
+    trace = api.search("stock.move.line", [["lot_id", "=", lot_ids[f"B-{tag}"]], ["state", "=", "done"]], ["reference", "picking_code", "location_id", "location_dest_id"], order="date, id")
+    check([t["picking_code"] for t in trace] == ["incoming", "outgoing"], "riwayat lot: diterima lalu dikirim")
+    lot_doc = api.read("stock.lot", lot_ids[f"B-{tag}"], ["delivery_ids", "purchase_order_ids", "sale_order_ids", "delivery_count"])
+    check(lot_doc["delivery_ids"] == [delivery["id"]] and lot_doc["sale_order_ids"] == [so] and lot_doc["purchase_order_ids"] == [po], "lot terhubung ke PO, SO, dan pengiriman")
+    context = {"active_model": "stock.picking", "active_ids": [delivery["id"]], "active_id": delivery["id"]}
+    [return_wizard] = api.call("stock.return.picking", "create", vals_list=[{}], context=context)
+    return_line = api.search("stock.return.picking.line", [["wizard_id", "=", return_wizard]], ["id"], context=context)[0]["id"]
+    api.call("stock.return.picking.line", "write", ids=[return_line], vals={"quantity": 2.0}, context=context)
+    returned = api.call("stock.return.picking", "action_create_returns", ids=[return_wizard], context=context)["res_id"]
+    return_lines = api.search("stock.move.line", [["picking_id", "=", returned]], ["lot_id", "lot_name"])
+    check(bool(return_lines) and bool(return_lines[0]["lot_id"] or return_lines[0]["lot_name"]), "retur membawa lot dari pengiriman asal")
+
+    step("Lot: filter halaman Lot, kedaluwarsa, scrap, hitung fisik")
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    check(any(r["name"] == f"A-{tag}" for r in api.search("stock.lot", [["product_qty", ">", 0], ["name", "ilike", tag]], ["name"])), "filter 'ada stok' menemukan lot A")
+    check(not api.search("stock.lot", [["expiration_date", "<", now], ["product_qty", ">", 0], ["name", "ilike", tag]], ["name"]), "belum ada lot kedaluwarsa")
+    api.call("stock.lot", "write", ids=[lot_ids[f"A-{tag}"]], vals={"expiration_date": "2020-01-01 00:00:00"})
+    check(len(api.search("stock.lot", [["expiration_date", "<", now], ["product_qty", ">", 0], ["name", "ilike", tag]], ["name"])) == 1, "lot yang tanggalnya lewat masuk filter kedaluwarsa")
+    check(isinstance(api.search("stock.lot", [["alert_date", "<", now], ["expiration_date", ">=", now], ["product_qty", ">", 0]], ["name"]), list), "filter perlu-perhatian diterima Odoo")
+    [scrap] = api.call("stock.scrap", "create", vals_list=[{"product_id": pv, "scrap_qty": 1.0, "product_uom_id": product["uom_id"][0], "location_id": stock_location, "lot_id": lot_ids[f"A-{tag}"]}])
+    api.call("stock.scrap", "action_validate", ids=[scrap])
+    check(api.read("stock.scrap", scrap, ["state"])["state"] == "done" and lot_qty(f"A-{tag}", product) == 2.0, "scrap dengan lot mengurangi stok lot itu")
+    [counted] = api.call("stock.lot", "create", vals_list=[{"name": f"C-{tag}", "product_id": pv}])
+    [quant] = api.call("stock.quant", "create", vals_list=[{"product_id": pv, "location_id": stock_location, "lot_id": counted, "inventory_quantity": 5.0}], context={"inventory_mode": True})
+    api.call("stock.quant", "action_apply_inventory", ids=[quant], context={"inventory_mode": True})
+    check(lot_qty(f"C-{tag}", product) == 5.0, "hitung fisik menambah stok lot baru")
+
+    step("Lot: nomor seri satu unit per baris, dan wizard kedaluwarsa")
+    serial = new_product("Laptop Regresi Seri", tracking="serial")
+    spo, spicking, smove, sline = receive(serial, 2.0)
+    api.call("stock.move.line", "write", ids=[sline], vals={"lot_name": f"SN1-{tag}", "quantity": 2.0, "picked": True})
+    try:
+        api.call("stock.picking", "button_validate", ids=[spicking])
+        check(False, "satu nomor seri untuk dua unit seharusnya ditolak")
+    except RuntimeError as error:
+        check("1.0 items" in str(error) or "serial" in str(error).lower(), "satu nomor seri untuk dua unit ditolak Odoo")
+    api.call("stock.move.line", "write", ids=[sline], vals={"quantity": 1.0})
+    add_line(spicking, smove, serial, {"lot_name": f"SN2-{tag}", "quantity": 1.0})
+    check(api.call("stock.picking", "button_validate", ids=[spicking]) is True, "dua nomor seri divalidasi")
+    check(len(api.search("stock.lot", [["product_id", "=", serial["product_variant_id"][0]]], ["id"])) == 2, "dua nomor seri terbentuk")
+
+    near = new_product("Susu Regresi Alert", tracking="lot", use_expiration_date=True, expiration_time=100, use_time=90, removal_time=80, alert_time=70)
+    _po, npicking, nmove, nline = receive(near, 3.0)
+    api.call("stock.move.line", "write", ids=[nline], vals={"lot_name": f"N-{tag}", "quantity": 3.0, "picked": True, "expiration_date": (datetime.datetime.now() + datetime.timedelta(days=20)).strftime("%Y-%m-%d %H:%M:%S")})
+    result = api.call("stock.picking", "button_validate", ids=[npicking])
+    check(isinstance(result, dict) and result.get("res_model") == "expiry.picking.confirmation", "lot yang melewati masa peringatan meminta konfirmasi")
+    [expiry_wizard] = api.call("expiry.picking.confirmation", "create", vals_list=[{}], context=result["context"])
+    check(result["context"].get("expired_lot_name") == f"N-{tag}", "nama lot terbawa di konteks wizard")
+    api.call("expiry.picking.confirmation", "process", ids=[expiry_wizard], context=result["context"])
+    check(api.read("stock.picking", npicking, ["state"])["state"] == "done", "penerimaan selesai setelah konfirmasi kedaluwarsa")
 
 
 def check_bank_reconciliation(api):

@@ -33,7 +33,7 @@ export const MENU = [
         items: [
           { title: "Product Master", route: "product?state=all" }, { title: "Product Category", route: "category" },
           { title: "Reorder Level", route: "orderpoint" }, { title: "Put away Rules", route: "putaway" },
-          { title: "Unit of Measurement Master", route: "uom" }, { title: "Lot & Serial Number Master", odoo: "stock.lot" },
+          { title: "Unit of Measurement Master", route: "uom" }, { title: "Lot & Serial Number Master", route: "lot" },
           { title: "Warehouse & Location Master", route: "warehouse" },
         ],
       },
