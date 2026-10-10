@@ -6,3 +6,4 @@ from . import test_o2c_flow
 from . import test_mis_reports
 from . import test_bank_reconciliation
 from . import test_inventory
+from . import test_lots

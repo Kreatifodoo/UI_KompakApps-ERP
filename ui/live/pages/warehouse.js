@@ -1,7 +1,7 @@
 // Warehouse Master (stock.warehouse) dan fitur gudang. Fitur Storage Locations dan Lots & Serial Numbers diaktifkan
 // lewat pengaturan Odoo (res.config.settings); Storage Locations membuka transfer internal, Lots & Serial membuka
 // pelacakan lot dan nomor seri pada produk.
-import { INPUT, app, call, cell, ctx, esc, fieldBlock, guarded, pageHeader, readOne, rowLink, searchRead, table, toast, button } from "../common.js";
+import { INPUT, app, call, cell, ctx, esc, fieldBlock, guarded, pageHeader, readOne, resetReferences, rowLink, searchRead, table, toast, button } from "../common.js";
 
 const RECEPTION = { one_step: "Terima dan simpan (1 langkah)", two_steps: "Terima lalu simpan (2 langkah)", three_steps: "Terima, kendali mutu, lalu simpan (3 langkah)" };
 const DELIVERY = { ship_only: "Kirim (1 langkah)", pick_ship: "Ambil lalu kirim (2 langkah)", pick_pack_ship: "Ambil, kemas, lalu kirim (3 langkah)" };
@@ -130,6 +130,7 @@ export async function onClick(event, el) {
     });
     if (ok) {
       features = null;
+      resetReferences(); // hasGroup() di halaman lain menyimpan hasil per sesi
       toast("Fitur gudang diterapkan.");
       reload();
     }

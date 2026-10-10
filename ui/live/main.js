@@ -38,10 +38,11 @@ import * as warehouse from "./pages/warehouse.js";
 import * as location_ from "./pages/location.js";
 import * as uom from "./pages/uom.js";
 import * as putaway from "./pages/putaway.js";
+import * as lot from "./pages/lot.js";
 import * as transfer from "./pages/transfer.js";
 import * as soon from "./pages/soon.js";
 
-const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, bank, stock, moves, count, scrap, orderpoint, replenish, warehouse, location: location_, uom, putaway, transfer, soon };
+const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, bank, stock, moves, count, scrap, orderpoint, replenish, warehouse, location: location_, uom, putaway, lot, transfer, soon };
 let currentId = "pr";
 
 function parseHash() {

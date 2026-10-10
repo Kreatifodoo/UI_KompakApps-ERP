@@ -33,7 +33,7 @@ export async function render(sub, query) {
   if (filter === "available") domain.push(["available_quantity", ">", 0]);
   else if (filter === "reserved") domain.push(["reserved_quantity", ">", 0]);
   else if (filter === "negative") domain.push(["quantity", "<", 0]);
-  if (text) domain.push("|", "|", ["product_id.name", "ilike", text], ["product_id.default_code", "ilike", text], ["location_id.complete_name", "ilike", text]);
+  if (text) domain.push("|", "|", "|", ["product_id.name", "ilike", text], ["product_id.default_code", "ilike", text], ["location_id.complete_name", "ilike", text], ["lot_id.name", "ilike", text]);
   const [quants, gl] = await Promise.all([
     searchRead("stock.quant", domain, ["product_id", "location_id", "lot_id", "quantity", "reserved_quantity", "available_quantity", "value", "product_uom_id", "product_categ_id"], {
       order: "product_id, location_id", limit: 1000,
@@ -58,7 +58,7 @@ export async function render(sub, query) {
     .map(([key, g]) => {
       const detail = g.rows
         .map(
-          (q) => `<tr class="bg-gray-50"><td class="py-2 pl-10 pr-4 text-sm text-gray-600" colspan="1">${esc(def.detail === "location" ? q.location_id[1] : q.product_id[1])}${q.lot_id ? ` · ${esc(q.lot_id[1])}` : ""}</td>
+          (q) => `<tr class="bg-gray-50"><td class="py-2 pl-10 pr-4 text-sm text-gray-600" colspan="1">${esc(def.detail === "location" ? q.location_id[1] : q.product_id[1])}${q.lot_id ? ` · <a href="#/lot/${q.lot_id[0]}" class="text-indigo-700 hover:underline">${esc(q.lot_id[1])}</a>` : ""}</td>
             <td class="py-2 px-4 text-sm text-right text-gray-600">${nf.format(q.quantity)}</td><td class="py-2 px-4 text-sm text-right text-gray-600">${nf.format(q.reserved_quantity)}</td>
             <td class="py-2 px-4 text-sm text-right text-gray-600">${nf.format(q.available_quantity)}</td><td class="py-2 px-4 text-sm text-right text-gray-600">${esc(money(q.value))}</td></tr>`,
         )
@@ -75,7 +75,7 @@ export async function render(sub, query) {
   app.innerHTML =
     pageHeader(
       "Laporan Stok",
-      `${searchBox(text, "Cari produk atau lokasi")}${filterSelect(FILTERS, filter)}
+      `${searchBox(text, "Cari produk, lokasi, atau lot")}${filterSelect(FILTERS, filter)}
        <div class="inline-flex rounded-lg border border-gray-300 overflow-hidden bg-white text-sm">${Object.entries(MODES)
          .map(([key, m]) => `<a href="#/stock/${key}" class="px-3 py-2 ${key === mode ? "bg-indigo-600 text-white" : "hover:bg-gray-50"}">${key === "report" ? "Per produk" : "Per lokasi"}</a>`)
          .join("")}</div>`,

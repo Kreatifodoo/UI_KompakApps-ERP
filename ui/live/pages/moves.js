@@ -32,7 +32,7 @@ export async function render(sub, query) {
     ["date", "reference", "product_id", "lot_id", "location_id", "location_dest_id", "quantity", "product_uom_id", "picking_id", "picking_code"],
     { order: "date desc, id desc", limit: 200 },
   );
-  const route = { incoming: "receipt", outgoing: "delivery" };
+  const route = { incoming: "receipt", outgoing: "delivery", internal: "transfer" };
   const body = rows
     .map((r) => {
       const href = r.picking_id && route[r.picking_code] ? `#/${route[r.picking_code]}/${r.picking_id[0]}` : null;

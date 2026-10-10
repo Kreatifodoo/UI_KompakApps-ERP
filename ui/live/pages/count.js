@@ -18,20 +18,24 @@ export const leave = () => {
 const reload = () => render(last.sub, last.query);
 
 registerLookup("count-product", {
-  search: (q) => searchRead("product.product", [["is_storable", "=", true], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name", "uom_id"], { limit: 10, order: "name" }),
-  sub: (r) => r.uom_id?.[1] ?? "",
+  search: (q) => searchRead("product.product", [["is_storable", "=", true], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name", "uom_id", "tracking"], { limit: 10, order: "name" }),
+  sub: (r) => (r.tracking === "lot" ? "Lot" : r.tracking === "serial" ? "Nomor seri" : r.uom_id?.[1] ?? ""),
   isChosen: (input) => draft?.product?.display_name === input.value,
   choose: (input, item) => {
+    const changed = isTracked(draft.product) !== isTracked(item);
     draft.product = item;
     input.value = item.display_name;
+    if (changed) reload(); // kolom lot hanya untuk produk berlacak
   },
 });
+
+const isTracked = (product) => Boolean(product?.tracking) && product.tracking !== "none";
 
 export async function render(sub, query) {
   last = { sub, query };
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
   locations ??= await searchRead("stock.location", [["usage", "=", "internal"]], ["display_name"], { order: "complete_name" });
-  draft ??= { product: null, location: locations[0]?.id ?? null, qty: "" };
+  draft ??= { product: null, location: locations[0]?.id ?? null, qty: "", lot: "" };
   const text = query.get("q") ?? "";
   const domain = [["location_id.usage", "=", "internal"], ["product_id.is_storable", "=", true]];
   if (text) domain.push("|", ["product_id.name", "ilike", text], ["product_id.default_code", "ilike", text]);
@@ -68,6 +72,7 @@ export async function render(sub, query) {
       <div class="text-sm font-semibold mb-3">Hitungan baru (produk belum tercatat di lokasi)</div>
       <form data-form="new-count" class="flex flex-wrap items-end gap-3">
         <label class="text-xs font-medium text-gray-500 uppercase">Produk<input data-lookup="count-product" autocomplete="off" role="combobox" aria-autocomplete="list" value="${esc(draft.product?.display_name ?? "")}" placeholder="Cari produk yang dilacak stoknya..." class="${INPUT} mt-1 w-72"></label>
+        ${isTracked(draft.product) ? `<label class="text-xs font-medium text-gray-500 uppercase">${draft.product.tracking === "serial" ? "Nomor Seri" : "Lot"}<input data-new="lot" value="${esc(draft.lot)}" placeholder="Nomor ${draft.product.tracking === "serial" ? "seri" : "lot"}" class="${INPUT} mt-1 w-44"></label>` : ""}
         <label class="text-xs font-medium text-gray-500 uppercase">Lokasi<select data-new="location" class="${INPUT} mt-1 w-56">${selectOptions(locations, draft.location)}</select></label>
         <label class="text-xs font-medium text-gray-500 uppercase">Jumlah<input type="number" min="0" step="any" data-new="qty" value="${esc(draft.qty)}" class="${INPUT} mt-1 w-32 text-right"></label>
         <button type="submit" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Tambah dan Terapkan</button>
@@ -124,7 +129,15 @@ export async function onSubmit(event, formEl, kind) {
     if (!draft.product) throw new Error("Pilih produk dari kotak saran.");
     const qty = Number(draft.qty);
     if (!(qty > 0)) throw new Error("Isi jumlah lebih dari 0.");
-    const [id] = await call("stock.quant", "create", { vals_list: [{ product_id: draft.product.id, location_id: draft.location, inventory_quantity: qty }], context: MODE });
+    const vals = { product_id: draft.product.id, location_id: draft.location, inventory_quantity: qty };
+    if (isTracked(draft.product)) {
+      const name = draft.lot.trim();
+      if (!name) throw new Error(`Isi ${draft.product.tracking === "serial" ? "nomor seri" : "nomor lot"} untuk produk ini.`);
+      if (draft.product.tracking === "serial" && qty !== 1) throw new Error("Satu nomor seri hanya untuk satu unit.");
+      const [found] = await searchRead("stock.lot", [["product_id", "=", draft.product.id], ["name", "=", name]], ["id"], { limit: 1 });
+      vals.lot_id = found ? found.id : (await call("stock.lot", "create", { vals_list: [{ name, product_id: draft.product.id }] }))[0];
+    }
+    const [id] = await call("stock.quant", "create", { vals_list: [vals], context: MODE });
     await call("stock.quant", "action_apply_inventory", { ids: [id], context: MODE });
     return true;
   });
