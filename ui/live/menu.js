@@ -40,8 +40,8 @@ export const MENU = [
       {
         title: "Operation",
         items: [
-          { title: "Material Request", odoo: "stock.picking" }, { title: "Good Receive", route: "receipt" }, { title: "Return GR", odoo: "stock.picking" },
-          { title: "Delivery Order", odoo: "stock.picking" }, { title: "Return DO", odoo: "stock.picking" }, { title: "Internal Transfer", odoo: "stock.picking" },
+          { title: "Material Request", odoo: "stock.picking" }, { title: "Good Receive", route: "receipt" }, { title: "Return GR", route: "delivery?returns=1" },
+          { title: "Delivery Order", route: "delivery" }, { title: "Return DO", route: "receipt?returns=1" }, { title: "Internal Transfer", odoo: "stock.picking" },
           { title: "Physical Inventory", odoo: "stock.quant" }, { title: "Replenishment", odoo: "stock.warehouse.orderpoint" },
           { title: "Scrap", odoo: "stock.scrap" }, { title: "Inventory Loss", odoo: "stock.move" },
         ],
@@ -94,11 +94,11 @@ export const MENU = [
       { title: "Dashboard" },
       {
         title: "Master",
-        items: [{ title: "Product Master", route: "product?state=sale" }, { title: "Customers Master", odoo: "res.partner" }, { title: "Promotion & Loyalty", odoo: "loyalty.program" }, { title: "Pricelis Master", odoo: "product.pricelist" }],
+        items: [{ title: "Product Master", route: "product?state=sale" }, { title: "Customers Master", route: "customer" }, { title: "Promotion & Loyalty", odoo: "loyalty.program" }, { title: "Pricelis Master", odoo: "product.pricelist" }],
       },
-      { title: "Quotations", odoo: "sale.order" },
-      { title: "Sales Orders", odoo: "sale.order" },
-      { title: "Create Customer Invoice", odoo: "account.move" },
+      { title: "Quotations", route: "sale?state=quotation" },
+      { title: "Sales Orders", route: "sale?state=sale" },
+      { title: "Create Customer Invoice", route: "invoice?state=draft" },
       {
         title: "Report",
         items: [{ title: "Sales Order line", odoo: "sale.report" }, { title: "Sales Order Analisis", odoo: "sale.report" }, { title: "Sales Person", odoo: "sale.report" }, { title: "Product", odoo: "sale.report" }, { title: "Commissions" }],
@@ -113,14 +113,14 @@ export const MENU = [
       {
         title: "Master",
         items: [
-          { title: "Chart of Account", odoo: "account.account" }, { title: "Customer Master", odoo: "res.partner" }, { title: "Vendor Master", route: "vendor" },
+          { title: "Chart of Account", odoo: "account.account" }, { title: "Customer Master", route: "customer" }, { title: "Vendor Master", route: "vendor" },
           { title: "Product Master", route: "product?state=all" }, { title: "Product Category", route: "category" }, { title: "Tax Master", odoo: "account.tax" },
           { title: "Currencies", odoo: "res.currency" }, { title: "Jurnal", odoo: "account.journal" }, { title: "Asset Model", odoo: "account.asset" },
           { title: "Budget Plan Master", odoo: "account.budget" }, { title: "Analitic Account", odoo: "account.analytic.account" },
         ],
       },
-      { title: "Customers", items: [{ title: "Customer Invoice", odoo: "account.move" }, { title: "Credit Note", odoo: "account.move" }, { title: "Customer Payment", odoo: "account.payment" }] },
-      { title: "Vendors", items: [{ title: "Vendor Bills", route: "bill" }, { title: "Debit Note", odoo: "account.move" }, { title: "Vendor Payment", route: "payment" }] },
+      { title: "Customers", items: [{ title: "Customer Invoice", route: "invoice" }, { title: "Credit Note", route: "creditnote" }, { title: "Customer Payment", route: "payment?type=inbound" }] },
+      { title: "Vendors", items: [{ title: "Vendor Bills", route: "bill" }, { title: "Debit Note", route: "debitnote" }, { title: "Vendor Payment", route: "payment?type=outbound" }] },
       { title: "Jurnal Entry", route: "journal" },
       { title: "Asset", odoo: "account.asset" },
       { title: "Budget", odoo: "account.budget" },

@@ -18,9 +18,15 @@ import * as pricelist from "./pages/pricelist.js";
 import * as product from "./pages/product.js";
 import * as category from "./pages/category.js";
 import * as journal from "./pages/journal.js";
+import * as customer from "./pages/customer.js";
+import * as sale from "./pages/sale.js";
+import * as invoice from "./pages/invoice.js";
+import * as delivery from "./pages/delivery.js";
+import * as creditnote from "./pages/creditnote.js";
+import * as debitnote from "./pages/debitnote.js";
 import * as soon from "./pages/soon.js";
 
-const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, soon };
+const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, soon };
 let currentId = "pr";
 
 function parseHash() {

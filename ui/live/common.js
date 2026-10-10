@@ -260,6 +260,7 @@ export const referenceDefaultCategories = () =>
     const byName = Object.fromEntries(rows.map((r) => [r.name, r.res_id]));
     return { goods: byName.product_category_goods ?? null, services: byName.product_category_services ?? null };
   });
+export const referencePricelists = () => reference("pricelists", () => searchRead("product.pricelist", [], ["display_name"], { order: "name" }));
 export const referenceTaxes = (type) => reference(`taxes-${type}`, () => searchRead("account.tax", [["type_tax_use", "=", type]], ["display_name"], { order: "sequence, id" }));
 export const referenceSelection = (model, field) =>
   reference(`sel-${model}-${field}`, async () => {

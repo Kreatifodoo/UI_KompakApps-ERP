@@ -93,3 +93,19 @@ Format: satu entri per keputusan. Status: **Diputuskan**, **Terbuka**, atau **Pe
 - **Penyelarasan UI**: item jurnal pada tagihan dan pembayaran (draft tampil sebagai pratinjau), akun dan profil aset per baris tagihan (edit saat draft), akun hutang dan posisi fiskal di Vendor Master, akun beban/pendapatan dan kategori di Product Master (kategori bawaan Goods atau Services, barang baru dilacak stoknya, ringkasan akun yang didebit), halaman Product Category (metode biaya, valuasi, akun persediaan), halaman Jurnal Entry baca-saja yang menunjuk ke dokumen sumber, dan nilai persediaan pada penerimaan.
 - **Kebijakan kontrol tagihan**: produk jasa memakai "kuantitas yang dipesan" (bawaan Odoo). Dengan "diterima", tagihan jasa bernilai nol karena jasa tidak punya penerimaan; UI kini mengisi kebijakan menurut tipe produk.
 - **Belum**: laporan keuangan di UI dan template MIS Builder sesuai COA, halaman Bank Transaction dan rekonsiliasi, pajak pemotongan (PPh 23/4(2)) yang tidak dibawa `l10n_id`, anggaran, halaman Chart of Account, Tax, dan Journal master.
+
+## D14. Fase 4 dimulai dari Order-to-Cash: kerangka bersama dan temuan Odoo 19
+- **Status**: Diputuskan (2026-10-10)
+- **Cakupan**: Customer Master, Quotation dan Sales Order (dialog Buat Faktur: reguler dan uang muka), Delivery Order dan Return (GR dan DO), Faktur Pelanggan, Nota Kredit Pelanggan, Nota Debit Vendor, dan Customer Payment, dengan pola yang sama seperti Procure-to-Pay (form mengikuti Odoo, hanya field yang berubah dikirim, jurnal dan pratinjau jurnal di setiap dokumen).
+- **Kerangka bersama** (agar sisi pembelian dan penjualan tidak menyimpang): `invoices.js` (tagihan, faktur, nota kredit, nota debit), `pickings.js` (penerimaan, pengiriman, retur), `partners.js` (vendor, customer). Halaman lama (`bill.js`, `receipt.js`, `vendor.js`) kini hanya konfigurasi.
+- **Jurnal per tahap**:
+
+| Tahap | Jurnal |
+|---|---|
+| Konfirmasi SO, pengiriman barang | tidak ada |
+| Faktur pelanggan diposting | Dr Piutang Usaha, Cr Penjualan, Cr PPN Keluaran; perpetual: Dr HPP, Cr Persediaan sebesar biaya rata-rata |
+| Pembayaran pelanggan | Dr Pembayaran Tertunda (Outstanding Receipts), Cr Piutang Usaha |
+| Nota kredit | kebalikan faktur, termasuk HPP dan Persediaan |
+
+- **Temuan**: (1) baris SO yang dibuat dengan harga eksplisit dikembalikan ke harga daftar saat jumlahnya diubah; harga dan diskon manual harus ditulis sebagai langkah kedua (sama seperti D10), dan penulisan header tidak menghitung ulang harga. (2) `invoice_status` sudah "to invoice" saat SO dikonfirmasi (faktur atas kuantitas pesanan), jadi Buat Faktur tersedia sebelum pengiriman. (3) Wizard nota kredit (`account.move.reversal`) lewat JSON-2 butuh `journal_id` dan `move_ids` eksplisit. (4) Jumlah retur bawaan wizard adalah 0. (5) Kode transaksi faktur pajak (lokalisasi Indonesia) terisi otomatis pada faktur pelanggan ("04", DPP nilai lain) dan bisa diubah saat draft. (6) Pengguna butuh grup Sales untuk membuat SO; test memberi `sales_team.group_sale_manager`.
+- **Belum**: kirim quotation lewat email/PDF/portal, mengurangkan uang muka pada faktur akhir, master daftar harga dan promosi, penerapan nota kredit ke faktur terbuka (rekonsiliasi), pemeriksaan batas kredit saat konfirmasi, ekspor e-Faktur Coretax, laporan penjualan, kunci SO.

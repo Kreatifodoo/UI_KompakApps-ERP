@@ -46,7 +46,9 @@ async function renderList(query) {
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
   const filter = query.get("state") ?? "";
   const ids = (query.get("ids") ?? "").split(",").map(Number).filter(Boolean);
+  const type = ["inbound", "outbound"].includes(query.get("type")) ? query.get("type") : "";
   const domain = [];
+  if (type) domain.push(["payment_type", "=", type]);
   if (filter) domain.push(["state", "=", filter]);
   if (ids.length) domain.push(["id", "in", ids]);
   const rows = await searchRead(
@@ -72,14 +74,14 @@ async function renderList(query) {
     .join("");
   app.innerHTML =
     pageHeader(
-      "Pembayaran",
+      type === "inbound" ? "Pembayaran Pelanggan" : type === "outbound" ? "Pembayaran Vendor" : "Pembayaran",
       `${filterSelect(options, filter)}
        <button data-action="refresh" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50" aria-label="Muat ulang"><i class="fas fa-rotate"></i></button>`,
     ) +
     table(
       [{ label: "Nomor" }, { label: "Tanggal" }, { label: "Mitra" }, { label: "Jurnal" }, { label: "Metode" }, { label: "Tipe" }, { label: "Jumlah", right: true }, { label: "Status" }],
       body,
-      "Belum ada pembayaran. Buat dari tagihan vendor dengan tombol Bayar.",
+      "Belum ada pembayaran. Buat dari tagihan vendor atau faktur pelanggan dengan tombol Bayar.",
     );
 }
 
@@ -88,7 +90,7 @@ async function renderForm(id) {
   const pay = await readOne("account.payment", id, [
     "name", "state", "payment_type", "partner_id", "amount", "currency_id", "date", "memo", "journal_id", "payment_method_line_id",
     "partner_bank_id", "is_sent", "move_id", "reconciled_bill_ids", "reconciled_bills_count", "outstanding_account_id", "destination_account_id",
-    "is_matched",
+    "is_matched", "reconciled_invoice_ids", "reconciled_invoices_count",
   ]);
   if (!pay) {
     app.innerHTML = '<p class="text-sm text-rose-600">Pembayaran tidak ditemukan.</p>';
@@ -104,7 +106,9 @@ async function renderForm(id) {
       ${statusbar(FLOW, STATES, pay.state)}
     </div>
     <div class="flex flex-wrap gap-2 mb-4">${statTiles([
-      { count: pay.reconciled_bills_count, label: "Tagihan Vendor", icon: "fa-file-invoice", href: `#/bill?ids=${pay.reconciled_bill_ids.join(",")}` },
+      pay.payment_type === "inbound"
+        ? { count: pay.reconciled_invoices_count, label: "Faktur Pelanggan", icon: "fa-file-invoice-dollar", href: `#/invoice?ids=${pay.reconciled_invoice_ids.join(",")}` }
+        : { count: pay.reconciled_bills_count, label: "Tagihan Vendor", icon: "fa-file-invoice", href: `#/bill?ids=${pay.reconciled_bill_ids.join(",")}` },
       { count: items.length, label: "Item Jurnal", icon: "fa-book", target: "journal-items" },
     ])}</div>
     <h1 class="text-2xl font-bold text-gray-900 mb-3">${esc(pay.name || "Draft")}</h1>

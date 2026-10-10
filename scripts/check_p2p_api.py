@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Uji regresi alur Procure-to-Pay lewat API JSON-2, dengan panggilan yang sama seperti UI Nusara.
+"""Uji regresi alur Procure-to-Pay dan Order-to-Cash lewat API JSON-2, dengan panggilan yang sama seperti UI Nusara.
 
-Alur: Purchase Request -> RFQ (wizard) -> PO -> penerimaan sebagian + backorder -> penerimaan sisa ->
+Procure-to-Pay: Purchase Request -> RFQ (wizard) -> PO -> penerimaan sebagian + backorder -> penerimaan sisa ->
 tagihan vendor -> bayar sebagian -> bayar sisa. Juga menjaga jebakan harga manual PO (lihat
-docs/DECISIONS.md, D10).
+docs/DECISIONS.md, D10). Lalu master data Purchase dan Order-to-Cash: Sales Order -> pengiriman -> faktur
+pelanggan -> pembayaran -> nota kredit, termasuk jurnal di tiap tahap.
 
-Skrip ini MENULIS data (PR, PO, tagihan, pembayaran), jadi hanya jalankan pada database uji.
+Skrip ini MENULIS data (PR, PO, SO, tagihan, faktur, pembayaran), jadi hanya jalankan pada database uji.
 Butuh data contoh dari scripts/seed_demo.py dan API key milik pengguna uji.
 
     NUSARA_API_KEY=... python3 scripts/check_p2p_api.py --yes [--url http://127.0.0.1:8080]
@@ -183,6 +184,7 @@ def main():
         )
 
     check_master_data(api)
+    check_order_to_cash(api, product)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -245,6 +247,81 @@ def check_master_data(api):
     check(not api.search("product.template", [["id", "=", tmpl_id]], ["id"]), "produk diarsipkan hilang dari daftar aktif")
     api.call("product.template", "action_unarchive", ids=[tmpl_id])
     check(bool(api.search("product.template", [["id", "=", tmpl_id]], ["id"])), "produk diaktifkan kembali")
+
+
+def check_order_to_cash(api, product):
+    """Sales Order sampai nota kredit atas barang stok yang sudah diterima oleh alur Procure-to-Pay."""
+    step("Order-to-Cash: SO, pengiriman, faktur pelanggan, pembayaran, nota kredit")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    [customer_id] = api.call("res.partner", "create", vals_list=[{"name": f"Pelanggan Regresi {tag}", "is_company": True, "customer_rank": 1}])
+    list_price = api.read("product.product", product["id"], ["lst_price"])["lst_price"]
+
+    def journal_count():
+        return api.call("account.move", "search_count", domain=[])
+
+    [so_id] = api.call("sale.order", "create", vals_list=[{
+        "partner_id": customer_id, "order_line": [[0, 0, {"product_id": product["id"], "product_uom_qty": 4.0}]],
+    }])
+    line = api.search("sale.order.line", [["order_id", "=", so_id]], ["price_unit"])[0]
+    check(line["price_unit"] == list_price, f"harga baris SO datang dari daftar harga ({list_price:,.0f})")
+    # Harga dan diskon manual ditulis sebagai langkah kedua, lalu kuantitas diubah: keduanya harus bertahan.
+    api.call("sale.order.line", "write", ids=[line["id"]], vals={"price_unit": 120_000.0, "discount": 10.0})
+    api.call("sale.order.line", "write", ids=[line["id"]], vals={"product_uom_qty": 3.0})
+    line = api.search("sale.order.line", [["order_id", "=", so_id]], ["price_unit", "discount", "price_subtotal"])[0]
+    check(line["price_unit"] == 120_000.0 and line["discount"] == 10.0, "harga dan diskon manual bertahan saat kuantitas diubah")
+    check(line["price_subtotal"] == 324_000.0, "subtotal 3 x 120.000 dikurangi diskon 10%")
+
+    before = journal_count()
+    api.call("sale.order", "action_confirm", ids=[so_id])
+    order = api.read("sale.order", so_id, ["state", "amount_total", "delivery_count"])
+    check(order["state"] == "sale" and order["delivery_count"] == 1, "SO dikonfirmasi dan pengiriman terbentuk")
+    check(journal_count() == before, "konfirmasi SO tidak membuat jurnal")
+    picking = api.search("stock.picking", [["sale_id", "=", so_id]], ["id", "state", "picking_type_code"])[0]
+    check(picking["picking_type_code"] == "outgoing" and picking["state"] == "assigned", "pengiriman berstatus Siap (stok tersedia)")
+    move = api.search("stock.move", [["picking_id", "=", picking["id"]]], ["id"])[0]
+    api.call("stock.move", "write", ids=[move["id"]], vals={"quantity": 3.0, "picked": True})
+    check(api.call("stock.picking", "button_validate", ids=[picking["id"]]) is True, "pengiriman divalidasi tanpa dialog")
+    check(api.read("sale.order", so_id, ["delivery_status"])["delivery_status"] == "full", "SO terkirim penuh")
+    check(journal_count() == before, "pengiriman barang tidak membuat jurnal")
+
+    context = {"active_model": "sale.order", "active_ids": [so_id], "active_id": so_id}
+    wizard = api.call("sale.advance.payment.inv", "create", vals_list=[{}], context=context)
+    result = api.call("sale.advance.payment.inv", "create_invoices", ids=wizard, context=context)
+    invoice_id = result["res_id"]
+    invoice = api.read("account.move", invoice_id, ["move_type", "state", "amount_total", "amount_untaxed", "l10n_id_kode_transaksi", "journal_id"])
+    check(invoice["move_type"] == "out_invoice" and invoice["state"] == "draft", "faktur pelanggan draft terbentuk")
+    check(invoice["amount_total"] == order["amount_total"], "total faktur sama dengan total SO")
+    check(bool(invoice["l10n_id_kode_transaksi"]), "kode transaksi faktur pajak terisi dari lokalisasi Indonesia")
+    api.call("account.move", "action_post", ids=[invoice_id])
+    items = api.search("account.move.line", [["move_id", "=", invoice_id]], ["account_id", "debit", "credit"])
+    types = {a["id"]: a["account_type"] for a in api.search("account.account", [["id", "in", [i["account_id"][0] for i in items]]], ["account_type"])}
+    check(abs(sum(i["debit"] for i in items) - sum(i["credit"] for i in items)) < 0.005, "jurnal faktur seimbang")
+    receivable = [i for i in items if types[i["account_id"][0]] == "asset_receivable"]
+    check(len(receivable) == 1 and receivable[0]["debit"] == invoice["amount_total"], "piutang usaha didebit sebesar total faktur")
+    income = [i for i in items if types[i["account_id"][0]] in ("income", "income_other")]
+    check(sum(i["credit"] for i in income) == 324_000.0, "penjualan dikredit sebesar subtotal")
+    cost = [i for i in items if types[i["account_id"][0]] in ("expense", "expense_direct_cost") and i["debit"]]
+    stock = [i for i in items if types[i["account_id"][0]] == "asset_current" and i["credit"]]
+    if cost and stock:
+        check(sum(i["debit"] for i in cost) == sum(i["credit"] for i in stock) > 0, "valuasi perpetual: HPP didebit dan Persediaan dikredit sama besar")
+    else:
+        check(False, "faktur penjualan barang stok harus menjurnal HPP dan Persediaan (valuasi perpetual)")
+
+    pay_context = {"active_model": "account.move", "active_ids": [invoice_id]}
+    pay_wizard = api.call("account.payment.register", "create", vals_list=[{}], context=pay_context)
+    api.call("account.payment.register", "action_create_payments", ids=pay_wizard, context=pay_context)
+    paid = api.read("account.move", invoice_id, ["payment_state", "amount_residual"])
+    check(paid["payment_state"] in ("paid", "in_payment") and paid["amount_residual"] == 0.0, "faktur lunas setelah pembayaran pelanggan")
+    payment = api.search("account.payment", [["partner_id", "=", customer_id]], ["payment_type", "amount"])[0]
+    check(payment["payment_type"] == "inbound" and payment["amount"] == invoice["amount_total"], "pembayaran masuk sebesar total faktur")
+
+    reverse_context = {"active_model": "account.move", "active_ids": [invoice_id]}
+    reversal = api.call("account.move.reversal", "create", vals_list=[{"reason": "Retur regresi", "journal_id": invoice["journal_id"][0], "move_ids": [[6, 0, [invoice_id]]]}], context=reverse_context)
+    credit_id = api.call("account.move.reversal", "refund_moves", ids=reversal, context=reverse_context)["res_id"]
+    api.call("account.move", "action_post", ids=[credit_id])
+    credit = api.read("account.move", credit_id, ["move_type", "state", "amount_total", "reversed_entry_id"])
+    check(credit["move_type"] == "out_refund" and credit["state"] == "posted" and credit["amount_total"] == invoice["amount_total"], "nota kredit terposting sebesar faktur")
+    check(credit["reversed_entry_id"][0] == invoice_id, "nota kredit menunjuk ke faktur asal")
 
 
 def bill_total(api, bill_id):

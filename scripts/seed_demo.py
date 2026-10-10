@@ -31,6 +31,7 @@ product = env["product.product"].search([("name", "=", "Bahan Baku Nusara")], li
         "is_storable": True,
         "categ_id": goods.id,
         "standard_price": 100000.0,
+        "list_price": 150000.0,
         "supplier_taxes_id": [(6, 0, tax.ids)],
     }
 )
@@ -49,9 +50,15 @@ if not env["product.supplierinfo"].search(
         }
     )
 
+if product.list_price == 1.0:  # bawaan Odoo; beri harga jual contoh agar Sales Order terisi otomatis
+    product.list_price = 150000.0
+customer = env["res.partner"].search([("name", "=", "PT Pelanggan Nusantara")], limit=1) or env[
+    "res.partner"
+].create({"name": "PT Pelanggan Nusantara", "is_company": True, "customer_rank": 1})
+
 # Administrator perlu hak manager Purchase Request untuk menyetujui dan menyelesaikan PR.
 env.ref("base.user_admin").group_ids = [
     (4, env.ref("purchase_request.group_purchase_request_manager").id)
 ]
 env.cr.commit()
-print("SEED_OK", company.currency_id.name, product.display_name, vendor.display_name)
+print("SEED_OK", company.currency_id.name, product.display_name, vendor.display_name, customer.display_name)

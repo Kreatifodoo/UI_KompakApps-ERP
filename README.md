@@ -93,6 +93,11 @@ Kerangka di `ui/live/` memakai **desain sidebar prototipe** (9 modul, menu berti
 | Purchase, Purchase Request, Inventory, Sales, Accounting › Master › Product Master | Daftar dan form produk, pajak, vendor, arsip | `product.template` |
 | Inventory › Master › Product Category, Accounting › Master › Product Category | Metode biaya, valuasi persediaan, akun persediaan/beban/pendapatan | `product.category` |
 | Accounting › Jurnal Entry | Daftar jurnal (baca-saja) dengan item jurnal dan dokumen sumber | `account.move` |
+| Sales › Master › Customers Master, Accounting › Master › Customer Master | Pelanggan: alamat, NPWP/PKP, identitas pembeli Coretax, batas kredit, akun piutang | `res.partner` |
+| Sales › Quotations, Sales Orders | Quotation ke Sales Order, dialog Buat Faktur (reguler dan uang muka) | `sale.order`, `sale.advance.payment.inv` |
+| Inventory › Operation › Delivery Order, Return GR, Return DO | Pengiriman barang, backorder, retur | `stock.picking`, `stock.return.picking` |
+| Sales › Create Customer Invoice, Accounting › Customers › Customer Invoice, Credit Note, Customer Payment | Faktur pelanggan (kode transaksi faktur pajak), nota kredit, pembayaran masuk | `account.move`, `account.move.reversal`, `account.payment` |
+| Accounting › Vendors › Debit Note | Nota debit vendor dari tagihan terposting | `account.move` |
 | Purchase Request › Purchase Request | Daftar dan form PR | `purchase.request` (OCA) |
 | Purchase › Request for Quotation, Purchase Order | RFQ dan PO | `purchase.order` |
 | Purchase › Create Vendor Bill, Accounting › Vendors › Vendor Bills | Tagihan vendor, dialog Bayar | `account.move`, `account.payment.register` |
@@ -102,6 +107,8 @@ Kerangka di `ui/live/` memakai **desain sidebar prototipe** (9 modul, menu berti
 Data master Purchase (vendor, produk, harga vendor) bisa dibuat, diubah, dan diarsipkan dari UI; harga vendor langsung menggerakkan harga baris RFQ.
 
 Tagihan dan pembayaran menampilkan item jurnal yang tercipta; Jurnal Entry memperlihatkan semuanya. Barang stok dicatat dengan valuasi perpetual dan biaya rata-rata (D13).
+
+Order-to-Cash juga bisa dijalankan penuh: **Quotation → Sales Order → pengiriman → faktur pelanggan → pembayaran → nota kredit/retur** (D14).
 
 Alur yang bisa dijalankan penuh dari UI: **Purchase Request → RFQ → PO → penerimaan (termasuk sebagian dengan backorder) → tagihan vendor → pembayaran (termasuk bayar sebagian)**. Form mengikuti view Odoo: tombol header menurut status dan hak, bilah status, tombol statistik, field yang hanya bisa diedit saat draft, tabel barang, total, dan chatter. Hanya untuk pengembangan lokal (HTTP, hanya `127.0.0.1`).
 
@@ -124,7 +131,7 @@ Nginx pada layanan `ui` hanya meneruskan `/json/2/` ke Odoo, sehingga antarmuka 
 
 ### Uji regresi alur Procure-to-Pay
 
-`scripts/check_p2p_api.py` menjalankan seluruh alur di atas lewat API (panggilan yang sama dengan UI) dan memeriksa 42 hal, termasuk jurnal tagihan dan pembayaran, penerimaan sebagian dengan backorder, pembayaran bertahap, dan data master (vendor, produk, harga vendor bertingkat, arsip). Skrip ini **menulis data**, jadi pakai database uji dan API key pengguna uji:
+`scripts/check_p2p_api.py` menjalankan seluruh alur di atas lewat API (panggilan yang sama dengan UI) dan memeriksa 62 hal, termasuk jurnal tagihan dan pembayaran, Sales Order sampai nota kredit, penerimaan sebagian dengan backorder, pembayaran bertahap, dan data master (vendor, produk, harga vendor bertingkat, arsip). Skrip ini **menulis data**, jadi pakai database uji dan API key pengguna uji:
 
 ```bash
 NUSARA_API_KEY=<api-key-uji> python3 scripts/check_p2p_api.py --yes --url http://127.0.0.1:8080
