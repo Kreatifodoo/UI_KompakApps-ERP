@@ -188,6 +188,7 @@ def main():
     check_financial_reports(api)
     check_bank_reconciliation(api)
     check_inventory(api, product)
+    check_warehouse_master(api, product)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -356,15 +357,18 @@ def check_inventory(api, product):
     api.call("stock.scrap", "unlink", ids=[too_much])
 
     warehouse = api.search("stock.warehouse", [], ["id", "lot_stock_id"], limit=1)[0]
-    shortage = {"product_min_qty": 1e6, "product_max_qty": 1e6 + 10, "trigger": "manual"}
     existing = api.search(
         "stock.warehouse.orderpoint", [["product_id", "=", product["id"]], ["location_id", "=", warehouse["lot_stock_id"][0]]],
-        ["id", "product_min_qty", "product_max_qty", "trigger"],
+        ["id", "product_min_qty", "product_max_qty", "trigger", "qty_forecast"],
     )
     if existing:  # aturan sudah ada (database yang dipakai berulang): ubah sementara lalu kembalikan
-        rule, original = existing[0]["id"], {k: existing[0][k] for k in shortage}
+        rule = existing[0]["id"]
+        original = {k: existing[0][k] for k in ("product_min_qty", "product_max_qty", "trigger")}
+        forecast = existing[0]["qty_forecast"]
+        shortage = {"product_min_qty": forecast + 100, "product_max_qty": forecast + 150, "trigger": "manual"}
         api.call("stock.warehouse.orderpoint", "write", ids=[rule], vals=shortage)
     else:
+        shortage = {"product_min_qty": 1000.0, "product_max_qty": 1100.0, "trigger": "manual"}
         [rule] = api.call("stock.warehouse.orderpoint", "create", vals_list=[{
             "product_id": product["id"], "warehouse_id": warehouse["id"], "location_id": warehouse["lot_stock_id"][0], **shortage,
         }])
@@ -372,7 +376,7 @@ def check_inventory(api, product):
     needed = api.read("stock.warehouse.orderpoint", rule, ["qty_to_order"])
     check(needed["qty_to_order"] > 0, "stok di bawah minimum menghasilkan jumlah yang perlu dipesan")
     notice = api.call("stock.warehouse.orderpoint", "action_replenish", ids=[rule])
-    labels = [link["label"] for link in notice.get("params", {}).get("links", [])]
+    labels = [link["label"] for link in notice.get("params", {}).get("links", [])] if isinstance(notice, dict) else []
     check(bool(labels), "pengisian ulang membuat RFQ dan menyebut nomornya")
     rfq = api.search("purchase.order", [["name", "in", labels]], ["id", "state", "origin"])[0] if labels else None
     check(rfq is not None and rfq["state"] == "draft", "RFQ dari pengisian ulang berstatus draft")
@@ -380,6 +384,37 @@ def check_inventory(api, product):
         api.call("stock.warehouse.orderpoint", "write", ids=[rule], vals=original)
     else:
         api.call("stock.warehouse.orderpoint", "unlink", ids=[rule])
+
+
+def check_warehouse_master(api, product):
+    """Lokasi, satuan, aturan penyimpanan, dan transfer internal (halaman Warehouse & Location, UoM, Put away, Transfer)."""
+    step("Master gudang: lokasi, satuan, aturan penyimpanan, transfer internal")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    api.call("res.config.settings", "execute", ids=api.call("res.config.settings", "create", vals_list=[{"group_stock_multi_locations": True, "group_stock_production_lot": True}]))
+    check(bool(api.call("res.users", "has_group", ids=[api.search("res.users", [["login", "!=", False]], ["id"], limit=1)[0]["id"]], group_ext_id="stock.group_stock_multi_locations")), "fitur Storage Locations aktif lewat pengaturan")
+    warehouse = api.search("stock.warehouse", [], ["id", "lot_stock_id"], limit=1)[0]
+    stock_location = warehouse["lot_stock_id"][0]
+    [rack] = api.call("stock.location", "create", vals_list=[{"name": f"Rak {tag}", "location_id": stock_location, "usage": "internal"}])
+    check(api.read("stock.location", rack, ["complete_name"])["complete_name"].endswith(f"Rak {tag}"), "lokasi baru berada di bawah lokasi induknya")
+    [unit] = api.call("uom.uom", "create", vals_list=[{"name": f"Lusin {tag}", "relative_uom_id": product["uom_id"][0], "relative_factor": 12.0}])
+    check(api.read("uom.uom", unit, ["factor"])["factor"] == 12.0, "satuan baru berisi 12 satuan acuan")
+    [rule] = api.call("stock.putaway.rule", "create", vals_list=[{"product_id": product["id"], "location_in_id": warehouse["lot_stock_id"][0], "location_out_id": rack, "sequence": 99}])
+    check(api.read("stock.putaway.rule", rule, ["location_out_id"])["location_out_id"][0] == rack, "aturan penyimpanan tersimpan")
+    api.call("stock.putaway.rule", "unlink", ids=[rule])
+    internal = api.search("stock.picking.type", [["code", "=", "internal"], ["active", "=", True]], ["id"], limit=1)
+    check(bool(internal), "tipe operasi Internal Transfers aktif")
+    before = api.search("stock.quant", [["product_id", "=", product["id"]], ["location_id", "=", rack]], ["quantity"])
+    start = before[0]["quantity"] if before else 0.0
+    [picking] = api.call("stock.picking", "create", vals_list=[{
+        "picking_type_id": internal[0]["id"], "location_id": stock_location, "location_dest_id": rack,
+        "move_ids": [[0, 0, {"product_id": product["id"], "product_uom_qty": 2.0, "location_id": stock_location, "location_dest_id": rack}]],
+    }])
+    api.call("stock.picking", "action_confirm", ids=[picking])
+    move = api.search("stock.move", [["picking_id", "=", picking]], ["id"])[0]["id"]
+    api.call("stock.move", "write", ids=[move], vals={"quantity": 2.0, "picked": True})
+    check(api.call("stock.picking", "button_validate", ids=[picking]) is True, "transfer internal divalidasi tanpa dialog")
+    after = api.search("stock.quant", [["product_id", "=", product["id"]], ["location_id", "=", rack]], ["quantity"])[0]["quantity"]
+    check(after == start + 2.0, "stok berpindah ke lokasi tujuan")
 
 
 def check_bank_reconciliation(api):

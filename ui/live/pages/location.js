@@ -1,0 +1,131 @@
+// Lokasi gudang (stock.location): hierarki lokasi internal di dalam gudang (rak, zona), dengan tipe, induk, dan arsip.
+import {
+  INPUT, app, call, cell, esc, fieldBlock, filterSelect, guarded, pageHeader, readOne, registerLookup, rowLink, runLookup, searchBox, searchRead, table,
+  toast, button,
+} from "../common.js";
+
+const USAGE = { internal: "Internal", view: "Virtual (induk)", supplier: "Pemasok", customer: "Pelanggan", inventory: "Inventory Loss", production: "Produksi", transit: "Transit" };
+const FILTERS = [["internal", "Lokasi internal"], ["all", "Semua tipe"], ["archived", "Diarsipkan"]];
+
+let form = null; // { id, values, initial }
+let last = { sub: "", query: new URLSearchParams() };
+export const leave = () => {
+  form = null;
+};
+const reload = () => render(last.sub, last.query);
+
+registerLookup("location-parent", {
+  search: (q) => searchRead("stock.location", [["usage", "in", ["internal", "view"]], ...(q ? [["complete_name", "ilike", q]] : [])], ["display_name"], { limit: 10, order: "complete_name" }),
+  isChosen: (input) => form?.values.parent?.display_name === input.value,
+  choose: (input, item) => {
+    form.values.parent = item;
+    input.value = item.display_name;
+  },
+});
+
+export async function render(sub, query) {
+  last = { sub, query };
+  if (sub === "") return renderList(query);
+  return renderForm(sub === "new" ? null : Number(sub));
+}
+
+async function renderList(query) {
+  app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
+  const filter = query.get("state") || "internal";
+  const text = query.get("q") ?? "";
+  const warehouse = Number(query.get("warehouse")) || null;
+  const domain = [];
+  if (filter === "internal") domain.push(["usage", "=", "internal"]);
+  else if (filter === "archived") domain.push(["active", "=", false]);
+  if (warehouse) domain.push(["warehouse_id", "=", warehouse]);
+  if (text) domain.push(["complete_name", "ilike", text]);
+  const rows = await searchRead("stock.location", domain, ["complete_name", "usage", "warehouse_id", "location_id"], { order: "complete_name", limit: 300, context: { active_test: filter !== "archived" } });
+  const body = rows.map((r) => rowLink(`#/location/${r.id}`, [cell(r.complete_name, { strong: true }), cell(USAGE[r.usage] ?? r.usage), cell(r.warehouse_id?.[1] ?? "-")])).join("");
+  app.innerHTML =
+    pageHeader(
+      "Lokasi Gudang",
+      `${searchBox(text, "Cari lokasi")}${filterSelect(FILTERS, filter)}
+       <a href="#/warehouse" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Gudang</a>
+       <a href="#/location/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>Lokasi Baru</a>`,
+    ) + table([{ label: "Lokasi" }, { label: "Tipe" }, { label: "Gudang" }], body, "Tidak ada lokasi yang cocok.");
+}
+
+async function renderForm(id) {
+  app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
+  let loc = null;
+  if (id) {
+    loc = await readOne("stock.location", id, ["name", "complete_name", "usage", "location_id", "warehouse_id", "active"]);
+    if (!loc) {
+      app.innerHTML = '<p class="text-sm text-rose-600">Lokasi tidak ditemukan.</p>';
+      return;
+    }
+  }
+  if (!form || form.id !== (loc?.id ?? null)) {
+    const values = loc
+      ? { name: loc.name, usage: loc.usage, parent: loc.location_id ? { id: loc.location_id[0], display_name: loc.location_id[1] } : null }
+      : { name: "", usage: "internal", parent: null };
+    form = { id: loc?.id ?? null, values, initial: loc ? { name: values.name, usage: values.usage, parent: values.parent?.id ?? null } : null };
+  }
+  const v = form.values;
+  app.innerHTML = `
+    <div class="text-sm text-gray-500 mb-2"><a href="#/location" class="hover:text-indigo-600">Lokasi Gudang</a> / ${esc(loc?.complete_name ?? "Baru")}</div>
+    <div class="flex flex-wrap gap-2 mb-3">${loc ? button("toggle-active", loc.active ? "Arsipkan" : "Aktifkan Kembali", loc.active ? "danger" : "primary", { id: loc.id }) : ""}</div>
+    <h1 class="text-2xl font-bold text-gray-900 mb-3">${esc(loc?.complete_name ?? "Lokasi Baru")}</h1>
+    <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 grid md:grid-cols-2 gap-x-8 gap-y-4">
+      ${fieldBlock("Nama Lokasi", `<input data-loc="name" value="${esc(v.name)}" class="${INPUT}">`)}
+      ${fieldBlock("Lokasi Induk", `<input data-lookup="location-parent" autocomplete="off" role="combobox" aria-autocomplete="list" value="${esc(v.parent?.display_name ?? "")}" placeholder="mis. WH/Stock" class="${INPUT}">`)}
+      ${fieldBlock("Tipe", `<select data-loc="usage" class="${INPUT}">${Object.entries(USAGE).map(([k, label]) => `<option value="${k}" ${k === v.usage ? "selected" : ""}>${esc(label)}</option>`).join("")}</select>`)}
+      ${fieldBlock("Gudang", `<div class="py-2 text-sm font-medium text-gray-900">${esc(loc?.warehouse_id?.[1] ?? "Mengikuti lokasi induk")}</div>`)}
+    </section>
+    <div class="flex gap-2 mt-4"><button data-action="save" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
+      <a href="#/location" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a></div>`;
+}
+
+async function persist() {
+  const v = form.values;
+  if (!v.name.trim()) throw new Error("Nama lokasi wajib diisi.");
+  const vals = { name: v.name.trim(), usage: v.usage, location_id: v.parent?.id ?? false };
+  if (!form.id) {
+    const [id] = await call("stock.location", "create", { vals_list: [{ ...vals, location_id: v.parent?.id ?? undefined }] });
+    return id;
+  }
+  const changed = {};
+  if (vals.name !== form.initial.name) changed.name = vals.name;
+  if (vals.usage !== form.initial.usage) changed.usage = vals.usage;
+  if ((v.parent?.id ?? null) !== form.initial.parent) changed.location_id = v.parent?.id ?? false;
+  if (Object.keys(changed).length) await call("stock.location", "write", { ids: [form.id], vals: changed });
+  return form.id;
+}
+
+export async function onClick(event, el) {
+  const { action } = el.dataset;
+  if (action === "discard") form = null;
+  else if (action === "save") {
+    const saved = await guarded(el, persist);
+    if (saved) {
+      const wasNew = !form.id;
+      form = null;
+      toast(wasNew ? "Lokasi dibuat." : "Perubahan disimpan.");
+      if (wasNew) location.hash = `#/location/${saved}`;
+      else reload();
+    }
+  } else if (action === "toggle-active") {
+    const archive = el.textContent.trim() === "Arsipkan";
+    if (archive && !window.confirm("Arsipkan lokasi ini? Lokasi yang masih berisi stok tidak bisa diarsipkan.")) return;
+    const ok = await guarded(el, () => call("stock.location", "write", { ids: [Number(el.dataset.id)], vals: { active: !archive } }));
+    if (ok !== undefined) {
+      form = null;
+      toast(archive ? "Lokasi diarsipkan." : "Lokasi diaktifkan kembali.");
+      reload();
+    }
+  }
+}
+
+export function onInput(event, el) {
+  if (!form) return;
+  if (el.dataset.loc) form.values[el.dataset.loc] = el.value;
+  else if (el.dataset.lookup === "location-parent") {
+    form.values.parent = null;
+    runLookup(el, 250);
+  }
+}
