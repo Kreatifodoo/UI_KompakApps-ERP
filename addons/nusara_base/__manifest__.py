@@ -21,7 +21,7 @@
         "account_asset_management",  # aset tetap dan penyusutan
         "account_usability",  # menu akuntansi yang disembunyikan di Community
     ],
-    "data": [],
+    "data": ["data/mis_reports.xml"],
     "installable": True,
     "application": False,
 }
