@@ -37,7 +37,7 @@ export function createPickingPage(config) {
     { action: "todo", label: "Tandai To-Do", method: "action_confirm", kind: "primary", show: (p) => p.state === "draft" },
     { action: "assign", label: "Cek Ketersediaan", method: "action_assign", kind: "primary", show: (p) => p.show_check_availability },
     { action: "validate", label: "Validasi", method: null, kind: "primary", show: (p) => !["done", "cancel"].includes(p.state) },
-    { action: "return", label: "Retur", method: null, show: (p) => p.state === "done" },
+    ...(config.returnRoute ? [{ action: "return", label: "Retur", method: null, show: (p) => p.state === "done" }] : []),
     { action: "cancel", label: "Batalkan", method: "action_cancel", kind: "danger", show: (p) => ["assigned", "confirmed", "draft", "waiting"].includes(p.state) },
   ];
   const DONE_MESSAGE = { todo: `${config.noun} ditandai to-do.`, assign: "Ketersediaan diperiksa.", cancel: `${config.noun} dibatalkan.` };
@@ -62,7 +62,7 @@ export function createPickingPage(config) {
     app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
     const filter = query.get("state") ?? "";
     const ids = (query.get("ids") ?? "").split(",").map(Number).filter(Boolean);
-    const source = Number(query.get(config.source.param)) || null;
+    const source = config.source ? Number(query.get(config.source.param)) || null : null;
     const returnsOnly = query.get("returns") === "1";
     const domain = [["picking_type_code", "=", config.code]];
     if (returnsOnly) domain.push(["return_id", "!=", false]);
@@ -86,7 +86,8 @@ export function createPickingPage(config) {
       pageHeader(
         returnsOnly ? `Retur ${config.code === "outgoing" ? "Penerimaan (keluar)" : "Pengiriman (masuk)"}` : config.title,
         `${filterSelect(options, filter)}
-         <button data-action="refresh" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50" aria-label="Muat ulang"><i class="fas fa-rotate"></i></button>`,
+         <button data-action="refresh" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50" aria-label="Muat ulang"><i class="fas fa-rotate"></i></button>
+         ${config.newHref ? `<a href="${config.newHref}" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>${config.newLabel}</a>` : ""}`,
       ) +
       table(
         [{ label: "Referensi" }, { label: config.partner }, { label: "Tanggal Terjadwal" }, { label: "Dokumen Sumber" }, { label: "Status" }],
@@ -99,7 +100,7 @@ export function createPickingPage(config) {
     app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
     const pk = await readOne("stock.picking", id, [
       "name", "state", "partner_id", "picking_type_id", "picking_type_code", "location_id", "location_dest_id", "scheduled_date", "date_deadline", "date_done",
-      "origin", "backorder_id", config.source.field, "show_check_availability", "return_count", "return_id", "return_ids",
+      "origin", "backorder_id", ...(config.source ? [config.source.field] : []), "show_check_availability", "return_count", "return_id", "return_ids",
     ]);
     if (!pk || pk.picking_type_code !== config.code) {
       app.innerHTML = `<p class="text-sm text-rose-600">${config.noun} tidak ditemukan.</p>`;
@@ -114,7 +115,7 @@ export function createPickingPage(config) {
     edits = new Map();
     const editable = !["done", "cancel"].includes(pk.state);
     const valued = pk.state === "done" && moves.some((m) => m.value);
-    const src = pk[config.source.field];
+    const src = config.source ? pk[config.source.field] : null;
 
     const rows = moves
       .map(
@@ -138,10 +139,14 @@ export function createPickingPage(config) {
         ${statusbar(FLOW, STATES, pk.state)}
       </div>
       <div class="flex flex-wrap gap-2 mb-4">${statTiles([
-        { count: src ? 1 : 0, label: `${config.source.label} ${src?.[1] ?? ""}`, icon: config.source.icon, href: `#/${config.source.route}/${src?.[0]}` },
+        ...(config.source ? [{ count: src ? 1 : 0, label: `${config.source.label} ${src?.[1] ?? ""}`, icon: config.source.icon, href: `#/${config.source.route}/${src?.[0]}` }] : []),
         { count: pk.backorder_id ? 1 : 0, label: `Backorder dari ${pk.backorder_id?.[1] ?? ""}`, icon: "fa-rotate-left", href: `#/${config.route}/${pk.backorder_id?.[0]}` },
-        { count: pk.return_id ? 1 : 0, label: `Retur dari ${pk.return_id?.[1] ?? ""}`, icon: "fa-rotate-left", href: `#/${config.route === "receipt" ? "delivery" : "receipt"}/${pk.return_id?.[0]}` },
-        { count: pk.return_count, label: "Retur", icon: "fa-rotate-left", href: `#/${config.returnRoute}?ids=${pk.return_ids.join(",")}` },
+        ...(config.returnRoute
+          ? [
+              { count: pk.return_id ? 1 : 0, label: `Retur dari ${pk.return_id?.[1] ?? ""}`, icon: "fa-rotate-left", href: `#/${config.route === "receipt" ? "delivery" : "receipt"}/${pk.return_id?.[0]}` },
+              { count: pk.return_count, label: "Retur", icon: "fa-rotate-left", href: `#/${config.returnRoute}?ids=${pk.return_ids.join(",")}` },
+            ]
+          : []),
       ])}</div>
       <h1 class="text-2xl font-bold text-gray-900 mb-3">${esc(pk.name)}</h1>
       <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 grid md:grid-cols-2 gap-x-8 gap-y-4">
@@ -159,7 +164,7 @@ export function createPickingPage(config) {
           .map((h, i) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${i === 2 || i === 3 || i === 5 ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
           <tbody class="divide-y divide-gray-100">${rows}</tbody></table>
       </section>
-      ${valued ? `<p class="mt-3 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3">${config.valuedNote(pk)}</p>` : ""}
+      ${valued && config.valuedNote ? `<p class="mt-3 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3">${config.valuedNote(pk)}</p>` : ""}
       ${chatterHtml("stock.picking", pk.id)}`;
     loadMessages("stock.picking", pk.id);
   }

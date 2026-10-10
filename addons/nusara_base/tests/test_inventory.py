@@ -124,3 +124,39 @@ class TestInventoryOperations(AccountTestInvoicingCommon):
         self.assertEqual(rfq.order_line.product_qty, 15.0)
         self.assertEqual(rfq.order_line.price_unit, 90000.0)
         self.assertEqual(rfq.origin, rule.name, "RFQ menunjuk ke aturan stok minimum asalnya")
+
+    def test_internal_transfer_moves_stock_between_locations(self):
+        # Transfer internal butuh fitur Storage Locations; mengaktifkannya lewat pengaturan, seperti halaman Warehouse Master.
+        self.env["res.config.settings"].create({"group_stock_multi_locations": True}).execute()
+        rack = self.env["stock.location"].create(
+            {"name": "Rak Uji", "location_id": self.stock_location.id, "usage": "internal"}
+        )
+        picking_type = self.env["stock.picking.type"].search(
+            [("code", "=", "internal"), ("warehouse_id", "=", self.warehouse.id)], limit=1
+        )
+        self.assertTrue(picking_type.active, "Tipe Internal Transfers aktif setelah Storage Locations dinyalakan")
+        picking = self.env["stock.picking"].create(
+            {
+                "picking_type_id": picking_type.id,
+                "location_id": self.stock_location.id,
+                "location_dest_id": rack.id,
+                "move_ids": [
+                    Command.create(
+                        {
+                            "product_id": self.product.id,
+                            "product_uom_qty": 4.0,
+                            "location_id": self.stock_location.id,
+                            "location_dest_id": rack.id,
+                        }
+                    )
+                ],
+            }
+        )
+        picking.action_confirm()
+        self.assertEqual(picking.state, "assigned")
+        picking.move_ids.quantity = 4.0
+        picking.move_ids.picked = True
+        picking.button_validate()
+        self.assertEqual(picking.state, "done")
+        self.assertEqual(self.product.with_context(location=rack.id).qty_available, 4.0)
+        self.assertEqual(self.product.with_context(location=self.stock_location.id).qty_available, 10.0)

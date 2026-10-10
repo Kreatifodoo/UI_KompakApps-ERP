@@ -32,16 +32,16 @@ export const MENU = [
         title: "Master",
         items: [
           { title: "Product Master", route: "product?state=all" }, { title: "Product Category", route: "category" },
-          { title: "Reorder Level", route: "orderpoint" }, { title: "Put away Rules", odoo: "stock.putaway.rule" },
-          { title: "Unit of Measurement Master", odoo: "uom.uom" }, { title: "Lot & Serial Number Master", odoo: "stock.lot" },
-          { title: "Warehouse & Location Master", odoo: "stock.warehouse" },
+          { title: "Reorder Level", route: "orderpoint" }, { title: "Put away Rules", route: "putaway" },
+          { title: "Unit of Measurement Master", route: "uom" }, { title: "Lot & Serial Number Master", odoo: "stock.lot" },
+          { title: "Warehouse & Location Master", route: "warehouse" },
         ],
       },
       {
         title: "Operation",
         items: [
-          { title: "Material Request", odoo: "stock.picking" }, { title: "Good Receive", route: "receipt" }, { title: "Return GR", route: "delivery?returns=1" },
-          { title: "Delivery Order", route: "delivery" }, { title: "Return DO", route: "receipt?returns=1" }, { title: "Internal Transfer", odoo: "stock.picking" },
+          { title: "Material Request", route: "transfer?state=draft" }, { title: "Good Receive", route: "receipt" }, { title: "Return GR", route: "delivery?returns=1" },
+          { title: "Delivery Order", route: "delivery" }, { title: "Return DO", route: "receipt?returns=1" }, { title: "Internal Transfer", route: "transfer" },
           { title: "Physical Inventory", route: "count" }, { title: "Replenishment", route: "replenish" },
           { title: "Scrap", route: "scrap" }, { title: "Inventory Loss", route: "moves?kind=loss" },
         ],
