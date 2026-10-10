@@ -128,9 +128,11 @@ export const MENU = [
       {
         title: "Reporting",
         items: [
-          { title: "Balance Sheet" }, { title: "Profit and Loss" }, { title: "Cash Flow Statement" }, { title: "General Ledger" }, { title: "Trial Balance" },
-          { title: "Partner Ledger" }, { title: "Aged Receivable" }, { title: "Aged Payable" }, { title: "Tax Report" }, { title: "Invoice Analysis" },
-          { title: "Executive Summary" }, { title: "Analytic Report" }, { title: "Budget Report" },
+          { title: "Balance Sheet", route: "report/neraca" }, { title: "Profit and Loss", route: "report/laba-rugi" },
+          { title: "Cash Flow Statement", route: "report/arus-kas" }, { title: "General Ledger", route: "ledger/general" },
+          { title: "Trial Balance", route: "report/neraca-saldo" }, { title: "Partner Ledger", route: "ledger/partner" },
+          { title: "Aged Receivable", route: "aging/receivable" }, { title: "Aged Payable", route: "aging/payable" }, { title: "Tax Report" },
+          { title: "Invoice Analysis" }, { title: "Executive Summary", route: "report/ringkasan" }, { title: "Analytic Report" }, { title: "Budget Report" },
         ],
       },
       { title: "Setting" },
@@ -143,7 +145,7 @@ export const MENU = [
 function annotate(items, prefix = "") {
   items.forEach((item, i) => {
     item.key = prefix ? `${prefix}.${i}` : String(i);
-    if (item.route) item.mod = item.route.split("?")[0];
+    if (item.route) item.mod = item.route.split("?")[0].split("/")[0];
     if (item.items) annotate(item.items, item.key);
   });
 }

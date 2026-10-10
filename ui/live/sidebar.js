@@ -64,8 +64,11 @@ function paint() {
 /** Menentukan menu aktif untuk halaman yang sedang dibuka. */
 export function resolveActive(pageId, sub, query) {
   if (pageId === "soon") return sub;
-  const candidates = LEAVES.filter((l) => l.mod === pageId);
+  let candidates = LEAVES.filter((l) => l.mod === pageId);
   if (!candidates.length) return null;
+  // Halaman dengan sub-rute (report/neraca, aging/payable): menu yang cocok persis dengan sub-rute didahulukan.
+  const exact = sub ? candidates.filter((l) => l.route.split("?")[0] === `${pageId}/${sub}`) : [];
+  if (exact.length) candidates = exact;
   // Beberapa menu bisa menuju halaman yang sama (mis. Product Master di tiap modul): prioritaskan yang cocok
   // dengan filter di URL, lalu menu yang baru diklik, lalu menu aktif sebelumnya.
   const wanted = ["state", "type", "returns"].map((key) => query.get(key) && `${key}=${query.get(key)}`).filter(Boolean);

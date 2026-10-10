@@ -185,6 +185,7 @@ def main():
 
     check_master_data(api)
     check_order_to_cash(api, product)
+    check_financial_reports(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -322,6 +323,41 @@ def check_order_to_cash(api, product):
     credit = api.read("account.move", credit_id, ["move_type", "state", "amount_total", "reversed_entry_id"])
     check(credit["move_type"] == "out_refund" and credit["state"] == "posted" and credit["amount_total"] == invoice["amount_total"], "nota kredit terposting sebesar faktur")
     check(credit["reversed_entry_id"][0] == invoice_id, "nota kredit menunjuk ke faktur asal")
+
+
+def mis_values(api, name, date_from, date_to):
+    """Hitung laporan MIS lewat instance sementara (seperti UI) dan kembalikan {label: nilai kolom pertama}."""
+    report = api.search("mis.report", [["name", "=", name]], ["id"])[0]["id"]
+    [instance] = api.call("mis.report.instance", "create", vals_list=[{
+        "name": f"{name} (regresi)", "report_id": report, "temporary": True, "target_move": "posted",
+        "period_ids": [[0, 0, {"name": "Periode", "mode": "fix", "manual_date_from": date_from, "manual_date_to": date_to}]],
+    }])
+    try:
+        result = api.call("mis.report.instance", "compute", ids=[instance])
+    finally:
+        api.call("mis.report.instance", "unlink", ids=[instance])
+    return {row["label"]: row["cells"][0].get("val") for row in result["body"]}, result
+
+
+def check_financial_reports(api):
+    """Laporan keuangan MIS: pemeriksaan bawaan templatnya harus 0 dan angkanya cocok dengan buku besar."""
+    step("Laporan keuangan: Laba Rugi, Neraca, Arus Kas, Neraca Saldo")
+    today = datetime.date.today()
+    start, end = today.replace(month=1, day=1).isoformat(), today.isoformat()
+    pnl, _ = mis_values(api, "Laba Rugi", start, end)
+    check(not pnl["Akun laba rugi belum terpetakan (harus 0)"], "laba rugi: semua akun laba rugi terpetakan")
+    check(pnl["LABA KOTOR"] == pnl["Pendapatan Bersih"] - pnl["Total Harga Pokok"], "laba rugi: laba kotor = pendapatan - harga pokok")
+    balance, _ = mis_values(api, "Neraca", start, end)
+    check(not balance["Selisih aset dan liabilitas + ekuitas (harus 0)"], "neraca: aset sama dengan liabilitas + ekuitas")
+    check(balance["Laba (Rugi) Tahun Berjalan"] == pnl["LABA BERSIH"], "neraca: laba berjalan sama dengan laba bersih laporan laba rugi")
+    cash, _ = mis_values(api, "Arus Kas", start, end)
+    check(not cash["Selisih saldo kas (harus 0)"], "arus kas: kenaikan kas cocok dengan saldo kas dan bank")
+    check(cash["Laba (Rugi) Bersih"] == pnl["LABA BERSIH"], "arus kas: berangkat dari laba bersih yang sama")
+    _, trial = mis_values(api, "Neraca Saldo", start, end)
+    total = trial["body"][0]["cells"]
+    check(total[1]["val"] == total[2]["val"] and total[1]["val"] > 0, "neraca saldo: total debit sama dengan total kredit")
+    ledger = api.call("account.move.line", "formatted_read_group", domain=[["parent_state", "=", "posted"], ["date", ">=", start], ["date", "<=", end]], groupby=[], aggregates=["debit:sum", "credit:sum"])[0]
+    check(abs(ledger["debit:sum"] - total[1]["val"]) < 0.005, "neraca saldo: total debit sama dengan buku besar")
 
 
 def bill_total(api, bill_id):
