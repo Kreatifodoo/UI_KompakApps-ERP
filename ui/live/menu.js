@@ -32,7 +32,7 @@ export const MENU = [
         title: "Master",
         items: [
           { title: "Product Master", route: "product?state=all" }, { title: "Product Category", route: "category" },
-          { title: "Reorder Level", odoo: "stock.warehouse.orderpoint" }, { title: "Put away Rules", odoo: "stock.putaway.rule" },
+          { title: "Reorder Level", route: "orderpoint" }, { title: "Put away Rules", odoo: "stock.putaway.rule" },
           { title: "Unit of Measurement Master", odoo: "uom.uom" }, { title: "Lot & Serial Number Master", odoo: "stock.lot" },
           { title: "Warehouse & Location Master", odoo: "stock.warehouse" },
         ],
@@ -42,13 +42,13 @@ export const MENU = [
         items: [
           { title: "Material Request", odoo: "stock.picking" }, { title: "Good Receive", route: "receipt" }, { title: "Return GR", route: "delivery?returns=1" },
           { title: "Delivery Order", route: "delivery" }, { title: "Return DO", route: "receipt?returns=1" }, { title: "Internal Transfer", odoo: "stock.picking" },
-          { title: "Physical Inventory", odoo: "stock.quant" }, { title: "Replenishment", odoo: "stock.warehouse.orderpoint" },
-          { title: "Scrap", odoo: "stock.scrap" }, { title: "Inventory Loss", odoo: "stock.move" },
+          { title: "Physical Inventory", route: "count" }, { title: "Replenishment", route: "replenish" },
+          { title: "Scrap", route: "scrap" }, { title: "Inventory Loss", route: "moves?kind=loss" },
         ],
       },
       {
         title: "Report",
-        items: [{ title: "Stock", odoo: "stock.quant" }, { title: "Location", odoo: "stock.quant" }, { title: "Move History", odoo: "stock.move.line" }, { title: "Move Analisis", odoo: "stock.report" }],
+        items: [{ title: "Stock", route: "stock/report" }, { title: "Location", route: "stock/location" }, { title: "Move History", route: "moves" }, { title: "Move Analisis", odoo: "stock.report" }],
       },
       { title: "Setting" },
     ],

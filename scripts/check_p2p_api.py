@@ -187,6 +187,7 @@ def main():
     check_order_to_cash(api, product)
     check_financial_reports(api)
     check_bank_reconciliation(api)
+    check_inventory(api, product)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -324,6 +325,61 @@ def check_order_to_cash(api, product):
     credit = api.read("account.move", credit_id, ["move_type", "state", "amount_total", "reversed_entry_id"])
     check(credit["move_type"] == "out_refund" and credit["state"] == "posted" and credit["amount_total"] == invoice["amount_total"], "nota kredit terposting sebesar faktur")
     check(credit["reversed_entry_id"][0] == invoice_id, "nota kredit menunjuk ke faktur asal")
+
+
+def check_inventory(api, product):
+    """Hitung fisik, scrap, dan aturan stok minimum (sama dengan halaman Physical Inventory, Scrap, Replenishment)."""
+    step("Inventaris: hitung fisik, scrap, aturan stok minimum")
+    mode = {"inventory_mode": True}
+    quant = api.search("stock.quant", [["product_id", "=", product["id"]], ["location_id.usage", "=", "internal"]], ["id", "quantity", "location_id"])[0]
+    start = quant["quantity"]
+
+    def on_hand():
+        return api.read("stock.quant", quant["id"], ["quantity"])["quantity"]
+
+    journals_before = api.call("account.move", "search_count", domain=[])
+    api.call("stock.quant", "write", ids=[quant["id"]], vals={"inventory_quantity": start - 2}, context=mode)
+    check(api.read("stock.quant", quant["id"], ["inventory_diff_quantity"], )["inventory_diff_quantity"] == -2.0, "selisih hitungan terbaca sebelum diterapkan")
+    api.call("stock.quant", "action_apply_inventory", ids=[quant["id"]], context=mode)
+    check(on_hand() == start - 2, "penerapan hitungan fisik mengubah stok")
+    adjustment = api.search("stock.move", [["product_id", "=", product["id"]], ["is_inventory", "=", True]], ["value", "state", "account_move_id"], order="id desc", limit=1)[0]
+    check(adjustment["state"] == "done" and abs(adjustment["value"]) > 0, "penyesuaian dinilai pada pergerakan stok")
+    check(not adjustment["account_move_id"] and api.call("account.move", "search_count", domain=[]) == journals_before, "penyesuaian stok tidak dijurnal otomatis (dipantau di Laporan Stok)")
+
+    scrap_vals = {"product_id": product["id"], "scrap_qty": 1.0, "location_id": quant["location_id"][0], "product_uom_id": product["uom_id"][0]}
+    [scrap] = api.call("stock.scrap", "create", vals_list=[scrap_vals])
+    check(api.call("stock.scrap", "action_validate", ids=[scrap]) is True, "scrap divalidasi tanpa dialog")
+    check(on_hand() == start - 3, "scrap mengurangi stok")
+    [too_much] = api.call("stock.scrap", "create", vals_list=[{**scrap_vals, "scrap_qty": 1e6}])
+    warn = api.call("stock.scrap", "action_validate", ids=[too_much])
+    check(isinstance(warn, dict) and warn.get("res_model") == "stock.warn.insufficient.qty.scrap", "scrap melebihi stok meminta konfirmasi")
+    api.call("stock.scrap", "unlink", ids=[too_much])
+
+    warehouse = api.search("stock.warehouse", [], ["id", "lot_stock_id"], limit=1)[0]
+    shortage = {"product_min_qty": 1e6, "product_max_qty": 1e6 + 10, "trigger": "manual"}
+    existing = api.search(
+        "stock.warehouse.orderpoint", [["product_id", "=", product["id"]], ["location_id", "=", warehouse["lot_stock_id"][0]]],
+        ["id", "product_min_qty", "product_max_qty", "trigger"],
+    )
+    if existing:  # aturan sudah ada (database yang dipakai berulang): ubah sementara lalu kembalikan
+        rule, original = existing[0]["id"], {k: existing[0][k] for k in shortage}
+        api.call("stock.warehouse.orderpoint", "write", ids=[rule], vals=shortage)
+    else:
+        [rule] = api.call("stock.warehouse.orderpoint", "create", vals_list=[{
+            "product_id": product["id"], "warehouse_id": warehouse["id"], "location_id": warehouse["lot_stock_id"][0], **shortage,
+        }])
+        original = None
+    needed = api.read("stock.warehouse.orderpoint", rule, ["qty_to_order"])
+    check(needed["qty_to_order"] > 0, "stok di bawah minimum menghasilkan jumlah yang perlu dipesan")
+    notice = api.call("stock.warehouse.orderpoint", "action_replenish", ids=[rule])
+    labels = [link["label"] for link in notice.get("params", {}).get("links", [])]
+    check(bool(labels), "pengisian ulang membuat RFQ dan menyebut nomornya")
+    rfq = api.search("purchase.order", [["name", "in", labels]], ["id", "state", "origin"])[0] if labels else None
+    check(rfq is not None and rfq["state"] == "draft", "RFQ dari pengisian ulang berstatus draft")
+    if original:
+        api.call("stock.warehouse.orderpoint", "write", ids=[rule], vals=original)
+    else:
+        api.call("stock.warehouse.orderpoint", "unlink", ids=[rule])
 
 
 def check_bank_reconciliation(api):
