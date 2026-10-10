@@ -124,7 +124,7 @@ export const MENU = [
       { title: "Jurnal Entry", route: "journal" },
       { title: "Asset", odoo: "account.asset" },
       { title: "Budget", odoo: "account.budget" },
-      { title: "Bank Transaction", odoo: "account.bank.statement" },
+      { title: "Bank Transaction", route: "bank" },
       {
         title: "Reporting",
         items: [

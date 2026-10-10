@@ -186,6 +186,7 @@ def main():
     check_master_data(api)
     check_order_to_cash(api, product)
     check_financial_reports(api)
+    check_bank_reconciliation(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -323,6 +324,78 @@ def check_order_to_cash(api, product):
     credit = api.read("account.move", credit_id, ["move_type", "state", "amount_total", "reversed_entry_id"])
     check(credit["move_type"] == "out_refund" and credit["state"] == "posted" and credit["amount_total"] == invoice["amount_total"], "nota kredit terposting sebesar faktur")
     check(credit["reversed_entry_id"][0] == invoice_id, "nota kredit menunjuk ke faktur asal")
+
+
+def check_bank_reconciliation(api):
+    """Mutasi bank dicocokkan dengan pembayaran tertunda (urutan panggilan yang sama dengan UI), lalu biaya bank ke akun beban."""
+    step("Rekonsiliasi bank: pembayaran tertunda ke akun bank, dan biaya bank ke akun beban")
+    today = datetime.date.today().isoformat()
+    bank = api.search("account.journal", [["type", "=", "bank"]], ["id", "default_account_id"], limit=1)[0]
+    payments = api.search(
+        "account.payment", [["payment_type", "=", "inbound"], ["is_matched", "=", False], ["state", "in", ["in_process", "paid"]]],
+        ["name", "amount", "partner_id", "move_id", "outstanding_account_id"], order="id desc", limit=1,
+    )
+    check(bool(payments), "ada pembayaran masuk yang belum dicocokkan dengan mutasi bank")
+    if not payments:
+        return
+    payment = payments[0]
+
+    def balance(account_id):
+        rows = api.call("account.move.line", "formatted_read_group", domain=[["account_id", "=", account_id], ["parent_state", "=", "posted"]], groupby=[], aggregates=["balance:sum"])
+        return rows[0].get("balance:sum") or 0.0
+
+    bank_account = bank["default_account_id"][0]
+    outstanding_account = payment["outstanding_account_id"][0]
+    bank_before, outstanding_before = balance(bank_account), balance(outstanding_account)
+    [statement] = api.call("account.bank.statement", "create", vals_list=[{
+        "name": f"Mutasi regresi {payment['name']}", "journal_id": bank["id"],
+        "line_ids": [[0, 0, {"journal_id": bank["id"], "date": today, "payment_ref": f"TRF {payment['name']}", "amount": payment["amount"], "partner_id": payment["partner_id"][0]}]],
+    }])
+    line = api.search("account.bank.statement.line", [["statement_id", "=", statement]], ["id", "journal_id", "amount", "partner_id"])[0]
+    api.call("account.bank.statement.line", "clean_reconcile", ids=[line["id"]])
+    info = api.read("account.bank.statement.line", line["id"], ["reconcile_data_info"])["reconcile_data_info"]
+    check(any(d["kind"] == "suspense" for d in info["data"]), "mutasi baru menyisakan jumlah yang belum dialokasikan")
+    outstanding_line = api.search("account.move.line", [["move_id", "=", payment["move_id"][0]], ["account_id", "=", outstanding_account]], ["id"])[0]["id"]
+    spec = {"reconcile_data_info": {}, "can_reconcile": {}, "add_account_move_line_id": {}}
+    changed = api.call("account.bank.statement.line", "onchange", ids=[line["id"]], field_names=["add_account_move_line_id"], fields_spec=spec, values={
+        "reconcile_data_info": info, "add_account_move_line_id": outstanding_line, "journal_id": line["journal_id"][0],
+        "partner_id": line["partner_id"][0], "amount": line["amount"], "manual_reference": False,
+    })
+    info = changed["value"]["reconcile_data_info"]
+    check(info["can_reconcile"] and not any(d["kind"] == "suspense" for d in info["data"]), "pembayaran tertunda melunasi mutasi tanpa sisa")
+    api.call("account.bank.statement.line", "write", ids=[line["id"]], vals={"reconcile_data_info": info})
+    api.call("account.bank.statement.line", "reconcile_bank_line", ids=[line["id"]])
+    check(api.read("account.bank.statement.line", line["id"], ["is_reconciled"])["is_reconciled"], "mutasi berstatus sudah direkonsiliasi")
+    check(api.read("account.payment", payment["id"], ["is_matched"])["is_matched"], "pembayaran berstatus sudah dicocokkan dengan mutasi bank")
+    check(abs(balance(bank_account) - bank_before - payment["amount"]) < 0.005, "saldo akun bank naik sebesar pembayaran")
+    check(abs(balance(outstanding_account) - outstanding_before + payment["amount"]) < 0.005, "saldo pembayaran tertunda turun sebesar pembayaran")
+    api.call("account.bank.statement.line", "unreconcile_bank_line", ids=[line["id"]])
+    check(not api.read("account.payment", payment["id"], ["is_matched"])["is_matched"], "pembatalan rekonsiliasi mengembalikan status pembayaran")
+
+    # Biaya bank tanpa mitra: sisanya dicatat ke akun beban lewat isian manual.
+    fee_account = api.search("account.account", [["code", "=", "65110020"]], ["id"])[0]["id"]
+    expense_before, bank_before_fee = balance(fee_account), balance(bank_account)
+    [fee_statement] = api.call("account.bank.statement", "create", vals_list=[{
+        "name": "Biaya bank regresi", "journal_id": bank["id"],
+        "line_ids": [[0, 0, {"journal_id": bank["id"], "date": today, "payment_ref": "Biaya admin bank", "amount": -15_000.0}]],
+    }])
+    fee = api.search("account.bank.statement.line", [["statement_id", "=", fee_statement]], ["id"])[0]["id"]
+    api.call("account.bank.statement.line", "clean_reconcile", ids=[fee])
+    info = api.read("account.bank.statement.line", fee, ["reconcile_data_info"])["reconcile_data_info"]
+    suspense = [d for d in info["data"] if d["kind"] == "suspense"][0]
+    changed = api.call("account.bank.statement.line", "onchange", ids=[fee], field_names=["manual_account_id"], fields_spec=spec, values={
+        "reconcile_data_info": info, "manual_reference": suspense["reference"], "manual_account_id": fee_account, "manual_name": suspense["name"],
+        "manual_amount": suspense["amount"], "manual_partner_id": False, "manual_currency_id": suspense["currency_id"],
+        "manual_in_currency_id": suspense.get("line_currency_id"), "manual_in_currency": False, "manual_amount_in_currency": suspense.get("currency_amount"),
+        "previous_manual_amount_in_currency": suspense.get("currency_amount"), "manual_kind": "suspense", "manual_original_amount": 0.0,
+        "manual_exchange_counterpart": False, "manual_delete": False, "journal_id": bank["id"], "partner_id": False, "amount": -15_000.0, "analytic_distribution": {},
+    })
+    info = changed["value"]["reconcile_data_info"]
+    check(info["can_reconcile"], "biaya bank bisa direkonsiliasi setelah akun beban dipilih")
+    api.call("account.bank.statement.line", "write", ids=[fee], vals={"reconcile_data_info": info})
+    api.call("account.bank.statement.line", "reconcile_bank_line", ids=[fee])
+    check(abs(balance(fee_account) - expense_before - 15_000.0) < 0.005, "biaya bank tercatat di akun beban")
+    check(abs(balance(bank_account) - bank_before_fee + 15_000.0) < 0.005, "saldo akun bank berkurang sebesar biaya")
 
 
 def mis_values(api, name, date_from, date_to):

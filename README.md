@@ -93,6 +93,7 @@ Kerangka di `ui/live/` memakai **desain sidebar prototipe** (9 modul, menu berti
 | Purchase, Purchase Request, Inventory, Sales, Accounting › Master › Product Master | Daftar dan form produk, pajak, vendor, arsip | `product.template` |
 | Inventory › Master › Product Category, Accounting › Master › Product Category | Metode biaya, valuasi persediaan, akun persediaan/beban/pendapatan | `product.category` |
 | Accounting › Jurnal Entry | Daftar jurnal (baca-saja) dengan item jurnal dan dokumen sumber | `account.move` |
+| Accounting › Bank Transaction | Mutasi bank manual atau CSV, rekonsiliasi dengan pembayaran tertunda, faktur, atau tagihan, biaya bank ke akun beban | `account.bank.statement(.line)`, `account_reconcile_oca` |
 | Accounting › Reporting › Profit and Loss, Balance Sheet, Cash Flow Statement, Trial Balance, Executive Summary | Laporan keuangan dari template MIS Builder (pembanding periode, drilldown ke item jurnal, CSV) | `mis.report`, `mis.report.instance` |
 | Accounting › Reporting › Aged Receivable, Aged Payable, General Ledger, Partner Ledger | Umur piutang/hutang per mitra, buku besar dan buku besar pembantu dengan saldo berjalan | `account.move.line` |
 | Sales › Master › Customers Master, Accounting › Master › Customer Master | Pelanggan: alamat, NPWP/PKP, identitas pembeli Coretax, batas kredit, akun piutang | `res.partner` |
@@ -110,7 +111,7 @@ Data master Purchase (vendor, produk, harga vendor) bisa dibuat, diubah, dan dia
 
 Tagihan dan pembayaran menampilkan item jurnal yang tercipta; Jurnal Entry memperlihatkan semuanya. Barang stok dicatat dengan valuasi perpetual dan biaya rata-rata (D13).
 
-Laporan keuangan (D15) dihitung dari transaksi di atas dan bisa dibuka di Accounting › Reporting.
+Laporan keuangan (D15) dihitung dari transaksi di atas dan bisa dibuka di Accounting › Reporting. Pembayaran dicocokkan dengan mutasi bank di Accounting › Bank Transaction (D16), sehingga Kas dan Bank di laporan terisi.
 
 Order-to-Cash juga bisa dijalankan penuh: **Quotation → Sales Order → pengiriman → faktur pelanggan → pembayaran → nota kredit/retur** (D14).
 
@@ -135,7 +136,7 @@ Nginx pada layanan `ui` hanya meneruskan `/json/2/` ke Odoo, sehingga antarmuka 
 
 ### Uji regresi alur Procure-to-Pay
 
-`scripts/check_p2p_api.py` menjalankan seluruh alur di atas lewat API (panggilan yang sama dengan UI) dan memeriksa 70 hal, termasuk jurnal tagihan dan pembayaran, Sales Order sampai nota kredit, laporan keuangan (neraca seimbang, arus kas cocok dengan kas), penerimaan sebagian dengan backorder, pembayaran bertahap, dan data master (vendor, produk, harga vendor bertingkat, arsip). Skrip ini **menulis data**, jadi pakai database uji dan API key pengguna uji:
+`scripts/check_p2p_api.py` menjalankan seluruh alur di atas lewat API (panggilan yang sama dengan UI) dan memeriksa 81 hal, termasuk jurnal tagihan dan pembayaran, Sales Order sampai nota kredit, laporan keuangan (neraca seimbang, arus kas cocok dengan kas), penerimaan sebagian dengan backorder, pembayaran bertahap, dan data master (vendor, produk, harga vendor bertingkat, arsip). Skrip ini **menulis data**, jadi pakai database uji dan API key pengguna uji:
 
 ```bash
 NUSARA_API_KEY=<api-key-uji> python3 scripts/check_p2p_api.py --yes --url http://127.0.0.1:8080

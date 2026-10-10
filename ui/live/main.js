@@ -27,9 +27,10 @@ import * as debitnote from "./pages/debitnote.js";
 import * as report from "./pages/report.js";
 import * as aging from "./pages/aging.js";
 import * as ledger from "./pages/ledger.js";
+import * as bank from "./pages/bank.js";
 import * as soon from "./pages/soon.js";
 
-const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, soon };
+const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, bank, soon };
 let currentId = "pr";
 
 function parseHash() {
