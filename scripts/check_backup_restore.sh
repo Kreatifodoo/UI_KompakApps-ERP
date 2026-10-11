@@ -183,7 +183,7 @@ PARTNER_ID="$(kv_get "$OUT" CHECK_PARTNER_ID)"
 ATT_ID="$(kv_get "$OUT" CHECK_ATT_ID)"
 ATT_SHA="$(kv_get "$OUT" CHECK_ATT_SHA256)"
 ATT_FNAME="$(kv_get "$OUT" CHECK_ATT_FNAME)"
-[ -n "$ATT_FNAME" ] && [ "$ATT_FNAME" != "False" ] || ops_die "lampiran uji tidak tersimpan di filestore (store_fname kosong)"
+if [ -z "$ATT_FNAME" ] || [ "$ATT_FNAME" = "False" ]; then ops_die "lampiran uji tidak tersimpan di filestore (store_fname kosong)"; fi
 ok "data uji dibuat (mitra $PARTNER_ID, lampiran $ATT_ID di filestore: $ATT_FNAME)"
 
 BEFORE="$(ops_stats "$ODOO_DB")"
