@@ -11,3 +11,4 @@ from . import test_manufacturing
 from . import test_crm
 from . import test_pos
 from . import test_budget
+from . import test_loyalty

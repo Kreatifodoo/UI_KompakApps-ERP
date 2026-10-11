@@ -4,6 +4,7 @@
 import {
   INPUT, app, call, closeLookup, closeModal, ctx, dateTimeText, esc, guarded, money, openModal, pageHeader, readOne, registerLookup, runLookup, searchRead, toast,
 } from "../common.js";
+import { evaluate, findCode, loadPrograms } from "../pospromo.js";
 
 const nf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 3 });
 const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -57,8 +58,10 @@ export async function render(sub, query) {
   }
   const methods = await searchRead("pos.payment.method", [["id", "in", config.payment_method_ids]], ["name", "is_cash_count", "type"], { order: "sequence, id" });
   if (!state || state.config.id !== config.id || state.session.id !== config.current_session_id[0]) {
-    state = { config, session: { id: config.current_session_id[0], name: config.current_session_id[1] }, methods, products: [], search: "", cart: [], customer: null, totals: { excl: 0, tax: 0, incl: 0 }, tick: 0 };
+    state = { config, session: { id: config.current_session_id[0], name: config.current_session_id[1] }, methods, products: [], search: "", cart: [], customer: null, totals: { excl: 0, tax: 0, incl: 0 }, tick: 0, codes: [], rewards: [], promoMessages: [] };
   } else Object.assign(state, { config, methods });
+  state.promo = await loadPrograms(config).catch(() => ({ programs: [], unsupported: [] })); // promosi tidak boleh menghalangi kasir
+  state.rounding = (await readOne("res.company", ctx.company.id, ["tax_calculation_rounding_method"]))?.tax_calculation_rounding_method ?? "round_per_line";
   state.products = await loadProducts("");
   paintAll();
 }
@@ -124,10 +127,48 @@ async function recompute() {
     line.excl = priced[i].excl;
     line.incl = priced[i].incl;
   });
-  const excl = r2(state.cart.reduce((s, l) => s + l.excl, 0));
-  const incl = r2(state.cart.reduce((s, l) => s + l.incl, 0));
-  state.totals = { excl, tax: r2(incl - excl), incl };
+  // Promosi dihitung dari keranjang yang sudah berharga; kegagalan promosi tidak menghalangi penjualan biasa.
+  let promo = { items: [], lines: [], messages: [] };
+  try {
+    promo = await evaluate(state.promo?.programs ?? [], state.cart, state.codes ?? []);
+  } catch (error) {
+    promo.messages.push(`Promosi tidak dapat dihitung: ${error.message}`);
+  }
+  if (ticket !== state.tick) return;
+  state.rewards = promo.lines;
+  state.promoMessages = promo.messages;
+  const entries = [
+    ...state.cart.map((l) => ({ taxIds: l.product.taxes_id, excl: l.excl, incl: l.incl })),
+    ...state.rewards.map((l) => ({ taxIds: l.tax_ids, excl: l.excl, incl: l.incl })),
+  ];
+  const totals = await orderTotals(entries);
+  if (ticket !== state.tick) return;
+  state.totals = totals;
   paintTotals();
+  paintPromo();
+}
+
+/** Total pesanan menurut metode pembulatan pajak perusahaan: per baris, atau global (pajak dihitung atas dasar pengenaan gabungan per jenis pajak, seperti lokalisasi
+ * Indonesia). Selisih pembulatan satu sen antara total kasir dan jurnal sesi membuat penutupan sesi meminta penyeimbangan (lihat D30). */
+async function orderTotals(entries) {
+  const excl = r2(entries.reduce((s, e) => s + e.excl, 0));
+  if (state.rounding !== "round_globally") {
+    const incl = r2(entries.reduce((s, e) => s + e.incl, 0));
+    return { excl, tax: r2(incl - excl), incl };
+  }
+  const groups = new Map();
+  for (const e of entries) {
+    const key = [...e.taxIds].sort((a, b) => a - b).join(",");
+    const group = groups.get(key) ?? { taxIds: e.taxIds, excl: 0, incl: 0 };
+    group.excl += e.excl;
+    group.incl += e.incl;
+    groups.set(key, group);
+  }
+  const inclParts = await Promise.all(
+    [...groups.values()].map(async (g) => (g.taxIds.length ? r2((await call("account.tax", "compute_all", { ids: g.taxIds, price_unit: r2(g.excl), quantity: 1 })).total_included) : r2(g.incl))),
+  );
+  const incl = r2(inclParts.reduce((s, v) => s + v, 0));
+  return { excl, tax: r2(incl - excl), incl };
 }
 
 function paintCart() {
@@ -150,10 +191,26 @@ function paintCart() {
   box.innerHTML = `
     <div class="flex items-center justify-between mb-2"><div class="text-sm font-semibold">Keranjang</div>${state.cart.length ? '<button type="button" data-action="cart-clear" class="text-xs text-gray-500 hover:text-rose-600">Kosongkan</button>' : ""}</div>
     <div class="max-h-96 overflow-y-auto">${lines || '<p class="py-8 text-center text-sm text-gray-500">Belum ada barang. Pilih produk di sebelah kiri.</p>'}</div>
+    <div id="kasir-promo" class="mt-3"></div>
     <div class="mt-3"><input data-lookup="kasir-customer" autocomplete="off" role="combobox" aria-autocomplete="list" value="${esc(state.customer?.display_name ?? "")}" placeholder="Pelanggan (opsional)" class="${INPUT}" aria-label="Pelanggan"></div>
     <div id="kasir-totals" class="mt-3 text-sm"></div>
     <button type="button" data-action="pay" ${state.cart.length ? "" : "disabled"} class="mt-3 w-full px-4 py-3 bg-indigo-600 text-white rounded-lg text-base font-semibold hover:bg-indigo-700 disabled:opacity-40">Bayar</button>`;
   paintTotals();
+  paintPromo();
+}
+
+/** Kotak promosi: kode promo yang dimasukkan, baris hadiah yang berlaku, dan pesan syarat yang belum terpenuhi. */
+function paintPromo() {
+  const box = document.querySelector("#kasir-promo");
+  if (!box) return;
+  const hasPrograms = Boolean(state.promo?.programs?.length);
+  const rewardRows = (state.rewards ?? []).map((r) => `<div class="flex justify-between gap-2 text-sm text-emerald-700"><span><i class="fas fa-tag mr-1"></i>${esc(r.name)}</span><span>${r.discount === 100 ? `Gratis × ${esc(nf.format(r.qty))}` : esc(money(r.incl))}</span></div>`).join("");
+  const codes = (state.codes ?? []).map((c, i) => `<span class="inline-flex items-center gap-1 bg-indigo-50 text-indigo-800 rounded-full px-2 py-1 text-xs">${esc(c)}<button type="button" data-action="promo-remove" data-i="${i}" class="text-indigo-400 hover:text-rose-600" aria-label="Hapus kode ${esc(c)}"><i class="fas fa-times"></i></button></span>`).join(" ");
+  const notes = (state.promoMessages ?? []).map((m) => `<div class="text-xs text-amber-700">${esc(m)}</div>`).join("");
+  const unsupported = state.promo?.unsupported?.length ? `<div class="text-xs text-gray-500">Belum didukung di kasir: ${esc(state.promo.unsupported.join(", "))}.</div>` : "";
+  box.innerHTML = `${hasPrograms ? `<div class="flex gap-2"><input data-kasir="promo-code" autocomplete="off" placeholder="Kode promo" class="${INPUT}" aria-label="Kode promo"><button type="button" data-action="promo-apply" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50 whitespace-nowrap">Terapkan</button></div>` : ""}
+    ${codes ? `<div class="mt-2 flex flex-wrap gap-1">${codes}</div>` : ""}
+    ${rewardRows ? `<div class="mt-2 space-y-1">${rewardRows}</div>` : ""}${notes ? `<div class="mt-1">${notes}</div>` : ""}${unsupported}`;
 }
 
 function paintTotals() {
@@ -247,7 +304,11 @@ async function submitOrder(button) {
       lines: state.cart.map((l) => [0, 0, {
         uuid: crypto.randomUUID(), product_id: l.product.id, qty: Number(l.qty), price_unit: l.product.lst_price, discount: Number(l.discount) || 0, tax_ids: [[6, 0, l.product.taxes_id]],
         price_subtotal: l.excl, price_subtotal_incl: l.incl, full_product_name: l.product.display_name, name: l.product.display_name,
-      }]),
+      }]).concat((state.rewards ?? []).map((r) => [0, 0, {
+        uuid: crypto.randomUUID(), product_id: r.product_id, qty: r.qty, price_unit: r.price_unit, discount: r.discount, tax_ids: [[6, 0, r.tax_ids]],
+        price_subtotal: r.excl, price_subtotal_incl: r.incl, full_product_name: r.name, name: r.name,
+        is_reward_line: true, reward_id: r.reward_id, reward_identifier_code: r.identifier, points_cost: r.points_cost,
+      }])),
       payment_ids: payments,
     };
     const result = await call("pos.order", "sync_from_ui", { orders: [payload] });
@@ -259,6 +320,9 @@ async function submitOrder(button) {
   closeModal();
   state.cart = [];
   state.customer = null;
+  state.codes = [];
+  state.rewards = [];
+  state.promoMessages = [];
   state.totals = { excl: 0, tax: 0, incl: 0 };
   pay = null;
   paintCart();
@@ -334,6 +398,9 @@ export async function onClick(event, el) {
   } else if (action === "cart-clear") {
     if (!window.confirm("Kosongkan keranjang?")) return;
     state.cart = [];
+    state.codes = [];
+    state.rewards = [];
+    state.promoMessages = [];
     state.totals = { excl: 0, tax: 0, incl: 0 };
     paintCart();
   } else if (action === "pay") {
@@ -343,8 +410,41 @@ export async function onClick(event, el) {
       return;
     }
     payDialog();
+  } else if (action === "promo-apply") await applyPromoCode();
+  else if (action === "promo-remove") {
+    state.codes.splice(i, 1);
+    await recompute();
   } else if (action === "pay-confirm") await submitOrder(el);
   else if (action === "receipt-print") printReceipt(document.querySelector("#receipt").innerHTML);
+}
+
+async function applyPromoCode() {
+  const input = document.querySelector('[data-kasir="promo-code"]');
+  const code = input?.value.trim() ?? "";
+  if (!code) return;
+  if (!state.cart.length) {
+    toast("Tambahkan barang ke keranjang lebih dulu.", "error");
+    return;
+  }
+  const found = findCode(state.promo?.programs ?? [], code);
+  if (!found) {
+    toast(`Kode "${code}" tidak dikenal atau programnya tidak berlaku di stasiun ini.`, "error");
+    return;
+  }
+  if (state.codes.some((c) => c.toLowerCase() === code.toLowerCase())) {
+    toast("Kode promo ini sudah diterapkan.", "error");
+    return;
+  }
+  state.codes.push(found.rule.code);
+  await recompute();
+  if (!state.rewards.some((r) => r.program?.id === found.program.id)) {
+    state.codes = state.codes.filter((c) => c !== found.rule.code);
+    const reason = state.promoMessages.find((m) => m.startsWith(`Kode ${found.rule.code}`)) ?? "Syarat program belum terpenuhi.";
+    await recompute();
+    toast(reason, "error");
+    return;
+  }
+  toast(`Kode ${found.rule.code} diterapkan.`);
 }
 
 export function onInput(event, el) {
@@ -388,4 +488,11 @@ document.addEventListener("keydown", async (event) => {
     state.products = await loadProducts("");
     paintProducts();
   }
+});
+
+document.addEventListener("keydown", async (event) => {
+  // Enter pada kolom kode promo menerapkan kode.
+  if (event.key !== "Enter" || event.target.dataset?.kasir !== "promo-code" || !state) return;
+  event.preventDefault();
+  await applyPromoCode();
 });

@@ -15,6 +15,9 @@
         "mrp",  # BoM, Manufacturing Order, work center, work order, unbuild
         "crm",  # lead, peluang, tahap pipeline (sale_crm terpasang otomatis bersama sale)
         "point_of_sale",  # kasir, sesi, pesanan POS, metode pembayaran
+        "loyalty",  # program promosi, kupon, kartu loyalti, aturan dan hadiah
+        "sale_loyalty",  # penerapan promosi dan hadiah pada Sales Order
+        "pos_loyalty",  # penerapan promosi dan hadiah pada pesanan kasir POS
         # OCA (purchase-workflow)
         "purchase_request",
         # OCA akuntansi: Community tidak membawa laporan keuangan, aset, atau rekonsiliasi bank.

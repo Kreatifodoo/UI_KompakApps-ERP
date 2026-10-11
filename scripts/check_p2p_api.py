@@ -203,6 +203,7 @@ def main():
     check_print_documents(api)
     check_auditlog(api)
     check_budget(api)
+    check_loyalty(api, product)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -1381,6 +1382,266 @@ def check_budget(api):
     template = api.search("ir.model.data", [["module", "=", "nusara_base"], ["name", "=", "mis_anggaran"]], ["res_id"])
     kpis = api.search("mis.report.kpi", [["report_id", "=", template[0]["res_id"]]], ["description", "auto_expand_accounts"], order="sequence")
     check([k["description"] for k in kpis] == ["Pendapatan", "Harga Pokok", "Beban", "LABA (RUGI) BERSIH"] and [k["auto_expand_accounts"] for k in kpis] == [True, True, True, False], "template Anggaran per Akun: 4 baris, tiga diperluas per akun (label dipakai UI)")
+
+
+def fails_with(call, *needles):
+    """True bila panggilan API gagal dan pesannya memuat salah satu kata kunci (huruf kecil)."""
+    try:
+        call()
+    except RuntimeError as error:
+        return any(needle.lower() in str(error).lower() for needle in needles)
+    return False
+
+
+def check_loyalty(api, product):
+    """Promotion & Loyalty (D30): program dan aturan, kode promo dan hadiah di Sales Order lewat wizard publik, promosi otomatis, kupon, kartu loyalti, dan kasir POS."""
+    step("Promotion & Loyalty: program, kode promo, hadiah di Sales Order, kupon, kartu loyalti, kasir POS")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    created = []  # program yang dibuat; diarsipkan di akhir agar pemeriksaan lain tidak terpengaruh promosi otomatis
+    info = api.read("product.product", product["id"], ["lst_price", "taxes_id", "product_tmpl_id"])
+    unit = info["lst_price"]
+    [customer] = api.call("res.partner", "create", vals_list=[{"name": f"Pelanggan Promo {tag}", "is_company": True, "customer_rank": 1}])
+
+    def defaults(program_type):
+        fields = ["program_type", "applies_on", "trigger", "portal_visible", "portal_point_name"]
+        return api.call("loyalty.program", "default_get", fields=fields, context={"default_program_type": program_type})
+
+    def new_program(name, program_type, rules, rewards, **extra):
+        base = {key: value for key, value in defaults(program_type).items() if key in ("trigger", "applies_on", "portal_visible", "portal_point_name")}
+        vals = {"name": f"{name} {tag}", "program_type": program_type, "sale_ok": True, "pos_ok": False, **base, **extra,
+                "rule_ids": [[0, 0, r] for r in rules], "reward_ids": [[0, 0, r] for r in rewards]}
+        [program_id] = api.call("loyalty.program", "create", vals_list=[vals])
+        created.append(program_id)
+        return program_id
+
+    def order(qty, partner=customer):
+        [so] = api.call("sale.order", "create", vals_list=[{"partner_id": partner, "order_line": [[0, 0, {"product_id": product["id"], "product_uom_qty": qty}]]}])
+        return so
+
+    def context(so):
+        return {"active_model": "sale.order", "active_ids": [so], "active_id": so}
+
+    def apply_code(so, code):
+        wizard = api.call("sale.loyalty.coupon.wizard", "create", vals_list=[{"order_id": so, "coupon_code": code}], context=context(so))
+        return api.call("sale.loyalty.coupon.wizard", "action_apply", ids=wizard, context=context(so))
+
+    def claimable(so):
+        wizard = api.call("sale.loyalty.reward.wizard", "create", vals_list=[{"order_id": so}], context=context(so))
+        return api.call("sale.loyalty.reward.wizard", "read", ids=wizard, fields=["reward_ids"], context=context(so))[0]["reward_ids"]
+
+    def claim(so, reward):
+        wizard = api.call("sale.loyalty.reward.wizard", "create", vals_list=[{"order_id": so, "selected_reward_id": reward}], context=context(so))
+        return api.call("sale.loyalty.reward.wizard", "action_apply", ids=wizard, context=context(so))
+
+    def reward_lines(so):
+        return api.search("sale.order.line", [["order_id", "=", so], ["reward_id", "!=", False]], ["name", "price_unit", "price_subtotal", "product_uom_qty", "discount", "points_cost", "reward_id", "coupon_id"])
+
+    def total(so):
+        return api.read("sale.order", so, ["amount_untaxed", "amount_total", "state", "reward_amount"])
+
+    def balanced(move_id):
+        return balanced_move(api, move_id)
+
+    def invoice_of(so):
+        api.call("sale.order", "action_confirm", ids=[so])
+        wizard = api.call("sale.advance.payment.inv", "create", vals_list=[{}], context=context(so))
+        invoice_id = api.call("sale.advance.payment.inv", "create_invoices", ids=wizard, context=context(so))["res_id"]
+        api.call("account.move", "action_post", ids=[invoice_id])
+        return invoice_id
+
+    # Nilai bawaan tipe program dari default_get (UI memakainya untuk mengisi form baru).
+    check(defaults("promo_code")["trigger"] == "with_code" and defaults("promotion")["trigger"] == "auto", "default_get memberi pemicu menurut tipe program (kode promo: dengan kode, promosi: otomatis)")
+    check(defaults("loyalty")["applies_on"] == "both" and defaults("next_order_coupons")["applies_on"] == "future", "default_get memberi masa berlaku poin menurut tipe (kartu loyalti: kedua, kupon berikutnya: mendatang)")
+    check("trigger" not in api.call("loyalty.program", "default_get", fields=["applies_on", "trigger"], context={"default_program_type": "promo_code"}), "default_get tanpa program_type di daftar field tidak mengisi nilai bawaan tipe (UI memintanya)")
+    bare = api.call("loyalty.program", "create", vals_list=[{
+        "name": f"Tanpa pemicu {tag}", "program_type": "promo_code", "sale_ok": False, "pos_ok": False,
+        "rule_ids": [[0, 0, {"mode": "with_code", "code": f"TANPA{tag}", "minimum_qty": 0}]], "reward_ids": [[0, 0, {"discount": 10, "discount_mode": "percent"}]],
+    }])[0]
+    created.append(bare)
+    check(api.read("loyalty.program", bare, ["trigger"])["trigger"] is False, "program via API tanpa trigger eksplisit tidak punya trigger (UI mengirim nilai bawaan tipe)")
+
+    # Kode promo: kode memicu aturan, hadiah dipilih lewat wizard hadiah.
+    code = f"HEMAT{tag}"
+    promo = new_program("Kode Hemat", "promo_code", [{"mode": "with_code", "code": code, "minimum_qty": 0}],
+                        [{"reward_type": "discount", "discount_mode": "percent", "discount": 10, "discount_applicability": "order", "required_points": 1, "description": "10% untuk seluruh pesanan"}])
+    check(api.read("loyalty.program", promo, ["trigger", "sale_ok", "pos_ok"]) == {"id": promo, "trigger": "with_code", "sale_ok": True, "pos_ok": False}, "program kode promo tersimpan dengan pemicu dan tempat berlaku")
+    reward = api.search("loyalty.reward", [["program_id", "=", promo]], ["description", "discount_line_product_id"])[0]
+    check(reward["description"] == "10% untuk seluruh pesanan" and bool(reward["discount_line_product_id"]), "hadiah punya deskripsi Indonesia dan produk baris diskon")
+    so = order(2.0)
+    check(fails_with(lambda: apply_code(so, "TIDAKADA"), "invalid"), "kode yang tidak ada ditolak (This code is invalid)")
+    action = apply_code(so, code)
+    check(action["res_model"] == "sale.loyalty.reward.wizard" and action["context"]["default_reward_ids"] == [reward["id"]], "kode promo membuka wizard hadiah dengan hadiah programnya")
+    check(not reward_lines(so) and claimable(so) == [reward["id"]], "kode saja belum menambah baris; hadiah bisa diklaim")
+    check(claim(so, reward["id"]) is True, "hadiah diterapkan lewat wizard hadiah")
+    lines = reward_lines(so)
+    check(len(lines) == 1 and abs(lines[0]["price_unit"] + unit * 2 * 0.1) < 0.01 and lines[0]["points_cost"] == 1.0, f"baris hadiah diskon 10% bernilai {unit * 2 * 0.1:,.0f}")
+    check(abs(total(so)["amount_untaxed"] - unit * 2 * 0.9) < 0.01 and abs(total(so)["reward_amount"] + unit * 2 * 0.1) < 0.01, "total SO turun sebesar diskon")
+    check(fails_with(lambda: apply_code(so, code), "already applied"), "kode yang sama dua kali pada satu pesanan ditolak")
+    invoice = invoice_of(so)
+    inv = api.read("account.move", invoice, ["amount_total", "amount_untaxed", "state"])
+    check(inv["state"] == "posted" and inv["amount_total"] == total(so)["amount_total"] and balanced(invoice), "faktur dari SO berhadiah terposting, totalnya sama dengan SO, dan jurnalnya seimbang")
+    check(api.read("loyalty.program", promo, ["order_count", "total_order_count"]) == {"id": promo, "order_count": 1, "total_order_count": 1}, "pemakaian program terhitung dari baris hadiah")
+
+    # Ubah program: aturan, hadiah (deskripsi ditulis sebagai langkah kedua), lalu arsipkan.
+    rule_id = api.search("loyalty.rule", [["program_id", "=", promo]], ["id"])[0]["id"]
+    api.call("loyalty.program", "write", ids=[promo], vals={"rule_ids": [[1, rule_id, {"minimum_amount": 500_000.0}]], "reward_ids": [[1, reward["id"], {"discount": 20.0}]]})
+    api.call("loyalty.reward", "write", ids=[reward["id"]], vals={"description": "20% untuk seluruh pesanan"})
+    edited = api.read("loyalty.reward", reward["id"], ["discount", "description"])
+    check(edited["discount"] == 20.0 and edited["description"] == "20% untuk seluruh pesanan", "hadiah diubah dan deskripsi Indonesia bertahan (ditulis sebagai langkah kedua)")
+    so = order(1.0)
+    check(fails_with(lambda: apply_code(so, code), "minimum", "eligible"), "syarat belanja minimum aturan diperiksa saat kode dipakai")
+    api.call("loyalty.program", "action_archive", ids=[promo])
+    check(api.read("loyalty.program", promo, ["active"])["active"] is False, "program diarsipkan")
+    check(fails_with(lambda: apply_code(order(2.0), code), "invalid"), "kode program yang diarsipkan tidak berlaku lagi")
+    api.call("loyalty.program", "action_unarchive", ids=[promo])
+    check(api.read("loyalty.program", promo, ["active"])["active"] is True, "program yang diarsipkan bisa diaktifkan kembali")
+
+    # Promosi otomatis mengikuti isi pesanan; tombol Hadiah memperbarui.
+    auto = new_program("Otomatis 15", "promotion", [{"reward_point_mode": "order", "reward_point_amount": 1, "minimum_amount": unit * 1.5, "minimum_amount_tax_mode": "excl", "minimum_qty": 0}],
+                       [{"reward_type": "discount", "discount_mode": "percent", "discount": 15, "discount_applicability": "order", "required_points": 1}])
+    so = order(2.0)
+    check(not reward_lines(so), "promosi otomatis tidak terpasang sebelum tombol Hadiah ditekan")
+    check(api.call("sale.order", "action_open_reward_wizard", ids=[so]) is True and len(reward_lines(so)) == 1, "tombol Hadiah memasang satu promosi otomatis tanpa dialog")
+    check(abs(reward_lines(so)[0]["price_unit"] + unit * 2 * 0.15) < 0.01, "diskon otomatis 15% dihitung atas pesanan")
+    api.call("sale.order.line", "write", ids=[row["id"] for row in api.search("sale.order.line", [["order_id", "=", so], ["reward_id", "=", False]], ["id"])], vals={"product_uom_qty": 1.0})
+    api.call("sale.order", "action_open_reward_wizard", ids=[so])
+    check(not reward_lines(so), "jumlah dikurangi di bawah syarat: pembaruan menghapus hadiah otomatis")
+    api.call("sale.order.line", "write", ids=[row["id"] for row in api.search("sale.order.line", [["order_id", "=", so], ["reward_id", "=", False]], ["id"])], vals={"product_uom_qty": 3.0})
+    api.call("sale.order", "action_open_reward_wizard", ids=[so])
+    remove = reward_lines(so)
+    check(len(remove) == 1 and api.call("sale.order.line", "unlink", ids=[remove[0]["id"]]) is True and not reward_lines(so), "baris hadiah pada quotation draft bisa dihapus")
+    api.call("sale.order", "action_confirm", ids=[so])
+    api.call("sale.order", "action_open_reward_wizard", ids=[so])
+    confirmed = reward_lines(so)
+    check(bool(confirmed) and fails_with(lambda: api.call("sale.order.line", "unlink", ids=[confirmed[0]["id"]]), "confirmed"), "baris hadiah pada pesanan terkonfirmasi tidak bisa dihapus (set jumlah ke 0)")
+    api.call("loyalty.program", "action_archive", ids=[auto])
+
+    # Beli X gratis Y.
+    free = new_program("Beli 3 Gratis 1", "buy_x_get_y", [{"reward_point_mode": "unit", "reward_point_amount": 1, "product_ids": [[6, 0, [product["id"]]]], "minimum_qty": 3}],
+                       [{"reward_type": "product", "reward_product_id": product["id"], "reward_product_qty": 1, "required_points": 3, "description": "Produk gratis"}])
+    so = order(3.0)
+    check(api.call("sale.order", "action_open_reward_wizard", ids=[so]) is True, "promosi beli X gratis Y terpasang otomatis")
+    line = reward_lines(so)
+    check(len(line) == 1 and line[0]["product_uom_qty"] == 1.0 and line[0]["discount"] == 100.0 and line[0]["price_subtotal"] == 0.0, "satu unit gratis (diskon 100%) ditambahkan sebagai baris hadiah")
+    check(abs(total(so)["amount_untaxed"] - unit * 3) < 0.01, "total tetap membayar 3 unit")
+    api.call("loyalty.program", "action_archive", ids=[free])
+
+    # Kupon: dibuat massal lewat wizard, sekali pakai, saldo bisa diubah.
+    coupons = new_program("Kupon Rp25.000", "coupons", [], [{"reward_type": "discount", "discount_mode": "per_order", "discount": 25000.0, "discount_applicability": "order", "required_points": 1}])
+    generate_context = {"active_id": coupons, "default_program_id": coupons}
+    wizard = api.call("loyalty.generate.wizard", "create", vals_list=[{"program_id": coupons, "mode": "anonymous", "coupon_qty": 2, "points_granted": 1, "description": "Uji regresi"}], context=generate_context)
+    made = api.call("loyalty.generate.wizard", "generate_coupons", ids=wizard, context=generate_context)
+    cards = api.search("loyalty.card", [["id", "in", made]], ["code", "points"])
+    check(len(cards) == 2 and all(c["points"] == 1.0 for c in cards) and api.read("loyalty.program", coupons, ["coupon_count"])["coupon_count"] == 2, "wizard membuat dua kupon bernilai 1 poin")
+    so = order(2.0)
+    action = apply_code(so, cards[0]["code"])
+    claim(so, action["context"]["default_reward_ids"][0])
+    check(abs(total(so)["amount_total"] - (unit * 2 * 1.11 - 25000.0)) < 0.5, "kupon Rp25.000 (termasuk pajak) mengurangi total pesanan")
+    invoice = invoice_of(so)
+    check(api.read("loyalty.card", cards[0]["id"], ["points"])["points"] == 0.0 and balanced(invoice), "kupon habis terpakai setelah pesanan dikonfirmasi dan jurnal faktur seimbang")
+    check(fails_with(lambda: apply_code(order(2.0), cards[0]["code"]), "already been used"), "kupon yang sudah terpakai ditolak")
+    balance = api.call("loyalty.card.update.balance", "create", vals_list=[{"card_id": cards[1]["id"], "new_balance": 3.0, "description": "Koreksi regresi"}])
+    api.call("loyalty.card.update.balance", "action_update_card_point", ids=balance)
+    history = api.search("loyalty.history", [["card_id", "=", cards[1]["id"]]], ["description", "issued", "used"])
+    check(api.read("loyalty.card", cards[1]["id"], ["points"])["points"] == 3.0 and any(h["description"] == "Koreksi regresi" and h["issued"] == 2.0 for h in history), "ubah saldo kupon tercatat di riwayat")
+    api.call("loyalty.card", "action_archive", ids=[cards[1]["id"]])
+    check(fails_with(lambda: apply_code(order(2.0), cards[1]["code"]), "invalid"), "kupon yang diarsipkan tidak bisa dipakai")
+
+    # Kartu loyalti: poin terkumpul per pelanggan dan dipakai pada pesanan berikutnya.
+    loyalty = new_program("Kartu Loyalti", "loyalty", [{"reward_point_mode": "money", "reward_point_amount": 0.001}],
+                          [{"reward_type": "discount", "discount_mode": "per_order", "discount": 10000.0, "discount_applicability": "order", "required_points": 100}],
+                          portal_point_name="Poin")
+    so = order(2.0, partner=customer)
+    api.call("sale.order", "action_open_reward_wizard", ids=[so])
+    api.call("sale.order", "action_confirm", ids=[so])
+    card = api.search("loyalty.card", [["program_id", "=", loyalty]], ["partner_id", "points"])
+    gross = round(unit * 2 * 1.11)
+    check(len(card) == 1 and card[0]["partner_id"][0] == customer, "kartu loyalti pelanggan terbit saat pesanan dikonfirmasi")
+    check(abs(card[0]["points"] - (gross * 0.001 - 100)) < 1.0, f"poin kartu = {gross * 0.001:,.1f} diterima dikurangi 100 dipakai")
+    second = order(1.0, partner=customer)
+    api.call("sale.order", "action_open_reward_wizard", ids=[second])
+    check(api.read("sale.order", second, ["applied_coupon_ids"])["applied_coupon_ids"] == [card[0]["id"]], "kartu pelanggan dimuat otomatis pada pesanan berikutnya")
+    api.call("loyalty.program", "action_archive", ids=[loyalty])
+
+    check_loyalty_pos(api, product, info, tag, created)
+    api.call("loyalty.program", "action_archive", ids=created)
+    check(not api.search("loyalty.program", [["id", "in", created], ["active", "=", True]], ["id"]), "program uji diarsipkan agar tidak memengaruhi pemeriksaan lain")
+
+
+def check_loyalty_pos(api, product, info, tag, created):
+    """Program POS: berlaku per stasiun dan pesanan kasir dengan baris hadiah (kasir menghitung promosi di UI, server menyimpan baris hadiah)."""
+    unit, taxes = info["lst_price"], info["taxes_id"]
+    api.call("product.template", "write", ids=[info["product_tmpl_id"][0]], vals={"available_in_pos": True})
+    discount = api.call("loyalty.program", "create", vals_list=[{
+        "name": f"POS Diskon 10% {tag}", "program_type": "promotion", "trigger": "auto", "applies_on": "current", "portal_visible": False, "sale_ok": False, "pos_ok": True,
+        "rule_ids": [[0, 0, {"reward_point_mode": "order", "reward_point_amount": 1, "minimum_amount": 100_000.0, "minimum_amount_tax_mode": "excl", "minimum_qty": 0}]],
+        "reward_ids": [[0, 0, {"reward_type": "discount", "discount_mode": "percent", "discount": 10, "discount_applicability": "order", "required_points": 1, "description": "10% untuk seluruh pesanan"}]],
+    }])[0]
+    free = api.call("loyalty.program", "create", vals_list=[{
+        "name": f"POS Beli 3 Gratis 1 {tag}", "program_type": "buy_x_get_y", "trigger": "auto", "applies_on": "current", "portal_visible": False, "sale_ok": False, "pos_ok": True,
+        "rule_ids": [[0, 0, {"reward_point_mode": "unit", "reward_point_amount": 1, "product_ids": [[6, 0, [product["id"]]]], "minimum_qty": 3}]],
+        "reward_ids": [[0, 0, {"reward_type": "product", "reward_product_id": product["id"], "reward_product_qty": 1, "required_points": 3, "description": "Produk gratis"}]],
+    }])[0]
+    created.extend([discount, free])
+    [cash_journal] = api.call("account.journal", "create", vals_list=[{"name": f"Kas Promo {tag}", "type": "cash", "code": f"P{tag[-4:]}"}])
+    cash = api.call("pos.payment.method", "create", vals_list=[{"name": f"Tunai Promo {tag}", "journal_id": cash_journal}])[0]
+    [config] = api.call("pos.config", "create", vals_list=[{"name": f"Kasir Promo {tag}", "payment_method_ids": [[6, 0, [cash]]], "cash_control": True}])
+    user = api.search("res.users", [["login", "!=", False]], ["id"], limit=1)[0]["id"]
+    today = datetime.date.today().isoformat()
+    pos_programs = {p["id"] for p in api.search("loyalty.program", [
+        ["pos_ok", "=", True], "|", ["pos_config_ids", "=", config], ["pos_config_ids", "=", False],
+        "|", ["date_from", "=", False], ["date_from", "<=", today], "|", ["date_to", "=", False], ["date_to", ">=", today]], ["id"])}
+    check({discount, free} <= pos_programs, "program POS tanpa pembatasan stasiun berlaku di stasiun mana pun (domain yang sama dengan pos.config._get_program_ids)")
+    sales_only = api.call("loyalty.program", "create", vals_list=[{"name": f"Hanya Sales {tag}", "program_type": "promotion", "sale_ok": True, "pos_ok": False, "reward_ids": [[0, 0, {"discount": 5}]]}])[0]
+    created.append(sales_only)
+    check(sales_only not in {p["id"] for p in api.search("loyalty.program", [["pos_ok", "=", True]], ["id"])}, "program yang hanya untuk Sales Order tidak muncul di POS")
+
+    [session] = api.call("pos.session", "create", vals_list=[{"config_id": config, "user_id": user}])
+    api.call("pos.session", "set_opening_control", ids=[session], cashbox_value=100_000.0, notes="Modal awal")
+    discount_excl = round(unit * 3 * 0.1, 2)
+    excl = round(unit * 3 - discount_excl, 2)
+    total = api.call("account.tax", "compute_all", ids=taxes, price_unit=excl, quantity=1)["total_included"] if taxes else excl
+    now = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    discount_product = api.read("loyalty.reward", api.search("loyalty.reward", [["program_id", "=", discount]], ["id"])[0]["id"], ["discount_line_product_id"])["discount_line_product_id"][0]
+    reward_ids = {p: api.search("loyalty.reward", [["program_id", "=", p]], ["id"])[0]["id"] for p in (discount, free)}
+
+    def line(uuid, product_id, qty, price, disc, extra=None):
+        subtotal = 0.0 if disc == 100.0 else round(qty * price, 2)
+        return [0, 0, {"uuid": uuid, "product_id": product_id, "qty": qty, "price_unit": price, "discount": disc, "tax_ids": [[6, 0, taxes]], "price_subtotal": subtotal,
+                       "price_subtotal_incl": subtotal, "full_product_name": "Baris", "name": "Baris", **(extra or {})}]
+
+    payload = {
+        "name": f"Order P-{tag}", "uuid": f"promo-{tag}", "session_id": session, "config_id": config, "user_id": user, "sequence_number": 1, "date_order": now,
+        "amount_tax": total - excl, "amount_total": total, "amount_paid": total, "amount_return": 0.0, "partner_id": False, "to_invoice": False, "pricelist_id": False, "fiscal_position_id": False,
+        "lines": [
+            line(f"l1-{tag}", product["id"], 3.0, unit, 0.0),
+            line(f"l2-{tag}", discount_product, 1.0, -discount_excl, 0.0, {"is_reward_line": True, "reward_id": reward_ids[discount], "reward_identifier_code": f"a{tag}", "points_cost": 1.0}),
+            line(f"l3-{tag}", product["id"], 1.0, unit, 100.0, {"is_reward_line": True, "reward_id": reward_ids[free], "reward_identifier_code": f"b{tag}", "points_cost": 3.0}),
+        ],
+        "payment_ids": [[0, 0, {"payment_method_id": cash, "amount": total, "name": now}]],
+    }
+    created_order = api.call("pos.order", "sync_from_ui", orders=[payload])["pos.order"][0]
+    check(created_order["state"] == "paid" and abs(created_order["amount_total"] - total) < 0.005, "pesanan kasir dengan baris hadiah tersimpan dan dibayar")
+    rewards = api.search("pos.order.line", [["order_id", "=", created_order["id"]], ["is_reward_line", "=", True]], ["reward_id", "points_cost"])
+    check({r["reward_id"][0] for r in rewards} == set(reward_ids.values()), "baris hadiah menyimpan reward_id dan poin yang dipakai")
+    counts = {p["id"]: (p["pos_order_count"], p["total_order_count"]) for p in api.search("loyalty.program", [["id", "in", [discount, free]]], ["pos_order_count", "total_order_count"])}
+    check(counts == {discount: (1, 1), free: (1, 1)}, "pemakaian program POS terhitung dari baris hadiah")
+    data = api.call("pos.session", "get_closing_control_data", ids=[session])
+    expected = data["default_cash_details"]["amount"]
+    check(abs(expected - (100_000.0 + total)) < 0.01, "kas diharapkan = kas awal + total pesanan berhadiah")
+    api.call("pos.session", "post_closing_cash_details", ids=[session], counted_cash=expected)
+    api.call("pos.session", "update_closing_control_state_session", ids=[session], notes="Penutupan promo")
+    closed = api.call("pos.session", "close_session_from_ui", ids=[session], bank_payment_method_diff_pairs=[])
+    info_session = api.read("pos.session", session, ["state", "move_id", "statement_line_ids"])
+    check(closed.get("successful") is True and info_session["state"] == "closed", "sesi dengan pesanan berhadiah ditutup tanpa meminta penyeimbangan (total memakai pembulatan pajak perusahaan)")
+    statement_moves = [r["move_id"][0] for r in api.search("account.bank.statement.line", [["id", "in", info_session["statement_line_ids"]]], ["move_id"])]
+    items = api.search("account.move.line", [["move_id", "=", info_session["move_id"][0]]], ["debit", "credit"])
+    check(items and abs(sum(i["debit"] for i in items) - sum(i["credit"] for i in items)) < 0.005 and all(balanced_move(api, mid) for mid in statement_moves), "jurnal penutupan sesi berhadiah seimbang")
+
+
+def balanced_move(api, move_id):
+    items = api.search("account.move.line", [["move_id", "=", move_id]], ["debit", "credit"])
+    return abs(sum(i["debit"] for i in items) - sum(i["credit"] for i in items)) < 0.005
 
 
 def check_bank_reconciliation(api):

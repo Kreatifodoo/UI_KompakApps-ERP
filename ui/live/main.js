@@ -75,8 +75,10 @@ import * as budgetreport from "./pages/budgetreport.js";
 import * as transfer from "./pages/transfer.js";
 import * as soon from "./pages/soon.js";
 import { printDocument, printNow } from "./print.js";
+import * as loyalty from "./pages/loyalty.js";
 
 const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, bank, stock, moves, count, scrap, orderpoint, replenish, warehouse, location: location_, uom, putaway, lot, bom, workcenter, mo, schedule, production, lead, opportunity, crmsetting, crmreport, posconfig, possession, posorder, kasir, salespricelist, acctreport, dashboard, account, tax, currency, analytic, analyticplan, assetprofile, asset, journalmaster, analysis, modsetting, users, company, dataimport, auditlog, budgetplan, budget, budgetreport, transfer, soon };
+Object.assign(PAGES, { loyalty });
 let currentId = "pr";
 
 function parseHash() {
