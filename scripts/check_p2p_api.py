@@ -193,6 +193,8 @@ def main():
     check_manufacturing(api)
     check_crm(api)
     check_pos(api, product)
+    check_sales_pricelist(api, product)
+    check_account_reports(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -845,6 +847,57 @@ def check_pos(api, product):
     check(len(api.search("pos.order", [["session_id", "=", session]], ["id"])) == info["order_count"], "daftar pesanan sesi sesuai jumlah pesanan")
     groups = api.call("pos.payment", "formatted_read_group", domain=[["session_id", "=", session]], groupby=["payment_method_id"], aggregates=["__count", "amount:sum"])
     check({g["payment_method_id"][0] for g in groups} == {cash, bank}, "ringkasan pembayaran per metode memuat tunai dan bank")
+
+def check_sales_pricelist(api, product):
+    """Daftar harga penjualan: aturan produk dan kategori dengan jumlah minimum, dipakai harga baris Sales Order (halaman Pricelist Master penjualan)."""
+    step("Daftar harga penjualan: aturan kategori dan produk, harga pada Sales Order")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    api.call("res.config.settings", "execute", ids=api.call("res.config.settings", "create", vals_list=[{"group_product_pricelist": True}]))
+    info = api.read("product.product", product["id"], ["product_tmpl_id", "categ_id", "lst_price"])
+    categ = info["categ_id"][0]
+    list_price = info["lst_price"]
+    customer = api.search("res.partner", [["name", "=", "PT Pelanggan Nusantara"]], ["id"], limit=1)[0]["id"]
+    currency = api.search("res.currency", [["name", "=", "IDR"]], ["id"], limit=1)[0]["id"]
+    [pricelist] = api.call("product.pricelist", "create", vals_list=[{
+        "name": f"Grosir Regresi {tag}", "currency_id": currency,
+        "item_ids": [
+            [0, 0, {"applied_on": "2_product_category", "categ_id": categ, "min_quantity": 1.0, "compute_price": "percentage", "percent_price": 10.0}],
+            [0, 0, {"applied_on": "1_product", "product_tmpl_id": info["product_tmpl_id"][0], "min_quantity": 3.0, "compute_price": "percentage", "percent_price": 20.0}],
+        ],
+    }])
+    check(len(api.read("product.pricelist", pricelist, ["item_ids"])["item_ids"]) == 2, "daftar harga tersimpan dengan dua aturan")
+
+    def price_for(qty):
+        [order] = api.call("sale.order", "create", vals_list=[{"partner_id": customer, "pricelist_id": pricelist, "order_line": [[0, 0, {"product_id": product["id"], "product_uom_qty": qty}]]}])
+        return api.search("sale.order.line", [["order_id", "=", order]], ["price_unit"])[0]["price_unit"]
+
+    check(abs(price_for(1.0) - list_price * 0.9) < 0.01, "jumlah 1: aturan kategori (diskon 10%) dipakai")
+    check(abs(price_for(3.0) - list_price * 0.8) < 0.01, "jumlah 3: aturan produk yang lebih spesifik (diskon 20%) dipakai")
+    item = api.search("product.pricelist.item", [["pricelist_id", "=", pricelist], ["applied_on", "=", "2_product_category"]], ["id"])[0]["id"]
+    api.call("product.pricelist", "write", ids=[pricelist], vals={"item_ids": [[1, item, {"percent_price": 15.0}]]})
+    check(abs(price_for(1.0) - list_price * 0.85) < 0.01, "aturan yang diubah langsung berlaku pada Sales Order baru")
+    api.call("product.pricelist", "action_archive", ids=[pricelist])
+    check(api.read("product.pricelist", pricelist, ["active"])["active"] is False, "daftar harga bisa diarsipkan")
+
+
+def check_account_reports(api):
+    """Kueri laporan Tax Report, Invoice Analysis, dan Analytic Report (halaman laporan akuntansi)."""
+    step("Laporan akuntansi: pajak, analisis faktur, analitik")
+    today = datetime.date.today().isoformat()
+    year = f"{datetime.date.today().year}-01-01"
+    rows = api.call("account.move.line", "formatted_read_group", domain=[["parent_state", "=", "posted"], ["tax_line_id", "!=", False], ["date", ">=", year], ["date", "<=", today]], groupby=["tax_line_id"], aggregates=["__count", "balance:sum", "tax_base_amount:sum"])
+    check(bool(rows) and all("tax_base_amount:sum" in r for r in rows), "tax report: pajak dikelompokkan dengan dasar pengenaan pajak")
+    taxes = {t["id"]: t["type_tax_use"] for t in api.search("account.tax", [["id", "in", [r["tax_line_id"][0] for r in rows]]], ["type_tax_use"], context={"active_test": False})}
+    output = sum(-r["balance:sum"] for r in rows if taxes.get(r["tax_line_id"][0]) == "sale")
+    check(output > 0, f"tax report: PPN keluaran dari penjualan bernilai positif ({output:,.0f})")
+    types = api.call("account.invoice.report", "formatted_read_group", domain=[["state", "=", "posted"], ["invoice_date", ">=", year], ["invoice_date", "<=", today]], groupby=["move_type"], aggregates=["__count", "price_subtotal:sum"])
+    check({t["move_type"] for t in types} >= {"out_invoice", "in_invoice"}, "invoice analysis: penjualan dan pembelian terpisah per jenis dokumen")
+    for dimension in ("invoice_date:month", "commercial_partner_id", "product_id", "product_categ_id", "invoice_user_id"):
+        api.call("account.invoice.report", "formatted_read_group", domain=[["state", "=", "posted"], ["move_type", "in", ["out_invoice", "out_refund"]]], groupby=[dimension], aggregates=["__count", "price_subtotal:sum", "price_total:sum", "quantity:sum"])
+    check(True, "invoice analysis: lima dimensi pengelompokan diterima Odoo")
+    api.call("account.analytic.line", "formatted_read_group", domain=[["date", ">=", year], ["amount", ">", 0]], groupby=["account_id"], aggregates=["__count", "amount:sum"])
+    check(isinstance(api.search("account.analytic.account", [], ["name", "code", "plan_id"], context={"active_test": False}), list), "analytic report: kueri akun dan baris analitik diterima Odoo")
+
 
 def check_bank_reconciliation(api):
     """Mutasi bank dicocokkan dengan pembayaran tertunda (urutan panggilan yang sama dengan UI), lalu biaya bank ke akun beban."""
