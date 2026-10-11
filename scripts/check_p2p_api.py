@@ -202,6 +202,7 @@ def main():
     check_data_import(api)
     check_print_documents(api)
     check_auditlog(api)
+    check_budget(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -1189,6 +1190,197 @@ def check_auditlog(api):
     if was == "draft":
         api.call("auditlog.rule", "set_to_draft", ids=[rule_id])
         check(api.read("auditlog.rule", rule_id, ["state"])["state"] == "draft", "aturan audit bisa dinonaktifkan lewat set_to_draft")
+
+
+def budget_report(api, plan_id, template, date_from, date_to, analytic_id=None, moves="posted", drill=()):
+    """Laporan anggaran vs realisasi lewat instance MIS sementara (seperti ui/live/pages/budgetreport.js).
+
+    Mengembalikan ({label atau kode akun: (anggaran, realisasi)}, {(kode akun, kolom): hasil drilldown}).
+    """
+    [key] = api.search("ir.model.data", [["module", "=", "nusara_base"], ["name", "=", template]], ["res_id"], limit=1)
+    [instance] = api.call("mis.report.instance", "create", vals_list=[{
+        "name": "Anggaran vs Realisasi (regresi)", "report_id": key["res_id"], "temporary": True, "target_move": moves,
+        "analytic_domain": json.dumps([["analytic_distribution", "in", [analytic_id]]]) if analytic_id else "[]",
+        "period_ids": [
+            [0, 0, {"name": "Anggaran", "sequence": 1, "mode": "fix", "manual_date_from": date_from, "manual_date_to": date_to, "source": "mis_budget_by_account", "source_mis_budget_by_account_id": plan_id}],
+            [0, 0, {"name": "Realisasi", "sequence": 2, "mode": "fix", "manual_date_from": date_from, "manual_date_to": date_to}],
+        ],
+    }])
+    values, drills = {}, {}
+    try:
+        result = api.call("mis.report.instance", "compute", ids=[instance])
+        for row in result["body"]:
+            head = row["label"].split(" ")[0]
+            values[head if head.isdigit() else row["label"]] = tuple(cell.get("val") or 0.0 for cell in row["cells"])
+            for code, column in drill:
+                cell = row["cells"][column]
+                if head == code and cell.get("drilldown_arg"):
+                    drills[(code, column)] = api.call("mis.report.instance", "drilldown", ids=[instance], arg=cell["drilldown_arg"])
+    finally:
+        api.call("mis.report.instance", "unlink", ids=[instance])
+    return values, drills
+
+
+def check_budget(api):
+    """Anggaran per akun (OCA mis_builder_budget, D31): rencana, baris, status, dan anggaran vs realisasi dari jurnal nyata."""
+    step("Budget: rencana anggaran, baris, status, dan anggaran vs realisasi")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    year = datetime.date.today().year
+    first, last = f"{year}-01-01", f"{year}-12-31"
+
+    def month_range(month):
+        start = datetime.date(year, month, 1)
+        end = (datetime.date(year + month // 12, month % 12 + 1, 1) - datetime.timedelta(days=1))
+        return start.isoformat(), end.isoformat()
+
+    codes = {row["code"]: row["id"] for row in api.search("account.account", [["code", "in", ["41000010", "63110080", "11120001"]]], ["code"])}
+    revenue, expense, bank = codes["41000010"], codes["63110080"], codes["11120001"]
+    analytic_plan = (api.search("account.analytic.plan", [], ["id"], limit=1) or [{"id": api.call("account.analytic.plan", "create", vals_list=[{"name": "Proyek Regresi"}])[0]}])[0]["id"]
+    [analytic, other] = api.call("account.analytic.account", "create", vals_list=[
+        {"name": f"Proyek Anggaran {tag}", "plan_id": analytic_plan}, {"name": f"Proyek Lain {tag}", "plan_id": analytic_plan},
+    ])
+    dist = {str(analytic): 100}
+
+    # Rencana (Budget Plan Master) dan baris anggaran bulanan seperti dialog Tambah Baris di UI.
+    [plan] = api.call("mis.budget.by.account", "create", vals_list=[{"name": f"Anggaran Regresi {tag}", "date_from": first, "date_to": last}])
+    record = api.read("mis.budget.by.account", plan, ["state", "active", "company_id", "item_ids"])
+    check(record["state"] == "draft" and record["active"] and not record["item_ids"], "rencana anggaran baru berstatus draft, aktif, dan kosong")
+    company = record["company_id"][0] if record["company_id"] else 1
+    items = []
+    for month in range(1, 13):
+        start, end = month_range(month)
+        base = {"budget_id": plan, "company_id": company, "date_from": start, "date_to": end, "analytic_distribution": dist}
+        items.append({**base, "account_id": revenue, "credit": 1_000_000.0})
+        items.append({**base, "account_id": expense, "debit": 300_000.0})
+    api.call("mis.budget.by.account.item", "create", vals_list=items)
+    rows = api.search("mis.budget.by.account.item", [["budget_id", "=", plan]], ["account_id", "debit", "credit", "balance", "date_from", "date_to", "analytic_distribution"], order="date_from, id")
+    check(len(rows) == 24 and len(api.read("mis.budget.by.account", plan, ["item_ids"])["item_ids"]) == 24, "24 baris anggaran (pendapatan dan listrik, 12 bulan) tersimpan")
+    check(sum(r["credit"] for r in rows) == 12_000_000.0 and sum(r["debit"] for r in rows) == 3_600_000.0, "pendapatan tersimpan sebagai kredit 12.000.000 dan biaya sebagai debit 3.600.000")
+    check(all(r["analytic_distribution"] == dist for r in rows) and rows[0]["balance"] in (-1_000_000.0, 300_000.0), "baris membawa distribusi analitik dan saldo bertanda (kredit negatif)")
+    totals = api.call("mis.budget.by.account.item", "formatted_read_group", domain=[["budget_id", "in", [plan]]], groupby=["budget_id", "account_id"], aggregates=["balance:sum", "__count"])
+    by_account = {g["account_id"][0]: (g["balance:sum"], g["__count"]) for g in totals}
+    check(by_account == {revenue: (-12_000_000.0, 12), expense: (3_600_000.0, 12)}, "total per akun (daftar Budget) cocok: pendapatan 12 baris, biaya 12 baris")
+
+    # Aturan tumpang tindih: satu akun hanya boleh punya satu angka per periode kecuali rencana mengizinkan.
+    [tight] = api.call("mis.budget.by.account", "create", vals_list=[{"name": f"Tanpa Tumpang Tindih {tag}", "date_from": first, "date_to": last}])
+    one = {"budget_id": tight, "company_id": company, "account_id": expense, "date_from": first, "date_to": month_range(1)[1], "debit": 100.0}
+    api.call("mis.budget.by.account.item", "create", vals_list=[one])
+    try:
+        api.call("mis.budget.by.account.item", "create", vals_list=[{**one, "date_from": f"{year}-01-15", "date_to": f"{year}-02-15"}])
+        rejected = False
+    except RuntimeError:
+        rejected = True
+    check(rejected, "baris yang tumpang tindih pada akun yang sama ditolak Odoo")
+    api.call("mis.budget.by.account", "write", ids=[tight], vals={"allow_items_overlap": True})
+    api.call("mis.budget.by.account.item", "create", vals_list=[{**one, "date_from": f"{year}-01-15", "date_to": f"{year}-02-15"}])
+    check(api.call("mis.budget.by.account.item", "search_count", domain=[["budget_id", "=", tight]]) == 2, "dengan izin tumpang tindih, baris kedua diterima")
+    try:
+        api.call("mis.budget.by.account.item", "create", vals_list=[{**one, "date_from": f"{year - 1}-12-01", "date_to": f"{year - 1}-12-31"}])
+        outside = False
+    except RuntimeError:
+        outside = True
+    check(outside, "baris di luar periode rencana ditolak Odoo")
+
+    # Ubah satu baris (sisi dan jumlah ditulis bersamaan) dan hapus satu baris, seperti Ubah dan Hapus di UI.
+    january_expense = next(r["id"] for r in rows if r["account_id"][0] == expense and r["date_from"] == first)
+    api.call("mis.budget.by.account.item", "write", ids=[january_expense], vals={"debit": 400_000.0, "credit": 0.0})
+    check(api.read("mis.budget.by.account.item", january_expense, ["debit", "credit", "balance"])["balance"] == 400_000.0, "ubah baris: jumlah dan saldo diperbarui")
+    december_revenue = next(r["id"] for r in rows if r["account_id"][0] == revenue and r["date_to"] == last)
+    api.call("mis.budget.by.account.item", "unlink", ids=[december_revenue])
+    check(api.call("mis.budget.by.account.item", "search_count", domain=[["budget_id", "=", plan]]) == 23, "hapus baris: tersisa 23 baris")
+
+    # Alur status: konfirmasi, kembali ke draft, batal, kembali, konfirmasi.
+    for method, expected in (("action_confirm", "confirmed"), ("action_draft", "draft"), ("action_cancel", "cancelled"), ("action_draft", "draft"), ("action_confirm", "confirmed")):
+        api.call("mis.budget.by.account", method, ids=[plan])
+        check(api.read("mis.budget.by.account", plan, ["state"])["state"] == expected, f"status rencana: {method} menjadi {expected}")
+
+    # Realisasi: jurnal nyata dengan analitik. Pendapatan 1.000.000 (Jan) + 1.500.000 (Feb); listrik 350.000 + 250.000; Maret 800.000 di luar jendela.
+    journal = api.search("account.journal", [["type", "=", "general"]], ["id"], limit=1)[0]["id"]
+
+    def entry(date, account, debit, credit, label, post=True):
+        [move] = api.call("account.move", "create", vals_list=[{
+            "move_type": "entry", "date": date, "journal_id": journal, "ref": f"{label} {tag}",
+            "line_ids": [
+                [0, 0, {"account_id": account, "debit": debit, "credit": credit, "name": label, "analytic_distribution": dist}],
+                [0, 0, {"account_id": bank, "debit": credit, "credit": debit, "name": label}],
+            ],
+        }])
+        if post:
+            api.call("account.move", "action_post", ids=[move])
+        return move
+
+    entry(f"{year}-01-15", revenue, 0.0, 1_000_000.0, "Penjualan Jan")
+    entry(f"{year}-02-10", revenue, 0.0, 1_500_000.0, "Penjualan Feb")
+    entry(f"{year}-01-20", expense, 350_000.0, 0.0, "Listrik Jan")
+    entry(f"{year}-02-18", expense, 250_000.0, 0.0, "Listrik Feb")
+    entry(f"{year}-03-05", revenue, 0.0, 800_000.0, "Penjualan Mar")
+    entry(f"{year}-02-20", revenue, 0.0, 777_000.0, "Penjualan draft", post=False)
+
+    # Hitungan terpisah dari mesin MIS: item jurnal per akun, dan anggaran dibagi per hari.
+    def actual(code_id, date_from, date_to, posted=True):
+        domain = [["analytic_distribution", "in", [analytic]], ["account_id", "=", code_id], ["date", ">=", date_from], ["date", "<=", date_to]]
+        if posted:
+            domain.append(["parent_state", "=", "posted"])
+        return sum(line["balance"] for line in api.search("account.move.line", domain, ["balance"]))
+
+    def prorated(code_id, date_from, date_to):
+        total = 0.0
+        d_from, d_to = datetime.date.fromisoformat(date_from), datetime.date.fromisoformat(date_to)
+        for item in api.search("mis.budget.by.account.item", [["budget_id", "=", plan], ["account_id", "=", code_id]], ["balance", "date_from", "date_to"]):
+            start, end = max(datetime.date.fromisoformat(item["date_from"]), d_from), min(datetime.date.fromisoformat(item["date_to"]), d_to)
+            if start <= end:
+                length = (datetime.date.fromisoformat(item["date_to"]) - datetime.date.fromisoformat(item["date_from"])).days + 1
+                total += item["balance"] * ((end - start).days + 1) / length
+        return total
+
+    window = (f"{year}-01-01", f"{year}-02-28")
+    values, drills = budget_report(api, plan, "mis_anggaran", *window, analytic_id=analytic, drill=[("41000010", 0), ("41000010", 1)])
+    check(values["Pendapatan"] == (2_000_000.0, 2_500_000.0) and values["41000010"] == (2_000_000.0, 2_500_000.0), "Jan-Feb: pendapatan anggaran 2.000.000, realisasi 2.500.000 (draft dan Maret tidak dihitung)")
+    check(values["Beban"] == (700_000.0, 600_000.0) and values["63110080"] == (700_000.0, 600_000.0), "Jan-Feb: listrik anggaran 700.000 (400.000 + 300.000), realisasi 600.000")
+    check(values["LABA (RUGI) BERSIH"] == (1_300_000.0, 1_900_000.0), "Jan-Feb: laba (rugi) anggaran 1.300.000, realisasi 1.900.000")
+    check(abs(values["41000010"][1] + actual(revenue, *window)) < 0.01 and abs(values["63110080"][1] - actual(expense, *window)) < 0.01, "realisasi laporan sama dengan jumlah item jurnal terpisah")
+    check(abs(values["41000010"][0] + prorated(revenue, *window)) < 0.01 and abs(values["63110080"][0] - prorated(expense, *window)) < 0.01, "anggaran laporan sama dengan hitungan baris anggaran terpisah")
+    budget_cost, actual_cost = values["Beban"]
+    check(actual_cost - budget_cost == -100_000.0 and abs(actual_cost / budget_cost * 100 - 85.714285) < 0.0001, "selisih (realisasi - anggaran) -100.000 dan pencapaian 85,7% untuk biaya")
+    budget_revenue, actual_revenue = values["Pendapatan"]
+    check(actual_revenue - budget_revenue == 500_000.0 and actual_revenue / budget_revenue == 1.25, "selisih +500.000 dan pencapaian 125% untuk pendapatan")
+
+    items_drill, lines_drill = drills.get(("41000010", 0)), drills.get(("41000010", 1))
+    check(bool(items_drill) and items_drill["res_model"] == "mis.budget.by.account.item", "drilldown sel anggaran menuju baris anggaran")
+    if items_drill:
+        budget_items = api.search(items_drill["res_model"], items_drill["domain"], ["credit", "debit"])
+        check(len(budget_items) == 2 and sum(i["credit"] for i in budget_items) == 2_000_000.0, "drilldown anggaran: 2 baris (Jan dan Feb) berjumlah 2.000.000")
+    check(bool(lines_drill) and lines_drill["res_model"] == "account.move.line", "drilldown sel realisasi menuju item jurnal")
+    if lines_drill:
+        journal_lines = api.search(lines_drill["res_model"], lines_drill["domain"], ["credit", "debit"], context={"active_test": False})
+        check(len(journal_lines) == 2 and sum(i["credit"] for i in journal_lines) == 2_500_000.0, "drilldown realisasi: 2 item jurnal berjumlah 2.500.000")
+
+    everything, _ = budget_report(api, plan, "mis_anggaran", *window, analytic_id=analytic, moves="all")
+    check(everything["41000010"] == (2_000_000.0, 2_500_000.0 + 777_000.0), "dengan entri draft, realisasi bertambah 777.000 (anggaran tetap)")
+    elsewhere, _ = budget_report(api, plan, "mis_anggaran", *window, analytic_id=other)
+    check(elsewhere.get("41000010", (0.0, 0.0)) == (0.0, 0.0) and elsewhere.get("63110080", (0.0, 0.0)) == (0.0, 0.0), "filter analitik lain: anggaran dan realisasi akun itu nol")
+    unfiltered, _ = budget_report(api, plan, "mis_anggaran", *window)
+    check(unfiltered["41000010"][0] == 2_000_000.0 and unfiltered["41000010"][1] >= 2_500_000.0, "tanpa filter analitik: anggaran sama, realisasi mencakup seluruh jurnal")
+    half, _ = budget_report(api, plan, "mis_anggaran", f"{year}-01-01", f"{year}-01-15", analytic_id=analytic)
+    check(abs(half["41000010"][0] - 1_000_000.0 * 15 / 31) < 0.01, "periode laporan separuh bulan: anggaran dibagi per hari (15/31 dari 1.000.000)")
+    full, _ = budget_report(api, plan, "mis_anggaran", first, last, analytic_id=analytic)
+    check(full["41000010"] == (11_000_000.0, 3_300_000.0), "setahun: anggaran pendapatan 11.000.000 (11 baris), realisasi 3.300.000 (Jan, Feb, Mar)")
+    pnl, _ = budget_report(api, plan, "mis_laba_rugi", *window, analytic_id=analytic)
+    check(pnl["Penjualan"] == (2_000_000.0, 2_500_000.0) and pnl["Beban Umum dan Kantor"] == (700_000.0, 600_000.0), "tampilan Laba Rugi: anggaran per akun diturunkan ke baris KPI yang sama")
+    check(pnl["LABA BERSIH"] == (1_300_000.0, 1_900_000.0), "tampilan Laba Rugi: laba bersih anggaran dan realisasi sama dengan tampilan per akun")
+
+    # Arsip dan duplikasi.
+    copied = api.call("mis.budget.by.account", "copy", ids=[plan])
+    copy_id = copied[0] if isinstance(copied, list) else copied
+    clone = api.read("mis.budget.by.account", copy_id, ["state", "item_ids", "name"])
+    check(clone["state"] == "draft" and len(clone["item_ids"]) == 23, "duplikasi: draft dengan 23 baris yang sama")
+    api.call("mis.budget.by.account", "action_archive", ids=[copy_id])
+    check(not api.read("mis.budget.by.account", copy_id, ["active"])["active"], "rencana diarsipkan")
+    api.call("mis.budget.by.account", "action_unarchive", ids=[copy_id])
+    check(api.read("mis.budget.by.account", copy_id, ["active"])["active"], "rencana diaktifkan kembali")
+    template = api.search("ir.model.data", [["module", "=", "nusara_base"], ["name", "=", "mis_anggaran"]], ["res_id"])
+    kpis = api.search("mis.report.kpi", [["report_id", "=", template[0]["res_id"]]], ["description", "auto_expand_accounts"], order="sequence")
+    check([k["description"] for k in kpis] == ["Pendapatan", "Harga Pokok", "Beban", "LABA (RUGI) BERSIH"] and [k["auto_expand_accounts"] for k in kpis] == [True, True, True, False], "template Anggaran per Akun: 4 baris, tiga diperluas per akun (label dipakai UI)")
 
 
 def check_bank_reconciliation(api):

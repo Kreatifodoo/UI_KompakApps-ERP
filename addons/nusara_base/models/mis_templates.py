@@ -142,6 +142,23 @@ RINGKASAN = [
     ("rasio_kas", "Kas terhadap Hutang Usaha (kali)", "kas_bank / hutang_usaha", None, "num"),
 ]
 
+# Anggaran vs realisasi per akun (D31). Pendapatan, harga pokok, dan beban diperluas per akun menurut jenis akun, jadi tidak ada
+# akun laba rugi yang terlewat. Kolom anggaran memakai sumber "mis_budget_by_account" (mis_builder_budget). Label baris dipakai UI
+# (pages/budgetreport.js) untuk memberi warna selisih; ubah keduanya bersama. Baris: (nama, label, rumus, gaya, jenis, opsi).
+ANGGARAN = [
+    ("pendapatan", "Pendapatan", "-balp[('account_type','in',('income','income_other'))]", "sub", "num", {"expand": True}),
+    ("harga_pokok", "Harga Pokok", "balp[('account_type','=','expense_direct_cost')]", "sub", "num", {"expand": True}),
+    (
+        "beban",
+        "Beban",
+        "balp[('account_type','in',('expense','expense_depreciation','expense_other'))]",
+        "sub",
+        "num",
+        {"expand": True},
+    ),
+    ("laba_bersih", "LABA (RUGI) BERSIH", "pendapatan - harga_pokok - beban", "total"),
+]
+
 # Neraca saldo: satu KPI ber-subkolom yang diperluas per akun.
 NERACA_SALDO_COLUMNS = [
     ("saldo_awal", "Saldo Awal", "bali[]"),
@@ -155,6 +172,12 @@ REPORTS = [
     {"key": "mis_neraca", "name": "Neraca", "description": "Laporan posisi keuangan menurut COA Indonesia (l10n_id).", "kpis": NERACA},
     {"key": "mis_arus_kas", "name": "Arus Kas", "description": "Laporan arus kas metode tidak langsung, diuji terhadap saldo kas dan bank.", "kpis": ARUS_KAS},
     {"key": "mis_ringkasan", "name": "Ringkasan Eksekutif", "description": "Kinerja dan posisi keuangan dalam satu halaman.", "kpis": RINGKASAN},
+    {
+        "key": "mis_anggaran",
+        "name": "Anggaran per Akun",
+        "description": "Pendapatan, harga pokok, dan beban per akun; dipakai untuk membandingkan anggaran dengan realisasi.",
+        "kpis": ANGGARAN,
+    },
     {
         "key": "mis_neraca_saldo",
         "name": "Neraca Saldo",

@@ -17,7 +17,7 @@ Setiap menu pada sidebar prototipe sudah punya halaman kecuali tiga kelompok pad
 | # | Pekerjaan | Pemilik | Catatan |
 |---|---|---|---|
 | 4.1 | Promotion & Loyalty (Sales dan POS) | Agen A | Memasang modul `loyalty`, `sale_loyalty`, `pos_loyalty` |
-| 4.2 | Budget Plan Master, Budget, Budget Report | Agen B | OCA `mis_builder_budget` |
+| 4.2 | Budget Plan Master, Budget, Budget Report | Agen B | Selesai (D31): OCA `mis_builder_budget` per akun |
 | 4.3 | Sales › Report › Commissions | Ditunda | Tidak ada di Odoo Community; butuh OCA `sale_commission` dan keputusan aturan komisi |
 
 ## Antrian Fase 5 (pengerasan)

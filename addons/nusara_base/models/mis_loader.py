@@ -82,6 +82,7 @@ class NusaraMisLoader(models.AbstractModel):
         for sequence, row in enumerate(spec["kpis"], start=1):
             name, label, expression, style = row[:4]
             kpi_type = row[4] if len(row) > 4 else "num"
+            options = row[5] if len(row) > 5 else {}
             kpi_model.create(
                 {
                     "report_id": report.id,
@@ -91,6 +92,8 @@ class NusaraMisLoader(models.AbstractModel):
                     "type": "num" if kpi_type == "num" else kpi_type,
                     "style_id": styles[style].id if style else False,
                     "sequence": sequence,
+                    # "expand": baris diperluas per akun (satu baris rincian per akun yang punya nilai).
+                    "auto_expand_accounts": bool(options.get("expand")),
                 }
             )
         return report
