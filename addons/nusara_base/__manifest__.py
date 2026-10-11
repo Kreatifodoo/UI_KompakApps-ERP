@@ -24,6 +24,8 @@
         "account_reconcile_oca",  # rekonsiliasi bank
         "account_asset_management",  # aset tetap dan penyusutan
         "account_usability",  # menu akuntansi yang disembunyikan di Community
+        # OCA (server-tools)
+        "auditlog",  # jejak audit: siapa mengubah apa, kapan, nilai lama dan baru
     ],
     "data": ["data/mis_reports.xml"],
     "installable": True,
