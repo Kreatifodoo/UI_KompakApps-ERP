@@ -10,3 +10,4 @@ from . import test_lots
 from . import test_manufacturing
 from . import test_crm
 from . import test_pos
+from . import test_budget
