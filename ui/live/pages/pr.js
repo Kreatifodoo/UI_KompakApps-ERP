@@ -6,6 +6,7 @@ import {
   money, pageHeader, readOne, readonlyValue, registerLookup, rowLink, runLookup, searchRead, selectOptions, statTiles, statusbar, table,
   toast, today, referenceUsers,
 } from "../common.js";
+import { printButton } from "../print.js";
 
 const STATES = {
   draft: ["Draft", "muted"],
@@ -285,7 +286,7 @@ async function renderForm(id) {
   app.innerHTML = `
     <div class="text-sm text-gray-500 mb-2"><a href="#/pr" class="hover:text-indigo-600">Purchase Request</a> / ${title}</div>
     <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-3">
-      <div class="flex flex-wrap gap-2">${pr ? actionBar(BUTTONS, pr) : ""}</div>
+      <div class="flex flex-wrap gap-2">${pr ? actionBar(BUTTONS, pr) + printButton("purchase.request", pr.id) : ""}</div>
       ${statusbar(FLOW, STATES, pr?.state ?? "draft")}
     </div>
     ${pr ? `<div class="flex flex-wrap gap-2 mb-4">${statTiles([

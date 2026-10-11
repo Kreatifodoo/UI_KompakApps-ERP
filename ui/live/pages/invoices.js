@@ -7,6 +7,7 @@ import {
   journalHtml, loadJournalItems, loadMessages, money, openModal, pageHeader, readOne, readonlyValue, referenceAssetProfiles, referenceSelection,
   registerLookup, rowLink, runLookup, searchAccounts, searchRead, selectOptions, statTiles, statusbar, table, toast, today,
 } from "../common.js";
+import { printButton } from "../print.js";
 
 const STATES = {
   draft: ["Draft", "muted"],
@@ -244,7 +245,7 @@ export function createInvoicePage(config) {
     app.innerHTML = `
       <div class="text-sm text-gray-500 mb-2"><a href="#/${config.route}" class="hover:text-indigo-600">${config.title}</a> / ${esc(bill.name || "Draft")}</div>
       <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-3">
-        <div class="flex flex-wrap gap-2">${actionBar(BUTTONS, bill)}</div>
+        <div class="flex flex-wrap gap-2">${actionBar(BUTTONS, bill)}${printButton("account.move", bill.id)}</div>
         ${statusbar(FLOW, STATES, bill.state)}
       </div>
       <div class="flex flex-wrap gap-2 mb-4">${statTiles([
