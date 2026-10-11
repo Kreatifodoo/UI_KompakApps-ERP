@@ -7,6 +7,7 @@ import {
   guarded, loadMessages, money, openModal, pageHeader, readOne, readonlyValue, referencePricelists, referenceTerms, referenceUsers, registerLookup,
   rowLink, runLookup, searchBox, searchRead, selectOptions, statTiles, statusbar, table, toInputDateTime, toast, dateTimeText,
 } from "../common.js";
+import { printButton } from "../print.js";
 
 const STATES = {
   draft: ["Quotation", "muted"],
@@ -305,7 +306,7 @@ async function renderForm(id) {
   app.innerHTML = `
     <div class="text-sm text-gray-500 mb-2"><a href="#/sale" class="hover:text-indigo-600">Quotation & Sales Order</a> / ${title}</div>
     <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-3">
-      <div class="flex flex-wrap gap-2">${so ? actionBar(BUTTONS, so) : ""}</div>
+      <div class="flex flex-wrap gap-2">${so ? actionBar(BUTTONS, so) + printButton("sale.order", so.id) : ""}</div>
       ${statusbar(FLOW, STATES, so?.state ?? "draft")}
     </div>
     ${showTiles ? `<div class="flex flex-wrap gap-2 mb-4">${statTiles([

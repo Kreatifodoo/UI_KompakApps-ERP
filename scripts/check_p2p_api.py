@@ -200,6 +200,7 @@ def main():
     check_analysis_reports(api)
     check_settings_and_users(api)
     check_data_import(api)
+    check_print_documents(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -1131,6 +1132,30 @@ def check_data_import(api):
     move = api.read("account.move", journal["ids"][0], ["state", "amount_total", "ref"])
     check(len(journal["ids"]) == 1 and move["state"] == "draft" and move["amount_total"] == 250000, "jurnal banyak baris yang seimbang diimpor sebagai draf")
     api.call("account.move", "unlink", ids=journal["ids"])
+
+
+def check_print_documents(api):
+    """Field yang dibaca halaman cetak (ui/live/print.js) harus ada dan terbaca untuk dokumen nyata, agar cetak tidak rusak diam-diam saat Odoo diperbarui."""
+    step("Data cetak dokumen (PO, SO, faktur, surat jalan, pembayaran, PR)")
+    docs = {
+        "purchase.order": ([["state", "=", "purchase"]], ["name", "state", "partner_id", "date_order", "date_planned", "partner_ref", "payment_term_id", "user_id", "currency_id", "amount_untaxed", "amount_tax", "amount_total", "note"]),
+        "purchase.order.line": ([], ["display_type", "name", "product_qty", "product_uom_id", "price_unit", "tax_ids", "price_subtotal"]),
+        "sale.order": ([["state", "=", "sale"]], ["name", "state", "partner_id", "partner_invoice_id", "partner_shipping_id", "date_order", "validity_date", "client_order_ref", "payment_term_id", "user_id", "pricelist_id", "currency_id", "amount_untaxed", "amount_tax", "amount_total", "note"]),
+        "sale.order.line": ([], ["display_type", "name", "product_uom_qty", "product_uom_id", "price_unit", "discount", "tax_ids", "price_subtotal"]),
+        "account.move": ([["move_type", "=", "out_invoice"], ["state", "=", "posted"]], ["name", "state", "move_type", "partner_id", "invoice_date", "date", "invoice_date_due", "invoice_payment_term_id", "ref", "invoice_origin", "invoice_user_id", "currency_id", "amount_untaxed", "amount_tax", "amount_total", "amount_residual", "narration", "payment_reference"]),
+        "account.move.line": ([["display_type", "=", "product"]], ["display_type", "name", "quantity", "product_uom_id", "price_unit", "discount", "tax_ids", "price_subtotal"]),
+        "stock.picking": ([["state", "=", "done"]], ["name", "state", "picking_type_code", "partner_id", "scheduled_date", "date_done", "origin", "location_id", "location_dest_id", "note"]),
+        "stock.move": ([["picking_id", "!=", False]], ["product_id", "description_picking", "product_uom_qty", "quantity", "product_uom"]),
+        "stock.move.line": ([["lot_id", "!=", False]], ["move_id", "lot_id", "quantity"]),
+        "account.payment": ([["state", "in", ["paid", "in_process"]]], ["name", "state", "payment_type", "partner_id", "amount", "currency_id", "date", "journal_id", "payment_method_line_id", "memo", "reconciled_invoice_ids", "reconciled_bill_ids"]),
+        "purchase.request": ([], ["name", "state", "requested_by", "assigned_to", "date_start", "origin", "description"]),
+        "purchase.request.line": ([], ["name", "product_id", "product_qty", "product_uom_id", "date_required", "estimated_cost"]),
+        "res.company": ([], ["name", "street", "street2", "city", "zip", "state_id", "country_id", "phone", "email", "website", "vat", "company_registry", "report_header", "report_footer", "logo", "uses_default_logo"]),
+        "res.partner": ([], ["name", "street", "street2", "city", "zip", "state_id", "country_id", "vat", "phone", "email"]),
+    }
+    for model, (domain, fields) in docs.items():
+        rows = api.call(model, "search_read", domain=domain, fields=fields, limit=1, order="id desc")
+        check(rows and set(fields) <= set(rows[0]), f"{model}: {len(fields)} field cetak terbaca")
 
 
 def check_bank_reconciliation(api):

@@ -25,7 +25,7 @@ Setiap menu pada sidebar prototipe sudah punya halaman kecuali tiga kelompok pad
 | # | Pekerjaan | Pemilik | Catatan |
 |---|---|---|---|
 | 5.1 | Backup dan restore terjadwal, pemantauan, uji beban | Agen C | Skrip dan dokumen operasional; tidak mengubah kode aplikasi |
-| 5.2 | Cetak dokumen berlogo (QWeb): faktur, PO, SO, pengiriman, struk | Menunggu | Memakai logo dan footer dari Company Setting |
+| 5.2 | Cetak dokumen berlogo: faktur, PO, SO, pengiriman, pembayaran, PR | Selesai (D34) | Dibangun di klien dari data JSON-2; struk POS dan MO belum |
 | 5.3 | Impor data master dari CSV (produk, mitra, saldo awal) | Selesai (D33) | Halaman Import Data memakai mesin impor Odoo |
 | 5.4 | Persetujuan bertingkat (OCA `base_tier_validation`) | Menunggu | Perlu menambah repo OCA ke `oca.lock` |
 | 5.5 | Audit log (OCA `auditlog`) dan aturan akses per rekaman | Menunggu | Perlu menambah repo OCA ke `oca.lock` |

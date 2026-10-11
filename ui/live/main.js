@@ -70,6 +70,7 @@ import * as company from "./pages/company.js";
 import * as dataimport from "./pages/dataimport.js";
 import * as transfer from "./pages/transfer.js";
 import * as soon from "./pages/soon.js";
+import { printDocument, printNow } from "./print.js";
 
 const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, bank, stock, moves, count, scrap, orderpoint, replenish, warehouse, location: location_, uom, putaway, lot, bom, workcenter, mo, schedule, production, lead, opportunity, crmsetting, crmreport, posconfig, possession, posorder, kasir, salespricelist, acctreport, dashboard, account, tax, currency, analytic, analyticplan, assetprofile, asset, journalmaster, analysis, modsetting, users, company, dataimport, transfer, soon };
 let currentId = "pr";
@@ -169,6 +170,10 @@ document.addEventListener("click", async (event) => {
     document.getElementById(el.dataset.target)?.scrollIntoView({ behavior: "smooth", block: "start" });
   } else if (action === "modal-close") {
     closeModal();
+  } else if (action === "print-doc") {
+    await printDocument(el.dataset.model, Number(el.dataset.id), el);
+  } else if (action === "print-now") {
+    printNow();
   } else if (action === "menu-toggle") {
     toggleBranch(el.dataset.key);
   } else if (action === "menu-go") {

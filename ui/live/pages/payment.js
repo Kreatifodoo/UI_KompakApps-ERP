@@ -5,6 +5,7 @@ import {
   actionBar, app, badge, call, cell, chatterHtml, dateText, esc, fieldBlock, filterSelect, guarded, journalHtml, loadJournalItems, loadMessages,
   money, pageHeader, readOne, readonlyValue, rowLink, searchRead, statTiles, statusbar, table, toast,
 } from "../common.js";
+import { printButton } from "../print.js";
 
 const STATES = {
   draft: ["Draft", "muted"],
@@ -102,7 +103,7 @@ async function renderForm(id) {
   app.innerHTML = `
     <div class="text-sm text-gray-500 mb-2"><a href="#/payment" class="hover:text-indigo-600">Pembayaran</a> / ${esc(pay.name || "Draft")}</div>
     <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-3">
-      <div class="flex flex-wrap gap-2">${actionBar(BUTTONS, pay)}</div>
+      <div class="flex flex-wrap gap-2">${actionBar(BUTTONS, pay)}${printButton("account.payment", pay.id)}</div>
       ${statusbar(FLOW, STATES, pay.state)}
     </div>
     <div class="flex flex-wrap gap-2 mb-4">${statTiles([

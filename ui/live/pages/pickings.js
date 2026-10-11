@@ -6,6 +6,7 @@ import {
   actionBar, app, badge, call, cell, chatterHtml, closeModal, dateText, dateTimeText, esc, fieldBlock, filterSelect, fromInputDateTime, guarded, loadMessages,
   openModal, money, pageHeader, readOne, readonlyValue, rowLink, searchRead, statTiles, statusbar, table, toast, toInputDateTime, INPUT,
 } from "../common.js";
+import { printButton } from "../print.js";
 
 const STATES = {
   draft: ["Draft", "muted"],
@@ -152,7 +153,7 @@ export function createPickingPage(config) {
     app.innerHTML = `
       <div class="text-sm text-gray-500 mb-2"><a href="#/${config.route}" class="hover:text-indigo-600">${config.title}</a> / ${esc(pk.name)}</div>
       <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-3">
-        <div class="flex flex-wrap gap-2">${actionBar(BUTTONS, pk)}</div>
+        <div class="flex flex-wrap gap-2">${actionBar(BUTTONS, pk)}${printButton("stock.picking", pk.id)}</div>
         ${statusbar(FLOW, STATES, pk.state)}
       </div>
       <div class="flex flex-wrap gap-2 mb-4">${statTiles([
