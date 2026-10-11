@@ -12,6 +12,7 @@
         "sale_management",
         "stock",
         "product_expiry",  # tanggal kedaluwarsa pada lot dan penarikan FEFO
+        "mrp",  # BoM, Manufacturing Order, work center, work order, unbuild
         # OCA (purchase-workflow)
         "purchase_request",
         # OCA akuntansi: Community tidak membawa laporan keuangan, aset, atau rekonsiliasi bank.

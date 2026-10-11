@@ -223,7 +223,7 @@ async function renderForm(id) {
   let product = null;
   let sellers = [];
   if (id) {
-    product = await readOne("product.template", id, [...FIELDS, "active", "qty_available", "purchased_product_qty", "seller_ids"]);
+    product = await readOne("product.template", id, [...FIELDS, "active", "qty_available", "purchased_product_qty", "seller_ids", "bom_count"]);
     if (!product) {
       app.innerHTML = '<p class="text-sm text-rose-600">Produk tidak ditemukan.</p>';
       return;
@@ -267,7 +267,8 @@ async function renderForm(id) {
       { count: product.seller_ids.length, label: "Vendor", icon: "fa-truck", href: `#/pricelist?product=${product.id}` },
       { count: product.is_storable ? product.qty_available : 0, label: "Stok Tersedia", icon: "fa-boxes" },
       { count: product.purchased_product_qty, label: "Dibeli", icon: "fa-shopping-cart" },
-    ])}</div>` : ""}
+      { count: product.bom_count, label: "BoM", icon: "fa-sitemap", href: `#/bom?product=${product.id}` },
+    ])}${product.type === "consu" && !product.bom_count ? `<a href="#/bom/new?product=${product.id}" class="flex items-center gap-3 border border-dashed border-gray-300 bg-white rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"><i class="fas fa-sitemap text-gray-400"></i>Buat BoM</a>` : ""}</div>` : ""}
     <div class="mb-3"><h1 class="text-2xl font-bold text-gray-900">${title}</h1>
       ${product && !product.active ? '<span class="mt-1 inline-block px-2 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600">Diarsipkan</span>' : ""}</div>
 
