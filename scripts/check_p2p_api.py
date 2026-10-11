@@ -758,6 +758,10 @@ def check_crm(api):
     check(bool(sales_rows), "pipeline: ringkasan per sales")
     closed = api.call("crm.lead", "formatted_read_group", domain=[["type", "=", "opportunity"], ["won_status", "=", "lost"]], groupby=[], aggregates=["__count", "expected_revenue:sum"], context={"active_test": False})
     check(bool(closed) and closed[0]["__count"] >= 0, "pipeline: total kalah (termasuk yang diarsipkan)")
+    # Data laporan lead dibuat di sini agar pemeriksaan tidak bergantung pada sisa data dari jalan sebelumnya (database baru kosong).
+    api.call("crm.lead", "create", vals_list=[{"name": f"Lead laporan {tag}", "type": "lead", "partner_name": f"CV Laporan {tag}"}])
+    [report_lead] = api.call("crm.lead", "create", vals_list=[{"name": f"Lead konversi {tag}", "type": "lead", "partner_name": f"CV Konversi {tag}"}])
+    api.call("crm.lead", "convert_opportunity", ids=[report_lead], partner=False)
     origin = ["|", ["type", "=", "lead"], ["date_conversion", "!=", False]]
     by_source = api.call("crm.lead", "formatted_read_group", domain=origin, groupby=["source_id"], aggregates=["__count"], context={"active_test": False})
     converted = api.call("crm.lead", "formatted_read_group", domain=origin + [["date_conversion", "!=", False]], groupby=["user_id"], aggregates=["__count"], context={"active_test": False})
