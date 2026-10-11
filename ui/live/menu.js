@@ -84,7 +84,7 @@ export const MENU = [
       { title: "Kasir", route: "kasir" },
       { title: "POS Order", route: "posorder" },
       { title: "POS Session", route: "possession" },
-      { title: "Promotion & Loyalty", odoo: "loyalty.program" },
+      { title: "Promotion & Loyalty", route: "loyalty?kind=pos" },
       { title: "Report", items: [{ title: "POS Order Report", route: "analysis/posreport" }, { title: "Session Details", route: "possession" }, { title: "Sales Details", route: "analysis/possales" }] },
       { title: "Setting", route: "modsetting/pos" },
     ],
@@ -95,7 +95,7 @@ export const MENU = [
       { title: "Dashboard", route: "dashboard/sales" },
       {
         title: "Master",
-        items: [{ title: "Product Master", route: "product?state=sale" }, { title: "Customers Master", route: "customer" }, { title: "Promotion & Loyalty", odoo: "loyalty.program" }, { title: "Pricelis Master", route: "salespricelist" }],
+        items: [{ title: "Product Master", route: "product?state=sale" }, { title: "Customers Master", route: "customer" }, { title: "Promotion & Loyalty", route: "loyalty?kind=sale" }, { title: "Pricelis Master", route: "salespricelist" }],
       },
       { title: "Quotations", route: "sale?state=quotation" },
       { title: "Sales Orders", route: "sale?state=sale" },

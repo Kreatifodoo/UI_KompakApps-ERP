@@ -34,6 +34,8 @@ const BUTTONS = [
   { action: "confirm", label: "Konfirmasi", method: "action_confirm", kind: "primary", show: (o) => ["draft", "sent"].includes(o.state) },
   { action: "ship", label: "Kirim Barang", method: null, kind: "primary", show: (o) => o.state === "sale" && o.delivery_count > 0 && o.delivery_status !== "full" },
   { action: "invoice", label: "Buat Faktur", method: null, kind: "primary", show: (o) => o.state === "sale" && o.invoice_status === "to invoice" },
+  { action: "coupon", label: "Kode Kupon", method: null, show: (o) => !o.locked && o.state !== "cancel" },
+  { action: "reward", label: "Hadiah", method: null, show: (o) => !o.locked && o.state !== "cancel" },
   { action: "draft", label: "Kembalikan ke Quotation", method: "action_draft", show: (o) => o.state === "cancel" },
   { action: "cancel", label: "Batalkan", method: "action_cancel", kind: "danger", show: (o) => ["draft", "sent", "sale"].includes(o.state) && !o.locked },
 ];
@@ -51,10 +53,12 @@ const INVOICE_METHODS = [
 let form = null;
 let last = { sub: "", query: new URLSearchParams() };
 let invoiceDialog = null; // { orderId }
+let rewardDialog = null; // { orderId, rewards, selected, product }
 
 export const leave = () => {
   form = null;
   invoiceDialog = null;
+  rewardDialog = null;
 };
 const reload = () => render(last.sub, last.query);
 
@@ -211,11 +215,12 @@ async function renderForm(id) {
   const [users, terms, pricelists] = await Promise.all([referenceUsers(), referenceTerms(), referencePricelists()]);
   let so = null;
   let lines = [];
+  let rewardLines = [];
   if (id) {
     so = await readOne("sale.order", id, [
       "name", "state", "locked", "partner_id", "client_order_ref", "date_order", "validity_date", "user_id", "origin", "payment_term_id", "pricelist_id",
       "currency_id", "delivery_count", "picking_ids", "invoice_count", "invoice_ids", "invoice_status", "delivery_status", "amount_untaxed", "amount_tax",
-      "amount_total",
+      "amount_total", "loyalty_data",
     ]);
     if (!so) {
       app.innerHTML = '<p class="text-sm text-rose-600">Dokumen tidak ditemukan.</p>';
@@ -224,7 +229,7 @@ async function renderForm(id) {
     lines = await searchRead(
       "sale.order.line",
       [["order_id", "=", id], ["display_type", "=", false]],
-      ["product_id", "name", "product_uom_qty", "qty_delivered", "qty_invoiced", "product_uom_id", "price_unit", "discount", "tax_ids", "price_subtotal"],
+      ["product_id", "name", "product_uom_qty", "qty_delivered", "qty_invoiced", "product_uom_id", "price_unit", "discount", "tax_ids", "price_subtotal", "reward_id", "coupon_id", "points_cost"],
       { order: "sequence, id" },
     );
     const taxIds = [...new Set(lines.flatMap((l) => l.tax_ids))];
@@ -233,6 +238,9 @@ async function renderForm(id) {
     lines.forEach((l) => {
       l.taxLabel = l.tax_ids.map((t) => taxName.get(t) ?? "").filter(Boolean).join(", ");
     });
+    // Baris hadiah promosi (sale_loyalty) dikelola Odoo; ditampilkan di bagian Promosi, bukan sebagai baris yang bisa diedit.
+    rewardLines = lines.filter((l) => l.reward_id);
+    lines = lines.filter((l) => !l.reward_id);
   }
   const editable = !so || ["draft", "sent"].includes(so.state);
   const currency = so?.currency_id?.[1] ?? ctx.company.currency_id?.[1] ?? "IDR";
@@ -322,6 +330,7 @@ async function renderForm(id) {
       ${totals}
       ${saveBar}
     </section>
+    ${so ? promotionSection(so, rewardLines, currency, editable) : ""}
     ${so ? chatterHtml("sale.order", so.id) : ""}`;
   if (so) loadMessages("sale.order", so.id);
 }
@@ -350,7 +359,7 @@ const manualDiscount = (l) => (l.id ? Number(l.discount || 0) !== Number(l.disco
 
 async function applyManualValues(orderId, resolved, knownLineIds) {
   if (!resolved.some((l) => manualPrice(l) || manualDiscount(l))) return;
-  const rows = await searchRead("sale.order.line", [["order_id", "=", orderId], ["display_type", "=", false]], ["price_unit", "discount"], { order: "sequence, id" });
+  const rows = await searchRead("sale.order.line", [["order_id", "=", orderId], ["display_type", "=", false], ["reward_id", "=", false]], ["price_unit", "discount"], { order: "sequence, id" });
   const fresh = rows.filter((r) => !knownLineIds.has(r.id));
   let nextNew = 0;
   for (const l of resolved) {
@@ -473,6 +482,235 @@ async function createInvoice(button) {
   location.hash = `#/invoice/${invoiceId}`;
 }
 
+/* ---------- Promosi dan hadiah (sale_loyalty) ----------
+ * Metode privat seperti _try_apply_code tidak bisa dipanggil lewat JSON-2, jadi UI memakai jalur publik yang sama dengan klien web:
+ * wizard sale.loyalty.coupon.wizard (tombol Kode Kupon), tombol action_open_reward_wizard (tombol Hadiah, juga memperbarui promosi otomatis),
+ * dan wizard sale.loyalty.reward.wizard (memilih hadiah). Lihat D30. */
+
+const PROMO_ERRORS = [
+  [/This code is invalid \((.*)\)/, (m) => `Kode "${m[1]}" tidak valid atau programnya tidak berlaku saat ini.`],
+  [/This coupon has already been used/, () => "Kupon ini sudah terpakai."],
+  [/This coupon is expired/, () => "Kupon ini sudah kedaluwarsa."],
+  [/This code is expired \((.*)\)/, (m) => `Kode "${m[1]}" sudah mencapai batas pemakaian.`],
+  [/This promo code is already applied/, () => "Kode promo ini sudah diterapkan pada pesanan."],
+  [/The program is not available for this order/, () => "Program tidak berlaku untuk pesanan ini."],
+  [/This program is already applied to this order/, () => "Program ini sudah diterapkan pada pesanan."],
+  [/There is nothing to discount/, () => "Tidak ada yang bisa didiskon pada pesanan ini."],
+  [/This discount \((.*)\) is not compatible with "(.*)"\. Please remove it/, (m) => `Diskon "${m[1]}" tidak bisa digabung dengan diskon "${m[2]}" yang sudah terpasang. Hapus diskon itu lebih dulu.`],
+  [/A better global discount is already applied/, () => "Sudah ada diskon seluruh pesanan yang lebih besar."],
+  [/The coupon does not have enough points/, () => "Poin kupon tidak cukup untuk hadiah ini."],
+  [/The coupon can only be claimed on future orders/, () => "Kupon ini hanya bisa dipakai pada pesanan berikutnya."],
+  [/One or more rewards on the sale order is invalid/, () => "Satu atau lebih hadiah pada pesanan tidak valid. Periksa baris promosi."],
+  [/This program cannot be applied with code/, () => "Kartu loyalti dan e-wallet dimuat otomatis dari pelanggan; tidak dipakai dengan kode."],
+  [/This program requires a code to be applied/, () => "Program ini hanya berlaku dengan kode."],
+  [/your order must include at least (.*) (\w+) of the eligible products/, (m) => `Pesanan harus memuat produk yang memenuhi syarat senilai minimal ${m[1]} ${m[2]}.`],
+  [/You don't have the required product quantities/, () => "Jumlah produk pada pesanan belum memenuhi syarat program."],
+  [/Once a sales order is confirmed, you can't remove one of its lines/, () => "Pesanan sudah dikonfirmasi: baris hadiah tidak bisa dihapus."],
+];
+/** Pesan galat Odoo untuk promosi diterjemahkan; pesan lain ditampilkan apa adanya. */
+function promoError(error) {
+  for (const [pattern, text] of PROMO_ERRORS) {
+    const match = String(error.message).match(pattern);
+    if (match) return new Error(text(match));
+  }
+  return error;
+}
+const promoContext = (orderId) => ({ active_model: "sale.order", active_ids: [orderId], active_id: orderId });
+const codeOf = (coupon) => String(coupon?.[1] ?? "").split(": ").slice(1).join(": ");
+const programOf = (reward) => String(reward?.[1] ?? "").split(" - ")[0];
+
+function promotionSection(so, rewardLines, currency, editable) {
+  const points = so.loyalty_data && so.loyalty_data.point_name
+    ? `<p class="text-sm text-gray-600 mt-3">Poin ${esc(so.loyalty_data.point_name)}: diperoleh <b>${esc(so.loyalty_data.issued)}</b>, dipakai <b>${esc(so.loyalty_data.cost)}</b>.</p>`
+    : "";
+  if (!rewardLines.length && !points) return "";
+  const rows = rewardLines
+    .map(
+      (l) => `<tr>
+        <td class="py-2 px-4 text-sm">${esc(l.name)}</td>
+        <td class="py-2 px-4 text-sm">${esc(programOf(l.reward_id))}</td>
+        <td class="py-2 px-4 text-sm font-mono">${esc(codeOf(l.coupon_id)) || "-"}</td>
+        <td class="py-2 px-4 text-sm text-right">${l.points_cost ? esc(l.points_cost) : "-"}</td>
+        <td class="py-2 px-4 text-sm text-right">${l.discount === 100 ? `Gratis × ${esc(l.product_uom_qty)}` : money(l.price_subtotal, currency)}</td>
+        <td class="py-2 px-4 text-right w-10">${editable ? `<button type="button" data-action="reward-line-remove" data-id="${l.id}" class="text-gray-400 hover:text-rose-600" aria-label="Hapus hadiah"><i class="fas fa-trash-alt"></i></button>` : ""}</td>
+      </tr>`,
+    )
+    .join("");
+  const head = ["Promosi dan Hadiah", "Program", "Kode", "Poin Dipakai", "Nilai", ""]
+    .map((h, i) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${i === 3 || i === 4 ? "text-right" : ""}">${h}</th>`)
+    .join("");
+  return `<section id="section-promo" class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 overflow-x-auto">
+    <div class="px-4 py-3 border-b border-gray-200 text-sm font-semibold">Promosi dan Hadiah</div>
+    ${rewardLines.length ? `<table class="w-full text-left"><thead class="bg-gray-50"><tr>${head}</tr></thead><tbody class="divide-y divide-gray-100">${rows}</tbody></table>` : ""}
+    <div class="px-4 pb-4">${points}
+      <p class="text-xs text-gray-500 mt-2">Setelah mengubah barang atau jumlah, klik <b>Hadiah</b> untuk memperbarui promosi otomatis. ${so.state === "sale" ? "Pesanan sudah dikonfirmasi: baris hadiah tidak bisa dihapus." : ""}</p></div>
+  </section>`;
+}
+
+function openCouponDialog(orderId) {
+  openModal(
+    "Kode Kupon",
+    `<form data-form="coupon" class="space-y-3">${fieldBlock("Kode kupon atau kode promo", `<input data-promo="code" autocomplete="off" placeholder="mis. HEMAT10" class="${INPUT}" aria-label="Kode kupon">`)}
+       <p class="text-xs text-gray-500">Kupon dan kode promo dibuat di Sales &gt; Master &gt; Promotion &amp; Loyalty. Kartu loyalti dan e-wallet pelanggan dimuat otomatis lewat tombol Hadiah.</p></form>`,
+    `<button data-action="modal-close" class="px-4 py-2 rounded-lg text-sm font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50">Batal</button>
+     <button data-action="coupon-apply" data-id="${orderId}" class="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700">Terapkan</button>`,
+  );
+  document.querySelector('[data-promo="code"]')?.focus();
+}
+
+/** Menyimpan perubahan quotation yang belum tersimpan sebelum promosi dihitung ulang (tombol Odoo juga menyimpan dulu). */
+const saveBefore = async (orderId) => {
+  if (form?.id === orderId) await persist();
+};
+
+async function applyCode(button) {
+  const orderId = Number(button.dataset.id);
+  const code = document.querySelector('[data-promo="code"]')?.value.trim() ?? "";
+  if (!code) {
+    toast("Isi kode kupon atau kode promo.", "error");
+    return;
+  }
+  const action = await guarded(button, async () => {
+    await saveBefore(orderId);
+    const context = promoContext(orderId);
+    const [wizard] = await call("sale.loyalty.coupon.wizard", "create", { vals_list: [{ order_id: orderId, coupon_code: code }], context });
+    try {
+      return await call("sale.loyalty.coupon.wizard", "action_apply", { ids: [wizard], context });
+    } catch (error) {
+      throw promoError(error);
+    }
+  });
+  if (!action) return;
+  const rewardIds = action.context?.default_reward_ids ?? [];
+  closeModal();
+  if (!rewardIds.length) {
+    toast("Kode diterima, tetapi belum ada hadiah yang bisa diklaim. Klik Hadiah setelah syarat pesanan terpenuhi.");
+    form = null;
+    reload();
+    return;
+  }
+  await openRewardChooser(orderId, rewardIds);
+}
+
+async function updateRewards(button, orderId) {
+  const result = await guarded(button, async () => {
+    await saveBefore(orderId);
+    try {
+      return await call("sale.order", "action_open_reward_wizard", { ids: [orderId] });
+    } catch (error) {
+      throw promoError(error);
+    }
+  });
+  if (result === undefined) return;
+  if (result === true || !result?.res_model) {
+    toast("Promosi dan hadiah diperbarui.");
+    form = null;
+    reload();
+    return;
+  }
+  await openRewardChooser(orderId, null);
+}
+
+/** Dialog pilih hadiah: hadiah yang bisa diklaim (dari wizard hadiah Odoo), dengan pilihan produk bila hadiahnya memberi beberapa pilihan produk. */
+async function openRewardChooser(orderId, rewardIds) {
+  const ready = await guarded(null, async () => {
+    const context = promoContext(orderId);
+    let ids = rewardIds;
+    if (!ids) {
+      const [wizard] = await call("sale.loyalty.reward.wizard", "create", { vals_list: [{ order_id: orderId }], context });
+      [{ reward_ids: ids }] = await call("sale.loyalty.reward.wizard", "read", { ids: [wizard], fields: ["reward_ids"], context });
+    }
+    const rewards = ids.length ? await call("loyalty.reward", "read", { ids, fields: ["description", "program_id", "program_type", "reward_type", "multi_product", "reward_product_ids", "required_points", "point_name"] }) : [];
+    const productIds = [...new Set(rewards.flatMap((r) => (r.multi_product ? r.reward_product_ids : [])))];
+    const products = productIds.length ? await searchRead("product.product", [["id", "in", productIds]], ["display_name"]) : [];
+    return { rewards, products };
+  });
+  if (!ready) {
+    form = null;
+    reload();
+    return;
+  }
+  const { rewards, products } = ready;
+  if (!rewards.length) {
+    toast("Belum ada hadiah yang bisa diklaim untuk pesanan ini.");
+    form = null;
+    reload();
+    return;
+  }
+  rewardDialog = { orderId, rewards, products, selected: rewards[0].id, product: null, applied: false };
+  const selected = rewardDialog.rewards[0];
+  rewardDialog.product = selected.multi_product ? selected.reward_product_ids[0] : null;
+  openModal("Pilih Hadiah", "", "", () => {
+    const wasApplied = rewardDialog?.applied;
+    rewardDialog = null;
+    form = null;
+    if (!wasApplied) reload(); // pembaruan otomatis (mis. promosi baru terpasang) sudah mengubah pesanan
+  });
+  paintRewardChoice();
+}
+
+function paintRewardChoice() {
+  const d = rewardDialog;
+  if (!d) return;
+  const body = document.querySelector("#modal-body");
+  const foot = document.querySelector("#modal-foot");
+  if (!body || !foot) return;
+  const picked = d.rewards.find((r) => r.id === d.selected);
+  body.innerHTML = `<div class="space-y-2">${d.rewards
+    .map(
+      (r) => `<label class="flex items-start gap-3 border ${r.id === d.selected ? "border-indigo-400 bg-indigo-50" : "border-gray-200"} rounded-lg p-3 cursor-pointer">
+        <input type="radio" name="reward" data-promo="reward" value="${r.id}" ${r.id === d.selected ? "checked" : ""} class="mt-1 text-indigo-600">
+        <span><span class="block text-sm font-medium text-gray-900">${r.reward_type === "discount" && !/^diskon/i.test(r.description) ? "Diskon " : ""}${esc(r.description)}</span>
+          <span class="block text-xs text-gray-500">${esc(programOf(r.program_id) || r.program_id?.[1] || "")}${["loyalty", "buy_x_get_y"].includes(r.program_type) ? ` · ${esc(r.required_points)} ${esc(r.point_name ?? "poin")}` : ""}</span></span></label>`,
+    )
+    .join("")}</div>
+    ${picked?.multi_product ? fieldBlock("Pilih Produk Hadiah", `<select data-promo="product" class="${INPUT}">${d.products.filter((p) => picked.reward_product_ids.includes(p.id)).map((p) => `<option value="${p.id}" ${p.id === d.product ? "selected" : ""}>${esc(p.display_name)}</option>`).join("")}</select>`) : ""}`;
+  foot.innerHTML = `<button data-action="modal-close" class="px-4 py-2 rounded-lg text-sm font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50">Tutup</button>
+    <button data-action="reward-apply" class="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700">Terapkan Hadiah</button>`;
+  if (picked?.multi_product && !d.product) d.product = picked.reward_product_ids[0];
+}
+
+async function applyReward(button) {
+  const d = rewardDialog;
+  if (!d) return;
+  const picked = d.rewards.find((r) => r.id === d.selected);
+  const ok = await guarded(button, async () => {
+    const context = promoContext(d.orderId);
+    const [wizard] = await call("sale.loyalty.reward.wizard", "create", {
+      vals_list: [{ order_id: d.orderId, selected_reward_id: d.selected, ...(picked.multi_product ? { selected_product_id: d.product } : {}) }],
+      context,
+    });
+    try {
+      await call("sale.loyalty.reward.wizard", "action_apply", { ids: [wizard], context });
+    } catch (error) {
+      throw promoError(error);
+    }
+    return true;
+  });
+  if (!ok) return;
+  d.applied = true;
+  closeModal();
+  toast("Hadiah diterapkan.");
+  form = null;
+  reload();
+}
+
+async function removeRewardLine(button) {
+  if (!window.confirm("Hapus baris hadiah ini? Promosi otomatis dipasang lagi bila Anda klik Hadiah dan syaratnya masih terpenuhi.")) return;
+  const ok = await guarded(button, async () => {
+    try {
+      return await call("sale.order.line", "unlink", { ids: [Number(button.dataset.id)] });
+    } catch (error) {
+      throw promoError(error);
+    }
+  });
+  if (ok !== undefined) {
+    toast("Baris hadiah dihapus.");
+    form = null;
+    reload();
+  }
+}
+
 export async function onClick(event, el) {
   const { action } = el.dataset;
   const id = Number(el.dataset.id) || null;
@@ -497,7 +735,12 @@ export async function onClick(event, el) {
       if (wasNew) location.hash = `#/sale/${saved}`;
       else reload();
     }
-  } else if (action === "ship") await openDelivery(id);
+  } else if (action === "coupon") openCouponDialog(id);
+  else if (action === "coupon-apply") await applyCode(el);
+  else if (action === "reward") await updateRewards(el, id);
+  else if (action === "reward-apply") await applyReward(el);
+  else if (action === "reward-line-remove") await removeRewardLine(el);
+  else if (action === "ship") await openDelivery(id);
   else if (action === "invoice") openInvoiceDialog(id);
   else if (action === "invoice-confirm") await createInvoice(el);
   else if (action === "cancel" && !window.confirm("Batalkan dokumen ini?")) {
@@ -528,6 +771,10 @@ export function onInput(event, el) {
 }
 
 export function onChange(event, el) {
+  if (el.dataset.promo === "reward" && rewardDialog) {
+    rewardDialog.selected = Number(el.value);
+    paintRewardChoice();
+  } else if (el.dataset.promo === "product" && rewardDialog) rewardDialog.product = Number(el.value);
   // Metode faktur uang muka membutuhkan jumlah; faktur reguler tidak.
   if (el.dataset.invoice === "method") {
     document.querySelector("#invoice-amount")?.classList.toggle("hidden", el.value === "delivered");
@@ -536,4 +783,5 @@ export function onChange(event, el) {
 
 export async function onSubmit(event, formEl, kind) {
   if (kind === "invoice") await createInvoice(null);
+  else if (kind === "coupon") await applyCode(document.querySelector('[data-action="coupon-apply"]'));
 }
