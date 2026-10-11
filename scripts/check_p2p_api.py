@@ -191,6 +191,7 @@ def main():
     check_warehouse_master(api, product)
     check_lots(api, vendor)
     check_manufacturing(api)
+    check_crm(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -670,6 +671,62 @@ def check_manufacturing(api):
     finished = api.search("stock.move", [["production_id", "in", [m["id"] for m in api.search("mrp.production", [["state", "=", "done"], ["product_id", "=", cake["id"]]], ["id"])]], ["state", "=", "done"]], ["product_id", "value", "byproduct_id"])
     check(bool(finished) and all(isinstance(m["value"], (int, float)) for m in finished), "nilai pergerakan barang jadi bisa dibaca untuk analisis")
     check(isinstance(api.search("mrp.production", [["state", "in", ["draft", "confirmed", "progress", "to_close"]], ["date_start", "<", "2999-01-01 00:00:00"]], ["name", "date_start", "components_availability_state"], order="date_start, id"), list), "kueri jadwal produksi diterima Odoo")
+
+
+def check_crm(api):
+    """Lead, opportunity, pipeline, menang dan kalah, quotation, dan aktivitas (halaman Leads, Opportunity, CRM Setting)."""
+    step("CRM: lead, opportunity, tahap pipeline, menang, kalah, quotation, aktivitas")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    api.call("res.config.settings", "execute", ids=api.call("res.config.settings", "create", vals_list=[{"group_use_lead": True}]))
+    check(bool(api.call("res.users", "has_group", ids=[api.search("res.users", [["login", "!=", False]], ["id"], limit=1)[0]["id"]], group_ext_id="crm.group_use_lead")), "fitur Leads aktif lewat pengaturan")
+    stages = api.search("crm.stage", [], ["name", "is_won"], order="sequence, id")
+    check(len(stages) >= 2 and stages[-1]["is_won"], "tahap pipeline tersedia, tahap terakhir bertanda menang")
+    [new_stage] = api.call("crm.stage", "create", vals_list=[{"name": f"Negosiasi {tag}", "sequence": 15}])
+    [crm_tag] = api.call("crm.tag", "create", vals_list=[{"name": f"Tag {tag}"}])
+    [reason] = api.call("crm.lost.reason", "create", vals_list=[{"name": f"Harga {tag}"}])
+    check(all((new_stage, crm_tag, reason)), "tahap, tag, dan alasan kalah baru tersimpan")
+
+    [opp] = api.call("crm.lead", "create", vals_list=[{
+        "name": f"Peluang regresi {tag}", "type": "opportunity", "partner_name": f"PT Regresi {tag}", "contact_name": "Dewi", "email_from": f"dewi{tag}@regresi.test",
+        "expected_revenue": 40_000_000.0, "priority": "2", "date_deadline": "2999-12-31", "tag_ids": [[6, 0, [crm_tag]]],
+    }])
+    info = api.read("crm.lead", opp, ["stage_id", "won_status", "team_id", "user_id"])
+    check(info["stage_id"][0] == stages[0]["id"] and info["won_status"] == "pending", "opportunity baru masuk tahap pertama dan berjalan")
+    api.call("crm.lead", "write", ids=[opp], vals={"stage_id": new_stage})
+    check(api.read("crm.lead", opp, ["stage_id"])["stage_id"][0] == new_stage, "opportunity dipindah ke tahap lain")
+    board = api.search("crm.lead", [["type", "=", "opportunity"], ["active", "=", True]], ["stage_id", "expected_revenue", "probability", "won_status"], order="priority desc, id desc")
+    check(any(b["stage_id"][0] == new_stage for b in board), "kueri papan pipeline menemukan opportunity per tahap")
+
+    [partner] = api.call("res.partner", "create", vals_list=[{"name": f"PT Regresi {tag}", "is_company": True, "email": f"dewi{tag}@regresi.test", "customer_rank": 1}])
+    api.call("crm.lead", "write", ids=[opp], vals={"partner_id": partner})
+    [order] = api.call("sale.order", "create", vals_list=[{"partner_id": partner, "opportunity_id": opp}])
+    check(api.read("crm.lead", opp, ["quotation_count", "order_ids"]) == {"id": opp, "quotation_count": 1, "order_ids": [order]}, "quotation terhubung ke opportunity")
+    model = api.search("ir.model", [["model", "=", "crm.lead"]], ["id"], limit=1)[0]["id"]
+    [activity] = api.call("mail.activity", "create", vals_list=[{"res_model_id": model, "res_id": opp, "activity_type_id": api.search("mail.activity.type", [["name", "=", "Call"]], ["id"], limit=1)[0]["id"], "summary": "Telepon klien", "date_deadline": "2999-01-01", "user_id": api.search("res.users", [["login", "!=", False]], ["id"], limit=1)[0]["id"]}])
+    check(len(api.search("mail.activity", [["res_model", "=", "crm.lead"], ["res_id", "=", opp]], ["id"])) == 1, "aktivitas terjadwal muncul pada opportunity")
+    api.call("mail.activity", "action_feedback", ids=[activity], feedback="Sudah dihubungi")
+    check(not api.search("mail.activity", [["res_model", "=", "crm.lead"], ["res_id", "=", opp]], ["id"]), "aktivitas selesai hilang dari daftar terjadwal")
+    api.call("crm.lead", "action_set_won", ids=[opp])
+    won = api.read("crm.lead", opp, ["won_status", "probability"])
+    check(won["won_status"] == "won" and won["probability"] == 100.0, "opportunity ditandai menang (probabilitas 100%)")
+    check(opp in [r["id"] for r in api.search("crm.lead", [["type", "=", "opportunity"], ["won_status", "=", "won"]], ["id"])], "filter Menang menemukannya")
+
+    [lost] = api.call("crm.lead", "create", vals_list=[{"name": f"Peluang kalah {tag}", "type": "opportunity", "expected_revenue": 1_000_000.0}])
+    api.call("crm.lead", "action_set_lost", ids=[lost], lost_reason_id=reason)
+    info = api.read("crm.lead", lost, ["active", "won_status", "lost_reason_id"])
+    check(info["active"] is False and info["won_status"] == "lost" and info["lost_reason_id"][0] == reason, "opportunity kalah diarsipkan dengan alasan")
+    check(lost in [r["id"] for r in api.search("crm.lead", [["type", "=", "opportunity"], ["active", "=", False], ["probability", "=", 0]], ["id"], context={"active_test": False})], "filter Kalah menemukannya")
+    api.call("crm.lead", "toggle_active", ids=[lost])
+    check(api.read("crm.lead", lost, ["active"])["active"] is True, "opportunity kalah bisa dipulihkan")
+
+    [lead] = api.call("crm.lead", "create", vals_list=[{"name": f"Lead regresi {tag}", "type": "lead", "partner_name": f"CV Lead {tag}", "contact_name": "Anton", "email_from": f"anton{tag}@lead.test"}])
+    check(api.read("crm.lead", lead, ["type"])["type"] == "lead", "lead baru bertipe lead")
+    api.call("crm.lead", "convert_opportunity", ids=[lead], partner=False)
+    check(api.read("crm.lead", lead, ["type"])["type"] == "opportunity", "lead dikonversi menjadi opportunity")
+    check(api.call("crm.lead", "unlink", ids=[lead]) is True, "lead bisa dihapus")
+    api.call("crm.stage", "write", ids=[new_stage], vals={"name": f"Negosiasi akhir {tag}"})
+    api.call("crm.lead", "write", ids=[opp], vals={"stage_id": stages[0]["id"]})
+    check(api.call("crm.stage", "unlink", ids=[new_stage]) is True, "tahap yang sudah kosong bisa dihapus")
 
 
 def check_bank_reconciliation(api):
