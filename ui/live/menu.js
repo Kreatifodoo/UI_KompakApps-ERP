@@ -114,16 +114,16 @@ export const MENU = [
       {
         title: "Master",
         items: [
-          { title: "Chart of Account", odoo: "account.account" }, { title: "Customer Master", route: "customer" }, { title: "Vendor Master", route: "vendor" },
-          { title: "Product Master", route: "product?state=all" }, { title: "Product Category", route: "category" }, { title: "Tax Master", odoo: "account.tax" },
-          { title: "Currencies", odoo: "res.currency" }, { title: "Jurnal", odoo: "account.journal" }, { title: "Asset Model", odoo: "account.asset" },
-          { title: "Budget Plan Master", odoo: "account.budget" }, { title: "Analitic Account", odoo: "account.analytic.account" },
+          { title: "Chart of Account", route: "account" }, { title: "Customer Master", route: "customer" }, { title: "Vendor Master", route: "vendor" },
+          { title: "Product Master", route: "product?state=all" }, { title: "Product Category", route: "category" }, { title: "Tax Master", route: "tax" },
+          { title: "Currencies", route: "currency" }, { title: "Jurnal", route: "journalmaster" }, { title: "Asset Model", route: "assetprofile" },
+          { title: "Budget Plan Master", odoo: "account.budget" }, { title: "Analitic Account", route: "analytic" },
         ],
       },
       { title: "Customers", items: [{ title: "Customer Invoice", route: "invoice" }, { title: "Credit Note", route: "creditnote" }, { title: "Customer Payment", route: "payment?type=inbound" }] },
       { title: "Vendors", items: [{ title: "Vendor Bills", route: "bill" }, { title: "Debit Note", route: "debitnote" }, { title: "Vendor Payment", route: "payment?type=outbound" }] },
       { title: "Jurnal Entry", route: "journal" },
-      { title: "Asset", odoo: "account.asset" },
+      { title: "Asset", route: "asset" },
       { title: "Budget", odoo: "account.budget" },
       { title: "Bank Transaction", route: "bank" },
       {

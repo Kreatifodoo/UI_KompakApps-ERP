@@ -43,7 +43,7 @@ async function renderList(query) {
         cell(r.name || "Draft", { strong: true }),
         cell(dateText(r.date)),
         cell(r.journal_id?.[1] ?? ""),
-        cell(r.partner_id?.[1] ?? r.ref ?? "-"),
+        cell(r.partner_id?.[1] || r.ref || "-"),
         cell(TYPES[r.move_type] ?? r.move_type),
         cell(money(r.amount_total, r.currency_id?.[1]), { right: true }),
         cell(badge(STATES, r.state), { raw: true }),

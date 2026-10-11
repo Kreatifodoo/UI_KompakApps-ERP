@@ -196,6 +196,7 @@ def main():
     check_sales_pricelist(api, product)
     check_account_reports(api)
     check_dashboards(api)
+    check_accounting_masters(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -947,6 +948,63 @@ def check_dashboards(api):
     grouped("account.move.line", [["parent_state", "=", "posted"], ["account_id.account_type", "in", ["expense", "expense_depreciation", "expense_direct_cost"]], ["date", ">=", six_months]], ["date:month"], ["balance:sum"])
     api.call("account.move", "search_count", domain=[["state", "=", "draft"], ["move_type", "in", ["out_invoice", "in_invoice", "out_refund", "in_refund"]]])
     check(bool(liquidity), "accounting: kas dan bank, piutang jatuh tempo, serta pendapatan dan biaya per bulan diterima Odoo")
+
+
+def check_accounting_masters(api):
+    """Master akuntansi: akun, pajak dengan akun pajak, mata uang dan kurs, analitik, jurnal, model aset, dan siklus aset (halaman master Accounting)."""
+    step("Master akuntansi: akun, pajak, kurs, analitik, jurnal, aset")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    company = api.search("res.company", [], ["id"], limit=1)[0]["id"]
+    [account] = api.call("account.account", "create", vals_list=[{"code": f"9{tag}", "name": f"Akun regresi {tag}", "account_type": "income", "company_ids": [[6, 0, [company]]]}])
+    check(api.read("account.account", account, ["account_type", "company_ids"])["company_ids"] == [company], "akun baru tersimpan untuk perusahaan")
+    api.call("account.account", "write", ids=[account], vals={"name": f"Akun regresi {tag} (ubah)", "reconcile": False})
+    api.call("account.account", "action_archive", ids=[account])
+    check(api.read("account.account", account, ["active"])["active"] is False, "akun bisa diarsipkan")
+
+    group = api.search("account.tax.group", [], ["id"], limit=1)[0]["id"]
+    vat_account = api.search("account.account", [["account_type", "in", ["liability_current", "asset_current"]]], ["id"], limit=1)[0]["id"]
+    [tax] = api.call("account.tax", "create", vals_list=[{"name": f"PPN regresi {tag}", "type_tax_use": "sale", "amount_type": "percent", "amount": 5.0, "invoice_label": "PPN 5%", "tax_group_id": group}])
+    info = api.read("account.tax", tax, ["invoice_repartition_line_ids", "refund_repartition_line_ids"])
+    tax_lines = api.search("account.tax.repartition.line", [["id", "in", info["invoice_repartition_line_ids"] + info["refund_repartition_line_ids"]], ["repartition_type", "=", "tax"]], ["id"])
+    check(len(tax_lines) == 2, "pajak baru membuat baris pajak untuk faktur dan nota kredit")
+    api.call("account.tax.repartition.line", "write", ids=[row["id"] for row in tax_lines], vals={"account_id": vat_account})
+    check(all(row["account_id"][0] == vat_account for row in api.search("account.tax.repartition.line", [["id", "in", [x["id"] for x in tax_lines]]], ["account_id"])), "akun pajak ditulis ke kedua baris pajak")
+
+    usd = api.search("res.currency", [["name", "=", "USD"]], ["id"], context={"active_test": False})[0]["id"]
+    api.call("res.currency", "write", ids=[usd], vals={"active": True})
+    [rate] = api.call("res.currency.rate", "create", vals_list=[{"name": (datetime.date(2000, 1, 1) + datetime.timedelta(days=int(tag) % 9000)).isoformat(), "inverse_company_rate": 16_250.0, "currency_id": usd}])
+    check(abs(api.read("res.currency.rate", rate, ["inverse_company_rate"])["inverse_company_rate"] - 16_250.0) < 0.001, "kurs 1 USD = 16.250 IDR tersimpan")
+    api.call("res.currency.rate", "write", ids=[rate], vals={"inverse_company_rate": 16_300.0})
+    check(abs(api.read("res.currency.rate", rate, ["inverse_company_rate"])["inverse_company_rate"] - 16_300.0) < 0.001, "kurs bisa diubah")
+
+    [plan] = api.call("account.analytic.plan", "create", vals_list=[{"name": f"Plan regresi {tag}"}])
+    [analytic] = api.call("account.analytic.account", "create", vals_list=[{"name": f"Proyek regresi {tag}", "code": f"P{tag}", "plan_id": plan}])
+    check(api.read("account.analytic.account", analytic, ["plan_id"])["plan_id"][0] == plan, "akun analitik terhubung ke plan")
+
+    [journal] = api.call("account.journal", "create", vals_list=[{"name": f"Kas regresi {tag}", "code": f"R{tag[-4:]}", "type": "cash"}])
+    check(bool(api.read("account.journal", journal, ["default_account_id"])["default_account_id"]), "jurnal kas baru otomatis membuat akun bawaannya")
+
+    general = api.search("account.journal", [["type", "=", "general"]], ["id"], limit=1)[0]["id"]
+    fixed = api.search("account.account", [["account_type", "=", "asset_fixed"]], ["id"], order="code", limit=2)
+    depreciation = api.search("account.account", [["account_type", "=", "expense_depreciation"]], ["id"], limit=1)
+    expense = depreciation or api.search("account.account", [["account_type", "=", "expense"]], ["id"], limit=1)
+    [profile] = api.call("account.asset.profile", "create", vals_list=[{
+        "name": f"Model regresi {tag}", "journal_id": general, "account_asset_id": fixed[0]["id"], "account_depreciation_id": fixed[-1]["id"],
+        "account_expense_depreciation_id": expense[0]["id"], "method": "linear", "method_time": "number", "method_number": 4, "method_period": "month",
+    }])
+    [asset] = api.call("account.asset", "create", vals_list=[{"name": f"Aset regresi {tag}", "profile_id": profile, "purchase_value": 4_000_000.0, "date_start": "2026-01-01"}])
+    inherited = api.read("account.asset", asset, ["state", "method_number", "method_period"])
+    check(inherited["state"] == "draft" and inherited["method_number"] == 4 and inherited["method_period"] == "month", "aset baru mewarisi metode dari model aset")
+    api.call("account.asset", "validate", ids=[asset])
+    lines = api.search("account.asset.line", [["asset_id", "=", asset], ["type", "=", "depreciate"]], ["amount", "move_id"], order="line_date")
+    check(len(lines) == 4 and all(row["amount"] == 1_000_000.0 for row in lines), "konfirmasi membuat 4 baris penyusutan bulanan @ 1.000.000")
+    moves_before = api.call("account.move", "search_count", domain=[])
+    api.call("account.asset.line", "create_move", ids=[lines[0]["id"]])
+    posted = api.read("account.asset", asset, ["value_depreciated", "value_residual"])
+    check(api.call("account.move", "search_count", domain=[]) == moves_before + 1 and posted["value_depreciated"] == 1_000_000.0, "posting satu baris membuat jurnal dan mengurangi nilai buku")
+    for line in lines[1:]:
+        api.call("account.asset.line", "create_move", ids=[line["id"]])
+    check(api.read("account.asset", asset, ["state", "value_residual"]) == {"id": asset, "state": "close", "value_residual": 0.0}, "semua penyusutan diposting: aset selesai dan nilai sisa nol")
 
 
 def check_bank_reconciliation(api):

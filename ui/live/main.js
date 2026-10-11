@@ -55,10 +55,18 @@ import * as kasir from "./pages/kasir.js";
 import * as salespricelist from "./pages/salespricelist.js";
 import * as acctreport from "./pages/acctreport.js";
 import * as dashboard from "./pages/dashboard.js";
+import * as account from "./pages/account.js";
+import * as tax from "./pages/tax.js";
+import * as currency from "./pages/currency.js";
+import * as analytic from "./pages/analytic.js";
+import * as analyticplan from "./pages/analyticplan.js";
+import * as assetprofile from "./pages/assetprofile.js";
+import * as asset from "./pages/asset.js";
+import * as journalmaster from "./pages/journalmaster.js";
 import * as transfer from "./pages/transfer.js";
 import * as soon from "./pages/soon.js";
 
-const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, bank, stock, moves, count, scrap, orderpoint, replenish, warehouse, location: location_, uom, putaway, lot, bom, workcenter, mo, schedule, production, lead, opportunity, crmsetting, crmreport, posconfig, possession, posorder, kasir, salespricelist, acctreport, dashboard, transfer, soon };
+const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, bank, stock, moves, count, scrap, orderpoint, replenish, warehouse, location: location_, uom, putaway, lot, bom, workcenter, mo, schedule, production, lead, opportunity, crmsetting, crmreport, posconfig, possession, posorder, kasir, salespricelist, acctreport, dashboard, account, tax, currency, analytic, analyticplan, assetprofile, asset, journalmaster, transfer, soon };
 let currentId = "pr";
 
 function parseHash() {
