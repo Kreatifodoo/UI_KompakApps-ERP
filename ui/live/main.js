@@ -64,10 +64,13 @@ import * as assetprofile from "./pages/assetprofile.js";
 import * as asset from "./pages/asset.js";
 import * as journalmaster from "./pages/journalmaster.js";
 import * as analysis from "./pages/analysis.js";
+import * as modsetting from "./pages/modsetting.js";
+import * as users from "./pages/users.js";
+import * as company from "./pages/company.js";
 import * as transfer from "./pages/transfer.js";
 import * as soon from "./pages/soon.js";
 
-const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, bank, stock, moves, count, scrap, orderpoint, replenish, warehouse, location: location_, uom, putaway, lot, bom, workcenter, mo, schedule, production, lead, opportunity, crmsetting, crmreport, posconfig, possession, posorder, kasir, salespricelist, acctreport, dashboard, account, tax, currency, analytic, analyticplan, assetprofile, asset, journalmaster, analysis, transfer, soon };
+const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, bank, stock, moves, count, scrap, orderpoint, replenish, warehouse, location: location_, uom, putaway, lot, bom, workcenter, mo, schedule, production, lead, opportunity, crmsetting, crmreport, posconfig, possession, posorder, kasir, salespricelist, acctreport, dashboard, account, tax, currency, analytic, analyticplan, assetprofile, asset, journalmaster, analysis, modsetting, users, company, transfer, soon };
 let currentId = "pr";
 
 function parseHash() {

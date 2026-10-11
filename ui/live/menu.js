@@ -9,7 +9,7 @@ export const MENU = [
       { title: "Master", items: [{ title: "Product Master", route: "product?state=purchase" }] },
       { title: "Purchase Request", route: "pr" },
       { title: "Report", items: [{ title: "Purchase Request Line", route: "analysis/prline" }, { title: "Purchase Request Analisis", route: "analysis/pranalysis" }] },
-      { title: "Setting" },
+      { title: "Setting", route: "modsetting/pr" },
     ],
   },
   {
@@ -21,7 +21,7 @@ export const MENU = [
       { title: "Purchase Order", route: "po?state=purchase" },
       { title: "Create Vendor Bill", route: "bill?state=draft" },
       { title: "Report", items: [{ title: "Purchase Order line", route: "analysis/poline" }, { title: "Purchase Order Analisis", route: "analysis/poanalysis" }] },
-      { title: "Setting" },
+      { title: "Setting", route: "modsetting/purchase" },
     ],
   },
   {
@@ -50,7 +50,7 @@ export const MENU = [
         title: "Report",
         items: [{ title: "Stock", route: "stock/report" }, { title: "Location", route: "stock/location" }, { title: "Move History", route: "moves" }, { title: "Move Analisis", route: "analysis/moveanalysis" }],
       },
-      { title: "Setting" },
+      { title: "Setting", route: "modsetting/inventory" },
     ],
   },
   {
@@ -61,7 +61,7 @@ export const MENU = [
       { title: "Schedule Production", route: "schedule" },
       { title: "Manufacturing Order", route: "mo" },
       { title: "Reporting", items: [{ title: "Production Analisis", route: "production" }] },
-      { title: "Setting" },
+      { title: "Setting", route: "modsetting/manufacture" },
     ],
   },
   {
@@ -86,7 +86,7 @@ export const MENU = [
       { title: "POS Session", route: "possession" },
       { title: "Promotion & Loyalty", odoo: "loyalty.program" },
       { title: "Report", items: [{ title: "POS Order Report", route: "analysis/posreport" }, { title: "Session Details", route: "possession" }, { title: "Sales Details", route: "analysis/possales" }] },
-      { title: "Setting" },
+      { title: "Setting", route: "modsetting/pos" },
     ],
   },
   {
@@ -104,7 +104,7 @@ export const MENU = [
         title: "Report",
         items: [{ title: "Sales Order line", route: "analysis/soline" }, { title: "Sales Order Analisis", route: "analysis/soanalysis" }, { title: "Sales Person", route: "analysis/salesperson" }, { title: "Product", route: "analysis/salesproduct" }, { title: "Commissions" }],
       },
-      { title: "Setting" },
+      { title: "Setting", route: "modsetting/sales" },
     ],
   },
   {
@@ -136,10 +136,10 @@ export const MENU = [
           { title: "Invoice Analysis", route: "acctreport/invoice" }, { title: "Executive Summary", route: "report/ringkasan" }, { title: "Analytic Report", route: "acctreport/analytic" }, { title: "Budget Report" },
         ],
       },
-      { title: "Setting" },
+      { title: "Setting", route: "modsetting/accounting" },
     ],
   },
-  { title: "General Setting", icon: "fas fa-cog", items: [{ title: "Company Setting", odoo: "res.company" }, { title: "Users & Access", odoo: "res.users" }] },
+  { title: "General Setting", icon: "fas fa-cog", items: [{ title: "Company Setting", route: "company" }, { title: "Users & Access", route: "users" }] },
 ];
 
 /** Beri setiap simpul kunci berbasis indeks ("0", "0.1", "0.1.0"), dan hitung `mod` dari route. */

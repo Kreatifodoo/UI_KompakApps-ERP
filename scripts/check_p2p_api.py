@@ -198,6 +198,7 @@ def main():
     check_dashboards(api)
     check_accounting_masters(api)
     check_analysis_reports(api)
+    check_settings_and_users(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -1032,6 +1033,58 @@ def check_analysis_reports(api):
     api.search("sale.order.line", [["order_id.date_order", ">=", year]], ["order_id", "order_partner_id", "product_id", "product_uom_qty", "qty_delivered", "qty_invoiced", "price_unit", "discount", "price_subtotal", "state"], limit=50)
     api.search("purchase.request.line", [["date_required", ">=", year[:10]]], ["request_id", "product_id", "product_qty", "purchased_qty", "estimated_cost", "request_state"], limit=50)
     check(True, "baris Sales Order dan Purchase Request Line terbaca dengan kolom laporan")
+
+
+def check_settings_and_users(api):
+    """Pengaturan per modul, kunci periode, data perusahaan, dan pengguna dengan peran (halaman Setting, Company Setting, Users & Access)."""
+    step("Pengaturan modul, perusahaan, dan pengguna")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+
+    def settings(**vals):
+        [sid] = api.call("res.config.settings", "create", vals_list=[vals])
+        return sid
+
+    current = api.call("res.config.settings", "read", ids=[settings()], fields=["quotation_validity_days", "po_order_approval", "po_double_validation_amount", "tax_calculation_rounding_method", "fiscalyear_last_day"])[0]
+    check(current["quotation_validity_days"] >= 0 and current["tax_calculation_rounding_method"] in ("round_per_line", "round_globally"), "nilai pengaturan saat ini terbaca lewat create lalu read")
+    new_days = current["quotation_validity_days"] + 3
+    api.call("res.config.settings", "execute", ids=[settings(quotation_validity_days=new_days)])
+    check(api.read("res.company", 1, ["quotation_validity_days"])["quotation_validity_days"] == new_days, "pengaturan diterapkan ke perusahaan lewat execute")
+    api.call("res.config.settings", "execute", ids=[settings(quotation_validity_days=current["quotation_validity_days"])])
+    check(api.read("res.company", 1, ["quotation_validity_days"])["quotation_validity_days"] == current["quotation_validity_days"], "pengaturan dikembalikan")
+
+    api.call("res.config.settings", "execute", ids=[settings(po_order_approval=True, po_double_validation_amount=7_500_000.0)])
+    approval = api.read("res.company", 1, ["po_double_validation", "po_double_validation_amount"])
+    check(approval["po_double_validation"] == "two_step" and approval["po_double_validation_amount"] == 7_500_000.0, "persetujuan PO aktif dengan nominal batas")
+    api.call("res.config.settings", "execute", ids=[settings(po_order_approval=current["po_order_approval"], po_double_validation_amount=current["po_double_validation_amount"])])
+    check(api.read("res.company", 1, ["po_double_validation"])["po_double_validation"] == ("two_step" if current["po_order_approval"] else "one_step"), "persetujuan PO dikembalikan")
+
+    original = api.read("res.company", 1, ["sale_lock_date", "phone", "street", "report_footer"])
+    api.call("res.company", "write", ids=[1], vals={"sale_lock_date": "2020-01-31", "phone": f"021-{tag}", "street": f"Jl. Regresi {tag}", "report_footer": "<p>Footer regresi</p>"})
+    written = api.read("res.company", 1, ["sale_lock_date", "phone", "street"])
+    check(written["sale_lock_date"] == "2020-01-31" and written["phone"] == f"021-{tag}", "kunci penjualan dan data perusahaan tersimpan")
+    api.call("res.company", "write", ids=[1], vals={"sale_lock_date": original["sale_lock_date"], "phone": original["phone"], "street": original["street"], "report_footer": original["report_footer"]})
+    check(api.read("res.company", 1, ["sale_lock_date"])["sale_lock_date"] == original["sale_lock_date"], "kunci periode dibuka kembali")
+    try:
+        api.call("res.company", "write", ids=[1], vals={"vat": "0123456789012345"})
+        check(False, "NPWP tidak valid seharusnya ditolak")
+    except RuntimeError as error:
+        check("NPWP" in str(error), "NPWP yang tidak valid ditolak Odoo dengan pesan yang jelas")
+
+    group_ids = {}
+    for xml in ("purchase.group_purchase_user", "purchase.group_purchase_manager", "stock.group_stock_user", "account.group_account_invoice", "account.group_account_manager"):
+        module, name = xml.split(".")
+        group_ids[xml] = api.search("ir.model.data", [["model", "=", "res.groups"], ["module", "=", module], ["name", "=", name]], ["res_id"])[0]["res_id"]
+    [user] = api.call("res.users", "create", vals_list=[{"name": f"Pengguna regresi {tag}", "login": f"regresi{tag}@example.test", "email": f"regresi{tag}@example.test"}])
+    api.call("res.users", "write", ids=[user], vals={"group_ids": [[4, group_ids["purchase.group_purchase_manager"]], [4, group_ids["stock.group_stock_user"]], [4, group_ids["account.group_account_invoice"]]]})
+    held = set(api.read("res.users", user, ["all_group_ids"])["all_group_ids"])
+    check(group_ids["purchase.group_purchase_manager"] in held and group_ids["purchase.group_purchase_user"] in held, "peran manajer pembelian membawa peran pengguna (tersirat)")
+    check(api.read("res.users", user, ["share"])["share"] is False, "pengguna baru adalah pengguna internal")
+    api.call("res.users", "write", ids=[user], vals={"group_ids": [[4, group_ids["purchase.group_purchase_user"]], [3, group_ids["purchase.group_purchase_manager"]], [3, group_ids["stock.group_stock_user"]], [4, group_ids["account.group_account_manager"]]]})
+    held = set(api.read("res.users", user, ["all_group_ids"])["all_group_ids"])
+    check(group_ids["purchase.group_purchase_manager"] not in held and group_ids["purchase.group_purchase_user"] in held and group_ids["stock.group_stock_user"] not in held and group_ids["account.group_account_manager"] in held,
+          "peran diturunkan (pengguna ditautkan lebih dulu), dicabut, dan dinaikkan")
+    api.call("res.users", "action_archive", ids=[user])
+    check(api.read("res.users", user, ["active"])["active"] is False, "pengguna bisa diarsipkan")
 
 
 def check_bank_reconciliation(api):

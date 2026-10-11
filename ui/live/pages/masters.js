@@ -38,7 +38,7 @@ export function createMasterPage(config) {
     app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
     const state = query.get("state") || "active";
     const text = query.get("q") ?? "";
-    const domain = [];
+    const domain = [...(config.baseDomain ?? [])];
     if (config.archive && state === "archived") domain.push(["active", "=", false]);
     for (const f of config.filters ?? []) {
       const value = query.get(f.key);
@@ -51,8 +51,9 @@ export function createMasterPage(config) {
     const rows = await searchRead(config.model, domain, config.listFields, {
       order: config.order ?? "name", limit: config.limit ?? 200, context: { active_test: !(config.archive && state === "archived") },
     });
+    const listRefs = (await config.loadListRefs?.()) ?? {};
     const body = rows
-      .map((r) => rowLink(`#/${config.route}/${r.id}`, config.columns.map((c, i) => cell(c.value(r), { right: c.right, strong: i === 0, raw: c.raw }))))
+      .map((r) => rowLink(`#/${config.route}/${r.id}`, config.columns.map((c, i) => cell(c.value(r, listRefs), { right: c.right, strong: i === 0, raw: c.raw }))))
       .join("");
     const filterControls = (config.filters ?? [])
       .map((f) => `<select data-master-filter="${esc(f.key)}" class="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white" aria-label="${esc(f.label)}"><option value="">${esc(f.label)}</option>${f.options.map(([v, l]) => `<option value="${esc(v)}" ${query.get(f.key) === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`)
