@@ -68,11 +68,11 @@ export const MENU = [
     title: "CRM", icon: "fas fa-handshake",
     items: [
       { title: "Dashboard" },
-      { title: "Master", items: [{ title: "Master Customer", odoo: "res.partner" }, { title: "Master Product/Service", odoo: "product.template" }] },
-      { title: "Leads", odoo: "crm.lead" },
-      { title: "Opportunity", odoo: "crm.lead" },
+      { title: "Master", items: [{ title: "Master Customer", route: "customer" }, { title: "Master Product/Service", route: "product?state=sale" }] },
+      { title: "Leads", route: "lead" },
+      { title: "Opportunity", route: "opportunity" },
       { title: "Reporting", items: [{ title: "Forecast", odoo: "crm.lead" }, { title: "Pipeline", odoo: "crm.lead" }, { title: "Leads", odoo: "crm.lead" }, { title: "Activities", odoo: "mail.activity" }] },
-      { title: "Setting" },
+      { title: "Setting", route: "crmsetting" },
     ],
   },
   {

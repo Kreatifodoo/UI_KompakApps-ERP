@@ -44,10 +44,13 @@ import * as workcenter from "./pages/workcenter.js";
 import * as mo from "./pages/mo.js";
 import * as schedule from "./pages/schedule.js";
 import * as production from "./pages/production.js";
+import * as lead from "./pages/lead.js";
+import * as opportunity from "./pages/opportunity.js";
+import * as crmsetting from "./pages/crmsetting.js";
 import * as transfer from "./pages/transfer.js";
 import * as soon from "./pages/soon.js";
 
-const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, bank, stock, moves, count, scrap, orderpoint, replenish, warehouse, location: location_, uom, putaway, lot, bom, workcenter, mo, schedule, production, transfer, soon };
+const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, bank, stock, moves, count, scrap, orderpoint, replenish, warehouse, location: location_, uom, putaway, lot, bom, workcenter, mo, schedule, production, lead, opportunity, crmsetting, transfer, soon };
 let currentId = "pr";
 
 function parseHash() {
