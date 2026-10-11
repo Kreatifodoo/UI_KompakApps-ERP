@@ -27,8 +27,8 @@ Setiap menu pada sidebar prototipe sudah punya halaman kecuali tiga kelompok pad
 | 5.1 | Backup dan restore terjadwal, pemantauan, uji beban | Agen C | Skrip dan dokumen operasional; tidak mengubah kode aplikasi |
 | 5.2 | Cetak dokumen berlogo: faktur, PO, SO, pengiriman, pembayaran, PR | Selesai (D34) | Dibangun di klien dari data JSON-2; struk POS dan MO belum |
 | 5.3 | Impor data master dari CSV (produk, mitra, saldo awal) | Selesai (D33) | Halaman Import Data memakai mesin impor Odoo |
-| 5.4 | Persetujuan bertingkat (OCA `base_tier_validation`) | Menunggu | Perlu menambah repo OCA ke `oca.lock` |
-| 5.5 | Audit log (OCA `auditlog`) dan aturan akses per rekaman | Menunggu | Perlu menambah repo OCA ke `oca.lock` |
+| 5.4 | Persetujuan bertingkat | Tertahan | OCA `base_tier_validation` belum ada di cabang 19.0 (dicek 2026-10-11); pilihan: tunggu port OCA atau bangun persetujuan ringan sendiri (aturan per model, ambang, grup penyetuju). Persetujuan PO per nominal sudah ada di Purchase Setting |
+| 5.5 | Audit log (OCA `auditlog`) dan aturan akses per rekaman | Audit log selesai (D35); aturan akses per rekaman menunggu | Jurnal, faktur, dan pembayaran tidak bisa diaudit (merusak rekonsiliasi) |
 | 5.6 | Autentikasi dua langkah, SSO, kebijakan kata sandi | Menunggu | |
 | 5.7 | Multi-perusahaan dan multi-gudang lanjutan | Menunggu | |
 
