@@ -201,6 +201,7 @@ def main():
     check_settings_and_users(api)
     check_data_import(api)
     check_print_documents(api)
+    check_auditlog(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -1156,6 +1157,38 @@ def check_print_documents(api):
     for model, (domain, fields) in docs.items():
         rows = api.call(model, "search_read", domain=domain, fields=fields, limit=1, order="id desc")
         check(rows and set(fields) <= set(rows[0]), f"{model}: {len(fields)} field cetak terbaca")
+
+
+def check_auditlog(api):
+    """Audit Log: aturan diaktifkan lewat set_to_confirmed, perubahan lewat JSON-2 tercatat dengan nilai lama dan baru, dan aturan bisa dinonaktifkan."""
+    step("Audit Log (auditlog)")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    [model] = api.search("ir.model", [["model", "=", "res.partner"]], ["id"])
+    rule = api.search("auditlog.rule", [["model_id", "=", model["id"]]], ["state"])
+    if rule:
+        rule_id, was = rule[0]["id"], rule[0]["state"]
+    else:
+        [rule_id] = api.call("auditlog.rule", "create", vals_list=[{"name": "Audit Kontak", "model_id": model["id"], "log_create": True, "log_write": True, "log_unlink": True, "log_type": "full"}])
+        was = "draft"
+    api.call("auditlog.rule", "set_to_confirmed", ids=[rule_id])
+    check(api.read("auditlog.rule", rule_id, ["state"])["state"] == "confirmed", "aturan audit aktif lewat set_to_confirmed")
+
+    [pid] = api.call("res.partner", "create", vals_list=[{"name": f"Audit Regresi {tag}"}])
+    api.call("res.partner", "write", ids=[pid], vals={"name": f"Audit Regresi {tag} B", "phone": f"021-{tag}"})
+    logs = api.search("auditlog.log", [["model_id", "=", model["id"]], ["res_id", "=", pid]], ["method", "user_id", "line_ids"], order="id")
+    check([entry["method"] for entry in logs] == ["create", "write"] and all(entry["user_id"] for entry in logs), "buat dan ubah kontak tercatat dengan penggunanya")
+    lines = api.search("auditlog.log.line", [["log_id", "=", logs[1]["id"]]], ["field_name", "old_value_text", "new_value_text"])
+    by_field = {line["field_name"]: line for line in lines}
+    check(by_field["name"]["old_value_text"] == f"Audit Regresi {tag}" and by_field["name"]["new_value_text"] == f"Audit Regresi {tag} B", "rincian ubah memuat nilai lama dan baru nama")
+    check(not by_field["phone"]["old_value_text"] and by_field["phone"]["new_value_text"] == f"021-{tag}", "rincian ubah memuat telepon dari kosong menjadi terisi")
+    api.call("res.partner", "unlink", ids=[pid])
+    check(api.search("auditlog.log", [["model_id", "=", model["id"]], ["res_id", "=", pid], ["method", "=", "unlink"]], ["id"]), "penghapusan kontak tercatat")
+
+    cron = api.call("ir.cron", "search_read", domain=[["model_id.model", "=", "auditlog.autovacuum"]], fields=["active"], context={"active_test": False})
+    check(len(cron) == 1, "cron penghapusan log lama tersedia")
+    if was == "draft":
+        api.call("auditlog.rule", "set_to_draft", ids=[rule_id])
+        check(api.read("auditlog.rule", rule_id, ["state"])["state"] == "draft", "aturan audit bisa dinonaktifkan lewat set_to_draft")
 
 
 def check_bank_reconciliation(api):
