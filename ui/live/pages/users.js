@@ -12,6 +12,7 @@ const APPS = [
   { key: "mrp", label: "Manufacture", levels: [["user", "Pengguna", "mrp.group_mrp_user"], ["manager", "Manajer", "mrp.group_mrp_manager"]] },
   { key: "sale", label: "Sales dan CRM", levels: [["user", "Salesperson", "sales_team.group_sale_salesman"], ["manager", "Manajer", "sales_team.group_sale_manager"]] },
   { key: "pos", label: "POS", levels: [["user", "Kasir", "point_of_sale.group_pos_user"], ["manager", "Manajer", "point_of_sale.group_pos_manager"]] },
+  { key: "audit", label: "Audit Log", levels: [["user", "Pembaca log", "auditlog.group_auditlog_user"], ["manager", "Pengelola aturan audit", "auditlog.group_auditlog_manager"]] },
   { key: "account", label: "Accounting", levels: [["invoice", "Penagihan (faktur dan tagihan)", "account.group_account_invoice"], ["user", "Akuntan", "account.group_account_user"], ["manager", "Advisor (penuh)", "account.group_account_manager"]] },
 ];
 const ADMIN_GROUP = "base.group_system";
