@@ -9,3 +9,4 @@ from . import test_inventory
 from . import test_lots
 from . import test_manufacturing
 from . import test_crm
+from . import test_pos

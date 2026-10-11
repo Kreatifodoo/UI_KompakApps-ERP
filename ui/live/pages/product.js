@@ -7,9 +7,9 @@ import {
   referenceUoms, registerLookup, rowLink, runLookup, searchAccounts, searchBox, searchRead, selectOptions, statTiles, table, toast, button,
 } from "../common.js";
 
-const FILTERS = [["purchase", "Dapat dibeli"], ["sale", "Dapat dijual"], ["all", "Semua produk"], ["archived", "Diarsipkan"]];
+const FILTERS = [["purchase", "Dapat dibeli"], ["sale", "Dapat dijual"], ["pos", "Dijual di POS"], ["all", "Semua produk"], ["archived", "Diarsipkan"]];
 const FIELDS = [
-  "name", "type", "is_storable", "sale_ok", "purchase_ok", "purchase_request", "uom_id", "default_code", "barcode", "categ_id", "list_price",
+  "name", "type", "is_storable", "sale_ok", "purchase_ok", "purchase_request", "available_in_pos", "uom_id", "default_code", "barcode", "categ_id", "list_price",
   "standard_price", "taxes_id", "supplier_taxes_id", "purchase_method", "description_purchase", "description_sale",
   "property_account_expense_id", "property_account_income_id", "tracking", "use_expiration_date", "expiration_time", "use_time", "removal_time", "alert_time",
 ];
@@ -66,7 +66,7 @@ const normalize = (record) => {
   const values = {};
   for (const key of TEXT_KEYS) values[key] = record[key] || "";
   for (const key of ID_KEYS) values[key] = Array.isArray(record[key]) ? record[key][0] : record[key] || null;
-  for (const key of ["is_storable", "sale_ok", "purchase_ok", "purchase_request"]) values[key] = Boolean(record[key]);
+  for (const key of ["is_storable", "sale_ok", "purchase_ok", "purchase_request", "available_in_pos"]) values[key] = Boolean(record[key]);
   values.type = record.type || "consu";
   values.tracking = record.tracking || "none";
   values.use_expiration_date = Boolean(record.use_expiration_date);
@@ -101,6 +101,7 @@ async function renderList(query) {
   const domain = [];
   if (filter === "purchase") domain.push(["purchase_ok", "=", true]);
   else if (filter === "sale") domain.push(["sale_ok", "=", true]);
+  else if (filter === "pos") domain.push(["available_in_pos", "=", true]);
   else if (filter === "archived") domain.push(["active", "=", false]);
   if (text) domain.push("|", "|", ["name", "ilike", text], ["default_code", "ilike", text], ["barcode", "ilike", text]);
   const category = Number(query.get("category")) || null;
@@ -280,6 +281,7 @@ async function renderForm(id) {
         ${checkboxField("sale_ok", "Dapat dijual", v.sale_ok)}
         ${v.type === "consu" ? checkboxField("is_storable", "Lacak stok", v.is_storable) : ""}
         ${checkboxField("purchase_request", "Dapat diminta lewat Purchase Request", v.purchase_request)}
+        ${v.sale_ok ? checkboxField("available_in_pos", "Dijual di POS (kasir)", v.available_in_pos) : ""}
       </div>
       ${fieldBlock("Satuan", `<select data-value="uom_id" data-kind="id" class="${INPUT}">${selectOptions(uoms, v.uom_id)}</select>`)}
       ${fieldBlock("Kode Internal", input("default_code"))}
@@ -319,6 +321,7 @@ async function persist() {
   if (!(Number(v.standard_price) >= 0)) throw new Error("Biaya tidak boleh negatif.");
   if (form.pending.size) throw new Error("Pilih akun dari kotak saran, atau kosongkan isiannya.");
   if (v.type !== "consu") v.is_storable = false;
+  if (!v.sale_ok) v.available_in_pos = false;
   if (!v.is_storable) {
     v.tracking = "none";
     v.use_expiration_date = false;
