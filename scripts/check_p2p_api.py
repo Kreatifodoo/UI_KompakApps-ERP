@@ -967,8 +967,8 @@ def check_accounting_masters(api):
     info = api.read("account.tax", tax, ["invoice_repartition_line_ids", "refund_repartition_line_ids"])
     tax_lines = api.search("account.tax.repartition.line", [["id", "in", info["invoice_repartition_line_ids"] + info["refund_repartition_line_ids"]], ["repartition_type", "=", "tax"]], ["id"])
     check(len(tax_lines) == 2, "pajak baru membuat baris pajak untuk faktur dan nota kredit")
-    api.call("account.tax.repartition.line", "write", ids=[l["id"] for l in tax_lines], vals={"account_id": vat_account})
-    check(all(l["account_id"][0] == vat_account for l in api.search("account.tax.repartition.line", [["id", "in", [x["id"] for x in tax_lines]]], ["account_id"])), "akun pajak ditulis ke kedua baris pajak")
+    api.call("account.tax.repartition.line", "write", ids=[row["id"] for row in tax_lines], vals={"account_id": vat_account})
+    check(all(row["account_id"][0] == vat_account for row in api.search("account.tax.repartition.line", [["id", "in", [x["id"] for x in tax_lines]]], ["account_id"])), "akun pajak ditulis ke kedua baris pajak")
 
     usd = api.search("res.currency", [["name", "=", "USD"]], ["id"], context={"active_test": False})[0]["id"]
     api.call("res.currency", "write", ids=[usd], vals={"active": True})
@@ -997,7 +997,7 @@ def check_accounting_masters(api):
     check(inherited["state"] == "draft" and inherited["method_number"] == 4 and inherited["method_period"] == "month", "aset baru mewarisi metode dari model aset")
     api.call("account.asset", "validate", ids=[asset])
     lines = api.search("account.asset.line", [["asset_id", "=", asset], ["type", "=", "depreciate"]], ["amount", "move_id"], order="line_date")
-    check(len(lines) == 4 and all(l["amount"] == 1_000_000.0 for l in lines), "konfirmasi membuat 4 baris penyusutan bulanan @ 1.000.000")
+    check(len(lines) == 4 and all(row["amount"] == 1_000_000.0 for row in lines), "konfirmasi membuat 4 baris penyusutan bulanan @ 1.000.000")
     moves_before = api.call("account.move", "search_count", domain=[])
     api.call("account.asset.line", "create_move", ids=[lines[0]["id"]])
     posted = api.read("account.asset", asset, ["value_depreciated", "value_residual"])
