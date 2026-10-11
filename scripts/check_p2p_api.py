@@ -197,6 +197,7 @@ def main():
     check_account_reports(api)
     check_dashboards(api)
     check_accounting_masters(api)
+    check_analysis_reports(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -1005,6 +1006,32 @@ def check_accounting_masters(api):
     for line in lines[1:]:
         api.call("account.asset.line", "create_move", ids=[line["id"]])
     check(api.read("account.asset", asset, ["state", "value_residual"]) == {"id": asset, "state": "close", "value_residual": 0.0}, "semua penyusutan diposting: aset selesai dan nilai sisa nol")
+
+
+def check_analysis_reports(api):
+    """Semua dimensi dan ukuran laporan analisis (menu Report di Purchase Request, Purchase, Inventory, Sales, POS) diterima Odoo."""
+    step("Laporan analisis: dimensi dan ukuran per model")
+    year = f"{datetime.date.today().year}-01-01 00:00:00"
+    sale_measures = ["__count", "product_uom_qty:sum", "qty_delivered:sum", "qty_invoiced:sum", "price_subtotal:sum", "price_total:sum"]
+    pos_measures = ["__count", "product_qty:sum", "total_discount:sum", "price_total:sum", "margin:sum"]
+    specs = [
+        ("purchase.request.line", [["date_required", ">=", year[:10]]], ["date_required:month", "product_id", "requested_by", "request_state"], ["__count", "product_qty:sum", "estimated_cost:sum"]),
+        ("purchase.report", [["state", "in", ["purchase", "done"]], ["date_order", ">=", year]], ["date_order:month", "partner_id", "product_id", "category_id", "user_id"],
+         ["__count", "qty_ordered:sum", "qty_received:sum", "qty_billed:sum", "untaxed_total:sum", "price_total:sum"]),
+        ("stock.move.line", [["state", "=", "done"], ["date", ">=", year]], ["date:month", "product_id", "product_category_name", "picking_partner_id", "location_id", "location_dest_id", "lot_id"], ["__count", "quantity:sum"]),
+        ("sale.report", [["state", "in", ["sale", "done"]], ["date", ">=", year]], ["date:month", "partner_id", "product_id", "categ_id", "user_id", "team_id"], sale_measures),
+        ("report.pos.order", [["state", "in", ["paid", "done", "invoiced"]], ["date", ">=", year]], ["date:day", "date:month", "product_id", "product_categ_id", "user_id", "config_id", "partner_id", "session_id"], pos_measures),
+    ]
+    for model, domain, dimensions, measures in specs:
+        for dimension in dimensions:
+            api.call(model, "formatted_read_group", domain=domain, groupby=[dimension], aggregates=measures)
+        check(True, f"{model}: {len(dimensions)} dimensi dengan {len(measures)} ukuran diterima Odoo")
+    purchase = api.call("purchase.report", "formatted_read_group", domain=[["state", "in", ["purchase", "done"]], ["date_order", ">=", year]], groupby=[], aggregates=["__count", "untaxed_total:sum", "qty_ordered:sum"])[0]
+    lines = api.search("purchase.order.line", [["order_id.state", "in", ["purchase", "done"]], ["date_order", ">=", year]], ["price_subtotal", "product_qty"])
+    check(len(lines) == purchase["__count"] and abs(sum(row["price_subtotal"] for row in lines) - purchase["untaxed_total:sum"]) < 0.01, "Purchase Order Analisis sama dengan jumlah baris Purchase Order Line (baris, nilai, dan jumlah)")
+    api.search("sale.order.line", [["order_id.date_order", ">=", year]], ["order_id", "order_partner_id", "product_id", "product_uom_qty", "qty_delivered", "qty_invoiced", "price_unit", "discount", "price_subtotal", "state"], limit=50)
+    api.search("purchase.request.line", [["date_required", ">=", year[:10]]], ["request_id", "product_id", "product_qty", "purchased_qty", "estimated_cost", "request_state"], limit=50)
+    check(True, "baris Sales Order dan Purchase Request Line terbaca dengan kolom laporan")
 
 
 def check_bank_reconciliation(api):
