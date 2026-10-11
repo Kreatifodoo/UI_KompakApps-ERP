@@ -97,6 +97,7 @@ Kerangka di `ui/live/` memakai **desain sidebar prototipe** (9 modul, menu berti
 | Inventory › Operation › Physical Inventory, Scrap; Master › Reorder Level; Operation › Replenishment | Hitung fisik, scrap, aturan stok minimum, dan pengisian ulang ke RFQ | `stock.quant`, `stock.scrap`, `stock.warehouse.orderpoint` |
 | Inventory › Master › Lot & Serial Number Master; Product Master (pelacakan); Penerimaan, Pengiriman, Scrap, Physical Inventory | Lot dan nomor seri, tanggal kedaluwarsa, penelusuran lot dari penerimaan sampai pengiriman | `stock.lot`, `stock.move.line`, `product_expiry` |
 | Inventory › Master › Warehouse & Location Master, Unit of Measurement Master, Put away Rules; Operation › Internal Transfer, Material Request | Gudang dan fitur (Storage Locations, Lots & Serial), lokasi, satuan, aturan penyimpanan, transfer antar lokasi | `stock.warehouse`, `stock.location`, `uom.uom`, `stock.putaway.rule`, `stock.picking` |
+| Manufacture › Master › Bill of Material, WorkCenter; Schedule Production; Manufacturing Order; Reporting › Production Analisis | BoM dengan komponen, produk sampingan, operasi, dan biaya; work center dan fitur; MO dari draft sampai selesai (backorder, konsumsi berlebih, work order, scrap, unbuild); jadwal dan analisis produksi | `mrp.bom`, `mrp.workcenter`, `mrp.production`, `mrp.workorder`, `mrp.unbuild` |
 | Accounting › Bank Transaction | Mutasi bank manual atau CSV, rekonsiliasi dengan pembayaran tertunda, faktur, atau tagihan, biaya bank ke akun beban | `account.bank.statement(.line)`, `account_reconcile_oca` |
 | Accounting › Reporting › Profit and Loss, Balance Sheet, Cash Flow Statement, Trial Balance, Executive Summary | Laporan keuangan dari template MIS Builder (pembanding periode, drilldown ke item jurnal, CSV) | `mis.report`, `mis.report.instance` |
 | Accounting › Reporting › Aged Receivable, Aged Payable, General Ledger, Partner Ledger | Umur piutang/hutang per mitra, buku besar dan buku besar pembantu dengan saldo berjalan | `account.move.line` |
@@ -140,7 +141,7 @@ Nginx pada layanan `ui` hanya meneruskan `/json/2/` ke Odoo, sehingga antarmuka 
 
 ### Uji regresi alur Procure-to-Pay
 
-`scripts/check_p2p_api.py` menjalankan seluruh alur di atas lewat API (panggilan yang sama dengan UI) dan memeriksa 126 hal, termasuk jurnal tagihan dan pembayaran, Sales Order sampai nota kredit, laporan keuangan (neraca seimbang, arus kas cocok dengan kas), penerimaan sebagian dengan backorder, pembayaran bertahap, lot dan nomor seri dengan kedaluwarsa, dan data master (vendor, produk, harga vendor bertingkat, arsip). Skrip ini **menulis data**, jadi pakai database uji dan API key pengguna uji:
+`scripts/check_p2p_api.py` menjalankan seluruh alur di atas lewat API (panggilan yang sama dengan UI) dan memeriksa 156 hal, termasuk jurnal tagihan dan pembayaran, Sales Order sampai nota kredit, laporan keuangan (neraca seimbang, arus kas cocok dengan kas), penerimaan sebagian dengan backorder, pembayaran bertahap, lot dan nomor seri dengan kedaluwarsa, manufaktur (BoM sampai unbuild), dan data master (vendor, produk, harga vendor bertingkat, arsip). Skrip ini **menulis data**, jadi pakai database uji dan API key pengguna uji:
 
 ```bash
 NUSARA_API_KEY=<api-key-uji> python3 scripts/check_p2p_api.py --yes --url http://127.0.0.1:8080

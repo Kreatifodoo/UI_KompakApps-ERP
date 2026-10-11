@@ -190,6 +190,7 @@ def main():
     check_inventory(api, product)
     check_warehouse_master(api, product)
     check_lots(api, vendor)
+    check_manufacturing(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -540,6 +541,135 @@ def check_lots(api, vendor):
     check(result["context"].get("expired_lot_name") == f"N-{tag}", "nama lot terbawa di konteks wizard")
     api.call("expiry.picking.confirmation", "process", ids=[expiry_wizard], context=result["context"])
     check(api.read("stock.picking", npicking, ["state"])["state"] == "done", "penerimaan selesai setelah konfirmasi kedaluwarsa")
+
+
+def check_manufacturing(api):
+    """BoM, work center, Manufacturing Order, backorder, konsumsi berlebih, work order, unbuild, scrap (halaman Manufacture)."""
+    step("Manufaktur: BoM, MO, backorder, konsumsi berlebih, work order, unbuild, scrap")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    api.call("res.config.settings", "execute", ids=api.call("res.config.settings", "create", vals_list=[{"group_mrp_routings": True, "group_mrp_byproducts": True, "group_stock_production_lot": True}]))
+    goods = api.search("product.category", [["name", "=", "Goods"]], ["id"], limit=1)
+    warehouse = api.search("stock.warehouse", [], ["lot_stock_id"], limit=1)[0]
+    stock_location = warehouse["lot_stock_id"][0]
+    base = {"type": "consu", "is_storable": True, "categ_id": goods[0]["id"] if goods else False}
+
+    def new_product(name, cost=0.0, stock=0.0, **extra):
+        [tmpl] = api.call("product.template", "create", vals_list=[{**base, "name": f"{name} {tag}", "standard_price": cost, **extra}])
+        info = api.read("product.template", tmpl, ["product_variant_id", "uom_id"])
+        if stock:
+            ctx = {"inventory_mode": True}
+            [quant] = api.call("stock.quant", "create", vals_list=[{"product_id": info["product_variant_id"][0], "location_id": stock_location, "inventory_quantity": stock}], context=ctx)
+            api.call("stock.quant", "action_apply_inventory", ids=[quant], context=ctx)
+        return {"tmpl": tmpl, "id": info["product_variant_id"][0], "uom": info["uom_id"][0]}
+
+    def on_hand(product):
+        return api.call("product.product", "read", ids=[product["id"]], fields=["qty_available"], context={"location": stock_location})[0]["qty_available"]
+
+    flour = new_product("Tepung Regresi", cost=10_000.0, stock=100.0)
+    sugar = new_product("Gula Regresi", cost=5_000.0, stock=100.0)
+    cake = new_product("Kue Regresi")
+    pulp = new_product("Ampas Regresi")
+    [center] = api.call("mrp.workcenter", "create", vals_list=[{"name": f"Oven Regresi {tag}", "code": f"OV{tag}", "costs_hour": 60_000.0, "time_efficiency": 100.0}])
+    check(api.read("mrp.workcenter", center, ["costs_hour"])["costs_hour"] == 60_000.0, "work center tersimpan dengan biaya per jam")
+    [bom] = api.call("mrp.bom", "create", vals_list=[{
+        "product_tmpl_id": cake["tmpl"], "product_qty": 1.0, "product_uom_id": cake["uom"], "code": f"BOM-{tag}",
+        "bom_line_ids": [[0, 0, {"product_id": flour["id"], "product_qty": 2.0, "product_uom_id": flour["uom"]}], [0, 0, {"product_id": sugar["id"], "product_qty": 1.0, "product_uom_id": sugar["uom"]}]],
+        "byproduct_ids": [[0, 0, {"product_id": pulp["id"], "product_qty": 1.0, "product_uom_id": pulp["uom"], "cost_share": 10.0}]],
+        "operation_ids": [[0, 0, {"name": "Panggang", "workcenter_id": center, "time_mode": "manual", "time_cycle_manual": 30.0}]],
+    }])
+    report = api.call("report.mrp.report_bom_structure", "get_html", bom_id=bom, searchQty=1, searchVariant=False)["lines"]
+    components = sum(c["bom_cost"] for c in report["components"])
+    check(components == 25_000.0 and report["operations_cost"] == 30_000.0, "kartu biaya BoM: komponen 25.000, operasi 30.000")
+    check(abs(report["bom_cost"] - (components + report["operations_cost"]) * 0.9) < 0.01, "total biaya BoM dikurangi porsi produk sampingan 10%")
+    check(bool(api.search("product.product", [["type", "=", "consu"], ["product_tmpl_id.bom_ids", "!=", False], ["name", "ilike", f"Kue Regresi {tag}"]], ["id"])), "pencarian produk yang punya BoM dipakai form MO")
+
+    journals = api.call("account.move", "search_count", domain=[])
+    [mo] = api.call("mrp.production", "create", vals_list=[{"product_id": cake["id"], "bom_id": bom, "product_qty": 3.0}])
+    check(api.read("mrp.production", mo, ["state"])["state"] == "draft", "MO baru berstatus draft")
+    api.call("mrp.production", "action_confirm", ids=[mo])
+    info = api.read("mrp.production", mo, ["state", "reservation_state", "components_availability_state", "workorder_ids", "move_raw_ids"])
+    check(info["state"] == "confirmed" and info["reservation_state"] == "assigned" and info["components_availability_state"] == "available", "MO dikonfirmasi dan komponen dicadangkan")
+    raw = {m["product_id"][0]: m for m in api.search("stock.move", [["raw_material_production_id", "=", mo]], ["id", "product_id", "product_uom_qty", "quantity"])}
+    check(raw[flour["id"]]["product_uom_qty"] == 6.0 and raw[sugar["id"]]["product_uom_qty"] == 3.0, "kebutuhan komponen mengikuti BoM untuk 3 unit")
+    check(len(info["workorder_ids"]) == 1, "operasi BoM menjadi work order")
+    workorder = info["workorder_ids"][0]
+    api.call("mrp.workorder", "button_start", ids=[workorder])
+    check(api.read("mrp.production", mo, ["state"])["state"] == "progress", "work order dimulai: MO berstatus progress")
+    api.call("mrp.workorder", "button_finish", ids=[workorder])
+    check(api.read("mrp.workorder", workorder, ["state"])["state"] == "done", "work order selesai")
+
+    # Produksi 2 dari 3 unit dengan konsumsi sesuai rencana -> wizard backorder
+    api.call("mrp.production", "write", ids=[mo], vals={"qty_producing": 2.0})
+    side = api.search("stock.move", [["production_id", "=", mo], ["byproduct_id", "!=", False]], ["id", "product_uom_qty"])[0]
+    check(side["product_uom_qty"] == 3.0, "produk sampingan direncanakan 3 unit untuk MO 3 unit")
+    api.call("stock.move", "write", ids=[side["id"]], vals={"quantity": 2.0})  # lewat API, onchange qty_producing tidak menyesuaikan produk sampingan
+    api.call("stock.move", "write", ids=[raw[flour["id"]]["id"]], vals={"quantity": 4.0, "picked": True})
+    api.call("stock.move", "write", ids=[raw[sugar["id"]]["id"]], vals={"quantity": 2.0, "picked": True})
+    action = api.call("mrp.production", "button_mark_done", ids=[mo])
+    check(isinstance(action, dict) and action.get("res_model") == "mrp.production.backorder", "produksi kurang dari rencana meminta konfirmasi backorder")
+    [wizard] = api.call("mrp.production.backorder", "create", vals_list=[{}], context=action["context"])
+    result = api.call("mrp.production.backorder", "action_backorder", ids=[wizard], context=action["context"])
+    check(api.read("mrp.production", mo, ["state", "qty_produced"])["state"] == "done" and bool(result.get("res_id")), "MO selesai dan backorder dibuat")
+    backorder = result["res_id"]
+    check(api.read("mrp.production", backorder, ["product_qty"])["product_qty"] == 1.0, "backorder berisi sisa 1 unit")
+    check((on_hand(flour), on_hand(sugar), on_hand(cake), on_hand(pulp)) == (96.0, 98.0, 2.0, 2.0), "stok: komponen berkurang, barang jadi dan produk sampingan bertambah")
+    cost = api.read("product.product", cake["id"], ["avg_cost"])["avg_cost"]
+    minutes = api.read("mrp.workorder", workorder, ["duration"])["duration"]
+    expected_cost = (4 * 10_000.0 + 2 * 5_000.0 + minutes / 60 * 60_000.0) * 0.9 / 2
+    check(abs(cost - expected_cost) < 0.5, f"biaya barang jadi = (komponen + operasi {minutes:g} menit) dikurangi porsi sampingan 10% ({cost:,.0f} per unit)")
+    check(api.call("account.move", "search_count", domain=[]) == journals, "produksi tidak membuat jurnal (valuasi saat penagihan)")
+
+    # Backorder dengan konsumsi berlebih -> peringatan konsumsi
+    api.call("mrp.production", "action_assign", ids=[backorder])
+    bo_raw = {m["product_id"][0]: m for m in api.search("stock.move", [["raw_material_production_id", "=", backorder]], ["id", "product_id"])}
+    api.call("mrp.production", "write", ids=[backorder], vals={"qty_producing": 1.0})
+    bo_side = api.search("stock.move", [["production_id", "=", backorder], ["byproduct_id", "!=", False]], ["id"])[0]["id"]
+    api.call("stock.move", "write", ids=[bo_side], vals={"quantity": 1.0})
+    api.call("stock.move", "write", ids=[bo_raw[flour["id"]]["id"]], vals={"quantity": 3.0, "picked": True})
+    api.call("stock.move", "write", ids=[bo_raw[sugar["id"]]["id"]], vals={"quantity": 1.0, "picked": True})
+    warning = api.call("mrp.production", "button_mark_done", ids=[backorder])
+    check(isinstance(warning, dict) and warning.get("res_model") == "mrp.consumption.warning", "konsumsi lebih dari rencana meminta konfirmasi")
+    [warn_wizard] = api.call("mrp.consumption.warning", "create", vals_list=[{}], context=warning["context"])
+    api.call("mrp.consumption.warning", "action_confirm", ids=[warn_wizard], context=warning["context"])
+    check(api.read("mrp.production", backorder, ["state"])["state"] == "done", "MO selesai setelah konfirmasi konsumsi")
+    check(on_hand(flour) == 93.0 and on_hand(cake) == 3.0, "stok mengikuti konsumsi sebenarnya (tepung 93, kue 3)")
+
+    # Unbuild 1 unit dari MO pertama
+    produced = api.read("mrp.production", mo, ["location_src_id", "location_dest_id", "product_uom_id"])
+    [unbuild] = api.call("mrp.unbuild", "create", vals_list=[{"mo_id": mo, "product_id": cake["id"], "product_qty": 1.0, "product_uom_id": produced["product_uom_id"][0], "location_id": produced["location_dest_id"][0], "location_dest_id": produced["location_src_id"][0]}])
+    check(api.call("mrp.unbuild", "action_validate", ids=[unbuild]) is True and on_hand(cake) == 2.0 and on_hand(flour) == 95.0, "unbuild mengembalikan komponen dan mengeluarkan barang jadi")
+
+    # Scrap dari MO terbuka, batalkan MO, dan hapus draft
+    [mo2] = api.call("mrp.production", "create", vals_list=[{"product_id": cake["id"], "bom_id": bom, "product_qty": 1.0}])
+    api.call("mrp.production", "action_confirm", ids=[mo2])
+    [scrap] = api.call("stock.scrap", "create", vals_list=[{"product_id": sugar["id"], "scrap_qty": 1.0, "product_uom_id": sugar["uom"], "production_id": mo2, "location_id": stock_location}])
+    api.call("stock.scrap", "action_validate", ids=[scrap])
+    check(api.read("stock.scrap", scrap, ["state"])["state"] == "done" and api.read("mrp.production", mo2, ["scrap_count"])["scrap_count"] == 1, "scrap dari MO tercatat pada MO")
+    api.call("mrp.production", "action_cancel", ids=[mo2])
+    check(api.read("mrp.production", mo2, ["state"])["state"] == "cancel", "MO dibatalkan")
+    [mo3] = api.call("mrp.production", "create", vals_list=[{"product_id": cake["id"], "bom_id": bom, "product_qty": 1.0}])
+    api.call("mrp.production", "unlink", ids=[mo3])
+    check(not api.search("mrp.production", [["id", "=", mo3]], ["id"]), "MO draft bisa dihapus")
+
+    # Barang jadi berlacak lot: nomor lot diisi saat selesai
+    syrup = new_product("Sirup Regresi", tracking="lot")
+    [lot_bom] = api.call("mrp.bom", "create", vals_list=[{"product_tmpl_id": syrup["tmpl"], "product_qty": 1.0, "product_uom_id": syrup["uom"], "bom_line_ids": [[0, 0, {"product_id": sugar["id"], "product_qty": 1.0, "product_uom_id": sugar["uom"]}]]}])
+    [lot_mo] = api.call("mrp.production", "create", vals_list=[{"product_id": syrup["id"], "bom_id": lot_bom, "product_qty": 2.0}])
+    api.call("mrp.production", "action_confirm", ids=[lot_mo])
+    check(api.read("mrp.production", lot_mo, ["product_tracking"])["product_tracking"] == "lot", "MO barang berlacak lot mengenali pelacakan")
+    [lot] = api.call("stock.lot", "create", vals_list=[{"name": f"SRP-{tag}", "product_id": syrup["id"]}])
+    api.call("mrp.production", "write", ids=[lot_mo], vals={"lot_producing_ids": [[6, 0, [lot]]], "qty_producing": 2.0})
+    lot_raw = api.search("stock.move", [["raw_material_production_id", "=", lot_mo]], ["id"])[0]["id"]
+    api.call("stock.move", "write", ids=[lot_raw], vals={"quantity": 2.0, "picked": True})
+    check(api.call("mrp.production", "button_mark_done", ids=[lot_mo]) is True, "MO barang berlacak selesai dengan lot yang dipilih")
+    check(api.read("stock.lot", lot, ["product_qty"])["product_qty"] == 2.0, "stok lot hasil produksi 2 unit")
+
+    # Kueri halaman Production Analysis dan Schedule
+    done = api.search("mrp.production", [["state", "=", "done"], ["product_id", "=", cake["id"]]], ["product_qty", "date_finished", "duration"])
+    check(sum(m["product_qty"] for m in done) == 3.0, "analisis produksi: 3 unit kue selesai (2 + 1)")
+    finished = api.search("stock.move", [["production_id", "in", [m["id"] for m in api.search("mrp.production", [["state", "=", "done"], ["product_id", "=", cake["id"]]], ["id"])]], ["state", "=", "done"]], ["product_id", "value", "byproduct_id"])
+    check(bool(finished) and all(isinstance(m["value"], (int, float)) for m in finished), "nilai pergerakan barang jadi bisa dibaca untuk analisis")
+    check(isinstance(api.search("mrp.production", [["state", "in", ["draft", "confirmed", "progress", "to_close"]], ["date_start", "<", "2999-01-01 00:00:00"]], ["name", "date_start", "components_availability_state"], order="date_start, id"), list), "kueri jadwal produksi diterima Odoo")
 
 
 def check_bank_reconciliation(api):
