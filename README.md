@@ -101,6 +101,8 @@ Kerangka di `ui/live/` memakai **desain sidebar prototipe** (9 modul, menu berti
 | CRM › Leads, Opportunity, Setting | Lead dan konversinya, papan pipeline dengan seret-lepas, menang dan kalah, quotation dari opportunity, aktivitas terjadwal, tahap, alasan kalah, tag | `crm.lead`, `crm.stage`, `crm.lost.reason`, `crm.tag`, `mail.activity` |
 | CRM › Reporting › Forecast, Pipeline, Leads, Activities | Pendapatan per bulan tenggat dan tahap, pipeline per tahap dan sales, menang dan kalah, konversi lead per sumber, aktivitas terjadwal | `crm.lead`, `mail.activity` |
 | POS › POS Station, Kasir, POS Order, POS Session | Stasiun dan metode pembayaran, layar kasir dengan keranjang dan pembayaran campuran, struk, sesi dengan hitung kas, dan jurnal penutupan sesi | `pos.config`, `pos.payment.method`, `pos.session`, `pos.order` |
+| Sales › Master › Pricelis Master | Daftar harga penjualan dengan aturan per produk, kategori, jumlah minimum, periode, dan cara hitung | `product.pricelist`, `product.pricelist.item` |
+| Accounting › Report › Tax Report, Invoice Analysis, Analytic Report | PPN keluaran dan masukan, analisis penjualan dan pembelian per dimensi, pendapatan dan biaya per akun analitik, unduh CSV | `account.move.line`, `account.invoice.report`, `account.analytic.line` |
 | Accounting › Bank Transaction | Mutasi bank manual atau CSV, rekonsiliasi dengan pembayaran tertunda, faktur, atau tagihan, biaya bank ke akun beban | `account.bank.statement(.line)`, `account_reconcile_oca` |
 | Accounting › Reporting › Profit and Loss, Balance Sheet, Cash Flow Statement, Trial Balance, Executive Summary | Laporan keuangan dari template MIS Builder (pembanding periode, drilldown ke item jurnal, CSV) | `mis.report`, `mis.report.instance` |
 | Accounting › Reporting › Aged Receivable, Aged Payable, General Ledger, Partner Ledger | Umur piutang/hutang per mitra, buku besar dan buku besar pembantu dengan saldo berjalan | `account.move.line` |
@@ -144,7 +146,7 @@ Nginx pada layanan `ui` hanya meneruskan `/json/2/` ke Odoo, sehingga antarmuka 
 
 ### Uji regresi alur Procure-to-Pay
 
-`scripts/check_p2p_api.py` menjalankan seluruh alur di atas lewat API (panggilan yang sama dengan UI) dan memeriksa 199 hal, termasuk jurnal tagihan dan pembayaran, Sales Order sampai nota kredit, laporan keuangan (neraca seimbang, arus kas cocok dengan kas), penerimaan sebagian dengan backorder, pembayaran bertahap, lot dan nomor seri dengan kedaluwarsa, manufaktur (BoM sampai unbuild), CRM (lead sampai menang atau kalah), POS (penjualan kasir sampai jurnal penutupan sesi), dan data master (vendor, produk, harga vendor bertingkat, arsip). Skrip ini **menulis data**, jadi pakai database uji dan API key pengguna uji:
+`scripts/check_p2p_api.py` menjalankan seluruh alur di atas lewat API (panggilan yang sama dengan UI) dan memeriksa 209 hal, termasuk jurnal tagihan dan pembayaran, Sales Order sampai nota kredit, laporan keuangan (neraca seimbang, arus kas cocok dengan kas), penerimaan sebagian dengan backorder, pembayaran bertahap, lot dan nomor seri dengan kedaluwarsa, manufaktur (BoM sampai unbuild), CRM (lead sampai menang atau kalah), POS (penjualan kasir sampai jurnal penutupan sesi), dan data master (vendor, produk, harga vendor bertingkat, arsip). Skrip ini **menulis data**, jadi pakai database uji dan API key pengguna uji:
 
 ```bash
 NUSARA_API_KEY=<api-key-uji> python3 scripts/check_p2p_api.py --yes --url http://127.0.0.1:8080
