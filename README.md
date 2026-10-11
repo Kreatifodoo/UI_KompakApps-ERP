@@ -156,7 +156,7 @@ Nginx pada layanan `ui` hanya meneruskan `/json/2/` ke Odoo, sehingga antarmuka 
 
 ### Uji regresi alur Procure-to-Pay
 
-`scripts/check_p2p_api.py` menjalankan seluruh alur di atas lewat API (panggilan yang sama dengan UI) dan memeriksa 360 hal, termasuk jurnal tagihan dan pembayaran, Sales Order sampai nota kredit, laporan keuangan (neraca seimbang, arus kas cocok dengan kas), penerimaan sebagian dengan backorder, pembayaran bertahap, lot dan nomor seri dengan kedaluwarsa, manufaktur (BoM sampai unbuild), CRM (lead sampai menang atau kalah), POS (penjualan kasir sampai jurnal penutupan sesi), Promotion & Loyalty (kode promo, promosi otomatis, kupon, kartu loyalti, dan pesanan kasir berhadiah), dan data master (vendor, produk, harga vendor bertingkat, arsip). Skrip ini **menulis data**, jadi pakai database uji dan API key pengguna uji:
+`scripts/check_p2p_api.py` menjalankan seluruh alur di atas lewat API (panggilan yang sama dengan UI) dan memeriksa 359 hal, termasuk jurnal tagihan dan pembayaran, Sales Order sampai nota kredit, laporan keuangan (neraca seimbang, arus kas cocok dengan kas), penerimaan sebagian dengan backorder, pembayaran bertahap, lot dan nomor seri dengan kedaluwarsa, manufaktur (BoM sampai unbuild), CRM (lead sampai menang atau kalah), POS (penjualan kasir sampai jurnal penutupan sesi), Promotion & Loyalty (kode promo, promosi otomatis, kupon, kartu loyalti, dan pesanan kasir berhadiah), dan data master (vendor, produk, harga vendor bertingkat, arsip). Skrip ini **menulis data**, jadi pakai database uji dan API key pengguna uji:
 
 ```bash
 NUSARA_API_KEY=<api-key-uji> python3 scripts/check_p2p_api.py --yes --url http://127.0.0.1:8080
