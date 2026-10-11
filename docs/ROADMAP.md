@@ -25,8 +25,8 @@ Setiap menu pada sidebar prototipe sudah punya halaman kecuali tiga kelompok pad
 | # | Pekerjaan | Pemilik | Catatan |
 |---|---|---|---|
 | 5.1 | Backup dan restore terjadwal, pemantauan, uji beban | Selesai (D32) | Skrip di `scripts/` dan panduan [OPERATIONS.md](OPERATIONS.md); sisa: backup dari `deploy/update.sh`, arsip WAL (PITR), enkripsi dan salinan luar otomatis |
-| 5.2 | Cetak dokumen berlogo: faktur, PO, SO, pengiriman, pembayaran, PR | Selesai (D34) | Dibangun di klien dari data JSON-2; struk POS dan MO belum |
-| 5.3 | Impor data master dari CSV (produk, mitra, saldo awal) | Selesai (D33) | Halaman Import Data memakai mesin impor Odoo |
+| 5.2 | Cetak dokumen berlogo: faktur, PO, SO, pengiriman, pembayaran, PR, struk POS, Perintah Produksi | Selesai (D34, D36) | Dibangun di klien dari data JSON-2; struk POS A4 atau 80 mm, MO dengan komponen dan work order |
+| 5.3 | Impor data master dari CSV atau Excel (produk, mitra, saldo awal) | Selesai (D33, D36) | Halaman Import Data memakai mesin impor Odoo; Excel (.xlsx) lewat metode `nusara_create_from_file` (butuh restart Odoo) |
 | 5.4 | Persetujuan bertingkat | Tertahan | OCA `base_tier_validation` belum ada di cabang 19.0 (dicek 2026-10-11); pilihan: tunggu port OCA atau bangun persetujuan ringan sendiri (aturan per model, ambang, grup penyetuju). Persetujuan PO per nominal sudah ada di Purchase Setting |
 | 5.5 | Audit log (OCA `auditlog`) dan aturan akses per rekaman | Audit log selesai (D35); aturan akses per rekaman menunggu | Jurnal, faktur, dan pembayaran tidak bisa diaudit (merusak rekonsiliasi) |
 | 5.6 | Autentikasi dua langkah, SSO, kebijakan kata sandi | Menunggu | |

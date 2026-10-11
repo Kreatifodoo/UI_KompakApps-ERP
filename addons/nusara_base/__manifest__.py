@@ -6,6 +6,7 @@
     "author": "Nusara",
     "license": "LGPL-3",
     "depends": [
+        "base_import",  # mesin impor data (CSV, xlsx) yang dipakai halaman Import Data (D33, D36)
         "account",
         "l10n_id",
         "purchase",

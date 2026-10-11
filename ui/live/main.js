@@ -74,7 +74,7 @@ import * as budget from "./pages/budget.js";
 import * as budgetreport from "./pages/budgetreport.js";
 import * as transfer from "./pages/transfer.js";
 import * as soon from "./pages/soon.js";
-import { printDocument, printNow } from "./print.js";
+import { printDocument, printNow, printVariant } from "./print.js";
 import * as loyalty from "./pages/loyalty.js";
 
 const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, bank, stock, moves, count, scrap, orderpoint, replenish, warehouse, location: location_, uom, putaway, lot, bom, workcenter, mo, schedule, production, lead, opportunity, crmsetting, crmreport, posconfig, possession, posorder, kasir, salespricelist, acctreport, dashboard, account, tax, currency, analytic, analyticplan, assetprofile, asset, journalmaster, analysis, modsetting, users, company, dataimport, auditlog, budgetplan, budget, budgetreport, transfer, soon };
@@ -180,6 +180,8 @@ document.addEventListener("click", async (event) => {
     await printDocument(el.dataset.model, Number(el.dataset.id), el);
   } else if (action === "print-now") {
     printNow();
+  } else if (action === "print-variant") {
+    printVariant(el.dataset.variant);
   } else if (action === "menu-toggle") {
     toggleBranch(el.dataset.key);
   } else if (action === "menu-go") {

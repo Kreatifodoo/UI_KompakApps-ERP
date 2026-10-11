@@ -1,9 +1,13 @@
-// Impor Data (CSV): memasukkan data master dan saldo awal dari berkas CSV lewat mesin impor bawaan Odoo (model base_import.import).
+// Impor Data (CSV dan Excel .xlsx): memasukkan data master dan saldo awal dari berkas lewat mesin impor bawaan Odoo (model base_import.import).
 // Alurnya sama dengan impor Odoo: baca berkas dan petakan kolom (parse_preview), uji tanpa menyimpan (execute_import dengan dryrun),
 // lalu impor sungguhan. Uji tanpa simpan dan impor memakai pemetaan yang sama, dan galat apa pun membatalkan seluruh impor.
+// CSV dikirim sebagai teks UTF-8. Excel (.xlsx) dikirim sebagai base64 lewat nusara_create_from_file (addons/nusara_base/models/base_import.py)
+// karena JSON-2 tidak membawa byte mentah; pembacaan lembar, angka, dan tanggal dikerjakan pembaca xlsx Odoo (openpyxl), D36.
 import { INPUT, app, call, esc, guarded, pageHeader, toast } from "../common.js";
 
 const MAX_BYTES = 5 * 1024 * 1024;
+const MAX_XLSX_BYTES = 3 * 1024 * 1024; // base64 menambah sepertiga dan nginx membatasi badan permintaan 5 MB
+const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 /** f = nama field Odoo (judul kolom CSV), req = wajib, ex = isi contoh pada baris-baris template. */
 const TARGETS = {
@@ -175,6 +179,8 @@ const fresh = (key = "product") => ({
   enc: "utf-8",
   num: "auto",
   date: "",
+  sheets: [], // lembar Excel: daftar nama dan yang dipilih
+  sheet: "",
   importId: null,
   options: null,
   preview: null, // { headers, samples, rows, fields }
@@ -212,6 +218,15 @@ function downloadTemplate(target) {
   URL.revokeObjectURL(url);
 }
 
+const isExcel = () => /\.xlsx$/i.test(st.fileName);
+
+function toBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
 function decodeText() {
   const text = new TextDecoder(st.enc).decode(st.bytes);
   return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
@@ -224,8 +239,10 @@ function detectSeparator(text) {
   return counts[0][1] ? counts[0][0] : ",";
 }
 
-function buildOptions(separator) {
+function buildOptions(separator, sheet = "") {
   const options = { quoting: '"', separator, encoding: "utf-8", has_headers: true, date_format: st.date, datetime_format: st.date ? `${st.date} %H:%M:%S` : "" };
+  if (sheet) options.sheet = sheet;
+  if (isExcel()) return options; // angka dan tanggal sel Excel dibaca apa adanya oleh Odoo; format angka CSV tidak berlaku
   if (st.num === "us") Object.assign(options, { float_thousand_separator: ",", float_decimal_separator: "." });
   if (st.num === "id") Object.assign(options, { float_thousand_separator: ".", float_decimal_separator: "," });
   return options;
@@ -255,6 +272,10 @@ const FRIENDLY = [
   [/Found multiple matches for field '(.*?)' \((\d+) matches\)/s, (m) => `Ada ${m[2]} data yang cocok untuk ${m[1]}; gunakan nama yang lebih spesifik atau ID eksternal.`],
   [/The entry is not balanced/i, () => "Jurnal tidak seimbang: total debit harus sama dengan total kredit."],
   [/Invalid date/i, () => "Tanggal tidak valid. Periksa format tanggal yang dipilih."],
+  [/list index out of range|Import file has no content or is corrupt/i, () => "Lembar atau berkas ini kosong atau hanya berisi judul kolom. Pilih lembar lain atau isi datanya."],
+  [/Unable to read file .* as 'xlsx'/s, () => "Berkas Excel tidak bisa dibaca. Pastikan formatnya .xlsx dan tidak dilindungi kata sandi."],
+  [/Invalid cell value at row (\d+), column (\d+): (.*)/s, (m) => `Sel baris ${m[1]} kolom ${m[2]} berisi galat Excel (${m[3]}). Perbaiki rumusnya lalu simpan ulang.`],
+  [/Invalid cell format at row (\d+), column (\d+)/s, (m) => `Format sel baris ${m[1]} kolom ${m[2]} tidak didukung. Ubah menjadi format Tanggal atau Teks.`],
 ];
 
 function friendly(message) {
@@ -307,17 +328,21 @@ function targetCard() {
 }
 
 function fileCard() {
-  const fileInfo = st.bytes ? `<div class="text-sm text-gray-700 mt-2">${esc(st.fileName)} <span class="text-gray-400">(${kb(st.size)})</span></div>` : "";
+  const excel = isExcel();
+  const fileInfo = st.bytes ? `<div class="text-sm text-gray-700 mt-2">${esc(st.fileName)} <span class="text-gray-400">(${kb(st.size)}${excel ? ", Excel" : ", CSV"})</span></div>` : "";
+  const options = [
+    ...(excel ? [] : [labelled("Pemisah kolom", select('data-imp-opt="sep"', SEPARATORS, st.sep)), labelled("Encoding", select('data-imp-opt="enc"', ENCODINGS, st.enc)), labelled("Format angka", select('data-imp-opt="num"', NUMBERS, st.num))]),
+    labelled("Format tanggal", select('data-imp-opt="date"', DATES, st.date)),
+    ...(excel && st.sheets.length > 1 ? [labelled("Lembar Excel", select("data-imp-sheet", st.sheets.map((name) => [name, name]), st.sheet))] : []),
+  ];
+  const hint = excel
+    ? `Baris pertama lembar berisi judul kolom. Angka dan tanggal diambil dari nilai sel (rumus memakai hasil hitung terakhir yang tersimpan di berkas), dan baris yang sepenuhnya kosong dilewati. Maksimal ${kb(MAX_XLSX_BYTES)} untuk Excel dan 5.000 baris per lembar.`
+    : `Dari Excel: Simpan Sebagai, pilih CSV UTF-8, atau pilih berkas .xlsx langsung. Maksimal ${kb(MAX_BYTES)} untuk CSV dan 5.000 baris per berkas.`;
   return card(
-    "2. Pilih berkas CSV",
-    `<input type="file" accept=".csv,.txt,text/csv" data-imp-file class="text-sm">${fileInfo}
-     <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
-       ${labelled("Pemisah kolom", select('data-imp-opt="sep"', SEPARATORS, st.sep))}
-       ${labelled("Encoding", select('data-imp-opt="enc"', ENCODINGS, st.enc))}
-       ${labelled("Format angka", select('data-imp-opt="num"', NUMBERS, st.num))}
-       ${labelled("Format tanggal", select('data-imp-opt="date"', DATES, st.date))}
-     </div>
-     <div class="text-xs text-gray-500 mt-2">Dari Excel: Simpan Sebagai, pilih CSV UTF-8. Maksimal ${kb(MAX_BYTES)} dan 5.000 baris per berkas.</div>
+    "2. Pilih berkas CSV atau Excel",
+    `<input type="file" accept=".csv,.txt,.xlsx,text/csv,${XLSX_TYPE}" data-imp-file class="text-sm">${fileInfo}
+     <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">${options.join("")}</div>
+     <div class="text-xs text-gray-500 mt-2">${hint}</div>
      <div class="mt-4">${primary("imp-read", st.preview ? "Baca ulang berkas" : "Baca berkas dan cocokkan kolom", !st.bytes)}</div>`,
   );
 }
@@ -379,7 +404,7 @@ function resultCard() {
 function draw() {
   app.innerHTML =
     pageHeader("Import Data") +
-    `<p class="text-sm text-gray-600 mb-4 max-w-3xl">Masukkan data master dan saldo awal dari CSV. Setiap berkas diuji dulu tanpa menyimpan; bila ada satu galat saja, tidak ada data yang masuk.</p>` +
+    `<p class="text-sm text-gray-600 mb-4 max-w-3xl">Masukkan data master dan saldo awal dari CSV atau Excel (.xlsx). Setiap berkas diuji dulu tanpa menyimpan; bila ada satu galat saja, tidak ada data yang masuk.</p>` +
     targetCard() +
     fileCard() +
     (st.preview && !st.done ? mappingCard() : "") +
@@ -390,36 +415,62 @@ function draw() {
 
 const resetPreview = () => Object.assign(st, { importId: null, options: null, preview: null, map: [], dry: null, done: null });
 
-async function readFile(btn) {
-  const text = decodeText();
-  if (text.includes("�")) toast("Ada karakter yang tidak terbaca. Bila teks tampak rusak, ganti Encoding ke Windows-1252.", "error");
-  const separator = st.sep === "auto" ? detectSeparator(text) : st.sep;
-  const target = TARGETS[st.key];
-  const result = await guarded(btn, async () => {
-    const [id] = await call("base_import.import", "create", { vals_list: [{ res_model: target.model, file: text, file_type: "text/csv", file_name: st.fileName || "impor.csv" }] });
-    const preview = await call("base_import.import", "parse_preview", { ids: [id], options: buildOptions(separator), count: 5 });
-    return { id, preview };
-  });
-  if (!result) return;
-  const { id, preview } = result;
+/** Menyimpan hasil parse_preview ke state; mengembalikan false (dan menampilkan pesan) bila berkas tidak terbaca. */
+function applyPreview(id, preview, target) {
+  Object.assign(st, { importId: id, options: null, preview: null, map: [], dry: null, done: null });
   if (preview.error || !preview.headers) {
     toast(friendly(preview.error || "Berkas tidak bisa dibaca."), "error");
+    draw();
     return;
   }
   if (preview.num_rows - 1 > 5000) {
     toast("Berkas lebih dari 5.000 baris. Pecah menjadi beberapa berkas.", "error");
+    draw();
     return;
   }
   const matches = preview.matches ?? {};
   Object.assign(st, {
-    importId: id,
     options: preview.options,
     preview: { headers: preview.headers, samples: preview.preview, rows: preview.num_rows - 1, fields: flattenFields(preview.fields, target.expand ?? []).sort((a, b) => a.label.localeCompare(b.label)) },
     map: preview.headers.map((_, i) => (matches[String(i)] ?? []).join("/")),
-    dry: null,
-    done: null,
   });
   draw();
+}
+
+async function readFile(btn) {
+  const target = TARGETS[st.key];
+  const excel = isExcel();
+  let text = "";
+  let separator = ",";
+  if (!excel) {
+    text = decodeText();
+    if (text.includes("�")) toast("Ada karakter yang tidak terbaca. Bila teks tampak rusak, ganti Encoding ke Windows-1252.", "error");
+    separator = st.sep === "auto" ? detectSeparator(text) : st.sep;
+  }
+  const result = await guarded(btn, async () => {
+    let id;
+    let sheets = [];
+    if (excel) {
+      ({ id, sheets } = await call("base_import.import", "nusara_create_from_file", { res_model: target.model, file_name: st.fileName, file_type: XLSX_TYPE, data: toBase64(st.bytes) }));
+    } else {
+      [id] = await call("base_import.import", "create", { vals_list: [{ res_model: target.model, file: text, file_type: "text/csv", file_name: st.fileName || "impor.csv" }] });
+    }
+    const sheet = excel && sheets.length ? (sheets.includes(st.sheet) ? st.sheet : sheets[0]) : "";
+    const preview = await call("base_import.import", "parse_preview", { ids: [id], options: buildOptions(separator, sheet), count: 5 });
+    return { id, preview, sheets, sheet };
+  });
+  if (!result) return;
+  Object.assign(st, { sheets: result.sheets, sheet: result.sheet });
+  applyPreview(result.id, result.preview, target);
+}
+
+/** Ganti lembar Excel: sesi impor yang sudah ada dibaca ulang pada lembar lain tanpa mengunggah berkas lagi. */
+async function changeSheet(sheet) {
+  st.sheet = sheet;
+  if (!st.importId) return;
+  const target = TARGETS[st.key];
+  const preview = await guarded(null, () => call("base_import.import", "parse_preview", { ids: [st.importId], options: buildOptions(",", sheet), count: 5 }));
+  if (preview) applyPreview(st.importId, preview, target);
 }
 
 /** Menjalankan execute_import; dryrun=true hanya menguji dan membatalkan semua perubahan. */
@@ -473,16 +524,19 @@ export function onChange(event, el) {
   if (el.dataset.impFile !== undefined) {
     const file = el.files?.[0];
     if (!file) return;
-    if (file.size > MAX_BYTES) {
-      toast(`Berkas maksimal ${kb(MAX_BYTES)}.`, "error");
+    const limit = /\.xlsx$/i.test(file.name) ? MAX_XLSX_BYTES : MAX_BYTES;
+    if (file.size > limit) {
+      toast(`Berkas maksimal ${kb(limit)}.`, "error");
       el.value = "";
       return;
     }
     file.arrayBuffer().then((bytes) => {
       resetPreview();
-      Object.assign(st, { bytes, fileName: file.name, size: file.size });
+      Object.assign(st, { bytes, fileName: file.name, size: file.size, sheets: [], sheet: "" });
       draw();
     });
+  } else if (el.dataset.impSheet !== undefined) {
+    changeSheet(el.value);
   } else if (el.dataset.impOpt) {
     st[el.dataset.impOpt] = el.value;
     if (st.preview) {
