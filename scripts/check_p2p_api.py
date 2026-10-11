@@ -209,6 +209,7 @@ def main():
     check_auditlog(api)
     check_budget(api)
     check_loyalty(api, product)
+    check_analysis_drill(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -1043,6 +1044,140 @@ def check_analysis_reports(api):
     api.search("sale.order.line", [["order_id.date_order", ">=", year]], ["order_id", "order_partner_id", "product_id", "product_uom_qty", "qty_delivered", "qty_invoiced", "price_unit", "discount", "price_subtotal", "state"], limit=50)
     api.search("purchase.request.line", [["date_required", ">=", year[:10]]], ["request_id", "product_id", "product_qty", "purchased_qty", "estimated_cost", "request_state"], limit=50)
     check(True, "baris Sales Order dan Purchase Request Line terbaca dengan kolom laporan")
+
+
+def compare_range(start, end, mode):
+    """Rentang pembanding seperti di ui/live/pages/analysis.js: "prev" = selama sama tepat sebelum awal, "year" = setahun lalu (29 Februari menjadi 28)."""
+    first, last = datetime.date.fromisoformat(start), datetime.date.fromisoformat(end)
+    if mode == "year":
+        def back(day):
+            try:
+                return day.replace(year=day.year - 1)
+            except ValueError:
+                return day.replace(year=day.year - 1, day=28)
+        return back(first).isoformat(), back(last).isoformat()
+    stop = first - datetime.timedelta(days=1)
+    return (stop - datetime.timedelta(days=(last - first).days)).isoformat(), stop.isoformat()
+
+
+def check_analysis_drill(api):
+    """Drill-down dan perbandingan periode di laporan analisis (D37): angka kelompok, pembanding, dan baris rincian dihitung ulang dari dokumen."""
+    step("Analisis: drill-down dan perbandingan periode (dihitung ulang dari baris dokumen)")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    base = api.search("product.product", [["name", "=", "Bahan Baku Nusara"]], ["uom_id", "categ_id"], limit=1)[0]
+    vendors = {n: api.call("res.partner", "create", vals_list=[{"name": f"Vendor Drill {n} {tag}", "is_company": True, "supplier_rank": 1}])[0] for n in "ABC"}
+    customers = {n: api.call("res.partner", "create", vals_list=[{"name": f"Pelanggan Drill {n} {tag}", "is_company": True, "customer_rank": 1}])[0] for n in "AB"}
+    [product] = api.call("product.product", "create", vals_list=[{
+        "name": f"Produk Drill {tag}", "type": "consu", "is_storable": True, "categ_id": base["categ_id"][0], "standard_price": 50_000.0, "list_price": 150_000.0,
+    }])
+    cur = ("2024-03-01", "2024-04-30")
+    year, prev = compare_range(*cur, "year"), compare_range(*cur, "prev")
+    check(year == ("2023-03-01", "2023-04-30") and prev == ("2023-12-31", "2024-02-29"), f"rentang pembanding: tahun lalu {year}, periode sebelumnya {prev}")
+    check(compare_range("2024-02-29", "2024-02-29", "year") == ("2023-02-28", "2023-02-28"), "29 Februari setahun lalu menjadi 28 Februari")
+
+    # Pembelian (vendor, tanggal, jumlah; harga 100.000) dan penjualan (pelanggan, tanggal, jumlah; harga 150.000) pada tiga periode.
+    purchases = [("A", "2024-03-10", 5), ("A", "2024-04-05", 2), ("B", "2024-03-20", 3), ("A", "2023-03-15", 4), ("C", "2023-04-02", 1), ("A", "2024-02-10", 1), ("B", "2024-01-15", 6)]
+    sales = [("A", "2024-03-12", 2), ("B", "2024-04-08", 1), ("A", "2024-04-20", 3), ("A", "2023-03-05", 1)]
+    purchase_ids, sale_ids, pickings = [], [], {}
+    for who, when, qty in purchases:
+        [order_id] = api.call("purchase.order", "create", vals_list=[{
+            "partner_id": vendors[who], "order_line": [[0, 0, {"product_id": product, "name": "Drill", "product_qty": float(qty), "product_uom_id": base["uom_id"][0]}]],
+        }])
+        line = api.search("purchase.order.line", [["order_id", "=", order_id]], ["id"])[0]
+        api.call("purchase.order.line", "write", ids=[line["id"]], vals={"price_unit": 100_000.0})
+        api.call("purchase.order", "button_confirm", ids=[order_id])
+        api.call("purchase.order", "write", ids=[order_id], vals={"date_order": f"{when} 10:00:00"})
+        purchase_ids.append(order_id)
+        if (who, when) in (("A", "2024-03-10"), ("B", "2024-03-20"), ("A", "2023-03-15")):  # tiga penerimaan penuh, tanggalnya dimundurkan
+            picking = api.search("stock.picking", [["purchase_id", "=", order_id]], ["id"])[0]["id"]
+            move = api.search("stock.move", [["picking_id", "=", picking]], ["id"])[0]["id"]
+            api.call("stock.move", "write", ids=[move], vals={"quantity": float(qty), "picked": True})
+            api.call("stock.picking", "button_validate", ids=[picking])
+            api.call("stock.move.line", "write", ids=[m["id"] for m in api.search("stock.move.line", [["picking_id", "=", picking]], ["id"])], vals={"date": f"{when} 12:00:00"})
+            pickings[picking] = qty
+    for who, when, qty in sales:
+        [order_id] = api.call("sale.order", "create", vals_list=[{"partner_id": customers[who], "order_line": [[0, 0, {"product_id": product, "product_uom_qty": float(qty)}]]}])
+        line = api.search("sale.order.line", [["order_id", "=", order_id]], ["id"])[0]
+        api.call("sale.order.line", "write", ids=[line["id"]], vals={"price_unit": 150_000.0})
+        api.call("sale.order", "action_confirm", ids=[order_id])
+        api.call("sale.order", "write", ids=[order_id], vals={"date_order": f"{when} 10:00:00"})
+        sale_ids.append(order_id)
+
+    def span(period):
+        return [f"{period[0]} 00:00:00", f"{period[1]} 23:59:59"]
+
+    def groups(model, domain, by, aggregates):
+        rows = api.call(model, "formatted_read_group", domain=domain, groupby=[by], aggregates=aggregates)
+        return {(r[by][0] if isinstance(r[by], list) else r[by]): r for r in rows}
+
+    def pdomain(period):
+        return [["product_id", "=", product], ["state", "in", ["purchase", "done"]], ["date_order", ">=", span(period)[0]], ["date_order", "<=", span(period)[1]]]
+
+    def expected(plan, period, price):
+        total = {}
+        for who, when, qty in plan:
+            if period[0] <= when <= period[1]:
+                total[who] = total.get(who, 0.0) + qty * price
+        return total
+
+    measures = ["__count", "untaxed_total:sum", "qty_ordered:sum"]
+    for name, period in (("periode ini", cur), ("tahun lalu", year), ("periode sebelumnya", prev)):
+        got = groups("purchase.report", pdomain(period), "partner_id", measures)
+        mine = {who: got[vid]["untaxed_total:sum"] for who, vid in vendors.items() if vid in got}
+        check(mine == expected(purchases, period, 100_000.0) and set(got) <= set(vendors.values()), f"Purchase Order Analisis per vendor, {name}: {mine}")
+        lines = api.search("purchase.order.line", [["product_id", "=", product], ["order_id.state", "in", ["purchase", "done"]], ["date_order", ">=", span(period)[0]], ["date_order", "<=", span(period)[1]]], ["price_subtotal", "product_qty"])
+        total = api.call("purchase.report", "formatted_read_group", domain=pdomain(period), groupby=[], aggregates=measures)[0]
+        check(total["__count"] == len(lines) and total["untaxed_total:sum"] == sum(x["price_subtotal"] for x in lines) and total["qty_ordered:sum"] == sum(x["product_qty"] for x in lines), f"total {name} sama dengan jumlah baris Purchase Order Line ({len(lines)} baris)")
+
+    # Selisih dan persen per vendor (periode ini dibanding tahun lalu): A 700.000 vs 400.000, B 300.000 vs 0 (baru), C 0 vs 100.000.
+    now_a, then_a = expected(purchases, cur, 100_000.0), expected(purchases, year, 100_000.0)
+    diffs = {who: (now_a.get(who, 0.0) - then_a.get(who, 0.0), (now_a.get(who, 0.0) - then_a.get(who, 0.0)) / then_a[who] * 100 if then_a.get(who) else None) for who in "ABC"}
+    check(diffs == {"A": (300_000.0, 75.0), "B": (300_000.0, None), "C": (-100_000.0, -100.0)}, f"selisih dan persen per vendor terhadap tahun lalu: {diffs}")
+
+    # Bulan: bucket dipasangkan menurut urutan dari awal rentang.
+    def months(period):
+        got = groups("purchase.report", pdomain(period), "date_order:month", ["untaxed_total:sum"])
+        return {key[:7]: row["untaxed_total:sum"] for key, row in got.items()}
+    check(months(cur) == {"2024-03": 800_000.0, "2024-04": 200_000.0}, "bulan periode ini: Mar 800.000, Apr 200.000")
+    check(months(year) == {"2023-03": 400_000.0, "2023-04": 100_000.0}, "bulan tahun lalu: Mar 400.000, Apr 100.000 (pasangan Mar dan Apr periode ini)")
+    check(months(prev) == {"2024-01": 600_000.0, "2024-02": 100_000.0}, "bulan periode sebelumnya: Jan 600.000 dan Feb 100.000 (Des kosong)")
+
+    # Drill-down: baris rincian = baris kelompok (sama banyak, sama jumlah), tertaut ke dokumen yang benar.
+    for by in ("partner_id", "date_order:month"):
+        for key, group in groups("purchase.report", pdomain(cur), by, measures).items():
+            rows = api.search("purchase.report", pdomain(cur) + group["__extra_domain"], ["order_id", "partner_id", "untaxed_total", "date_order"])
+            check(len(rows) == group["__count"] and sum(r["untaxed_total"] for r in rows) == group["untaxed_total:sum"], f"drill PO per {by} ({key}): {len(rows)} baris, jumlah sama dengan kelompok")
+            check(all(r["order_id"][0] in purchase_ids for r in rows), f"drill PO per {by} ({key}): setiap baris tertaut ke PO yang dibuat uji ini")
+            if by == "partner_id":
+                check(all(r["partner_id"][0] == key for r in rows), f"drill PO per vendor ({key}): semua baris milik vendor itu")
+            else:
+                check(all(r["date_order"][:7] == key[:7] for r in rows), f"drill PO bulan {key[:7]}: semua baris jatuh pada bulan itu")
+
+    # Sales Order Analisis (sale.report) terhadap Sales Order Line, dan rincian bertaut ke Sales Order.
+    def sdomain(period):
+        return [["product_id", "=", product], ["state", "in", ["sale", "done"]], ["date", ">=", span(period)[0]], ["date", "<=", span(period)[1]]]
+    for name, period in (("periode ini", cur), ("tahun lalu", year)):
+        got = groups("sale.report", sdomain(period), "partner_id", ["__count", "price_subtotal:sum", "product_uom_qty:sum"])
+        mine = {who: got[cid]["price_subtotal:sum"] for who, cid in customers.items() if cid in got}
+        check(mine == expected(sales, period, 150_000.0), f"Sales Order Analisis per pelanggan, {name}: {mine}")
+        lines = api.search("sale.order.line", [["product_id", "=", product], ["state", "in", ["sale", "done"]], ["order_id.date_order", ">=", span(period)[0]], ["order_id.date_order", "<=", span(period)[1]]], ["price_subtotal"])
+        total = api.call("sale.report", "formatted_read_group", domain=sdomain(period), groupby=[], aggregates=["__count", "price_subtotal:sum"])[0]
+        check(total["__count"] == len(lines) and total["price_subtotal:sum"] == sum(x["price_subtotal"] for x in lines), f"total penjualan {name} sama dengan Sales Order Line ({len(lines)} baris)")
+    for key, group in groups("sale.report", sdomain(cur), "partner_id", ["__count", "price_subtotal:sum"]).items():
+        rows = api.search("sale.report", sdomain(cur) + group["__extra_domain"], ["name", "order_reference", "price_subtotal"])
+        refs = {int(r["order_reference"].split(",")[1]) for r in rows if r["order_reference"].startswith("sale.order,")}
+        check(len(rows) == group["__count"] and refs <= set(sale_ids) and sum(r["price_subtotal"] for r in rows) == group["price_subtotal:sum"], f"drill penjualan per pelanggan ({key}): {len(rows)} baris tertaut ke Sales Order")
+
+    # Move Analisis: jumlah masuk per bulan dan rincian tertaut ke penerimaan.
+    def mdomain(period):
+        return [["product_id", "=", product], ["state", "=", "done"], ["date", ">=", span(period)[0]], ["date", "<=", span(period)[1]]]
+    got = groups("stock.move.line", mdomain(cur), "date:month", ["__count", "quantity:sum"])
+    check({k[:7]: v["quantity:sum"] for k, v in got.items()} == {"2024-03": 8.0}, "Move Analisis periode ini: Mar 2024 menerima 8 (5 dan 3)")
+    got = groups("stock.move.line", mdomain(year), "date:month", ["__count", "quantity:sum"])
+    check({k[:7]: v["quantity:sum"] for k, v in got.items()} == {"2023-03": 4.0}, "Move Analisis tahun lalu: Mar 2023 menerima 4")
+    group = groups("stock.move.line", mdomain(cur), "product_id", ["__count", "quantity:sum"])[product]
+    rows = api.search("stock.move.line", mdomain(cur) + group["__extra_domain"], ["picking_id", "picking_code", "quantity"])
+    check(len(rows) == group["__count"] == 2 and {r["picking_id"][0] for r in rows} <= set(pickings) and all(r["picking_code"] == "incoming" for r in rows), "drill Move Analisis: 2 baris tertaut ke penerimaan yang membuatnya")
 
 
 def check_settings_and_users(api):
