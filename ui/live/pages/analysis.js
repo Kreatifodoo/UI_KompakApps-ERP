@@ -299,6 +299,55 @@ function hashWith(query, from, to, dimKey, extra) {
 }
 const statCard = (label, value, extra = "") => `<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4"><div class="text-xs font-medium text-gray-500 uppercase">${esc(label)}</div><div class="text-xl font-semibold mt-1">${esc(value)}</div>${extra}</div>`;
 
+/* ---------- Grafik (SVG tanpa pustaka) ---------- */
+
+const compactNf = new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 });
+const niceCeil = (v) => {
+  if (v <= 0) return 1;
+  const p = 10 ** Math.floor(Math.log10(v));
+  return ([1, 2, 2.5, 5, 10].find((m) => m * p >= v) ?? 10) * p;
+};
+const clip = (t, n) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
+
+/**
+ * Grafik batang (kelompok biasa) atau garis (dimensi waktu). `points` = [{ label, value, prior? }] berurutan sesuai tampil;
+ * `prior` (opsional) digambar sebagai batang abu-abu atau garis putus-putus. `format` mengubah angka menjadi teks tooltip.
+ */
+export function chartSvg(points, { line = false, format = num, title = "Grafik" } = {}) {
+  if (!points.length) return "";
+  const W = 720;
+  const H = 240;
+  const L = 52;
+  const R = 12;
+  const T = 12;
+  const B = 44;
+  const hasPrior = points.some((p) => p.prior !== undefined);
+  const values = points.flatMap((p) => [p.value, p.prior ?? 0]);
+  const top = niceCeil(Math.max(0, ...values));
+  const bottom = Math.min(0, ...values) < 0 ? -niceCeil(-Math.min(...values)) : 0;
+  const y = (v) => T + ((top - v) / (top - bottom)) * (H - T - B);
+  const step = (W - L - R) / points.length;
+  const x = (i) => L + step * (i + 0.5);
+  const ticks = [0, 1, 2, 3, 4].map((i) => bottom + ((top - bottom) * i) / 4);
+  const grid = ticks.map((t) => `<line x1="${L}" x2="${W - R}" y1="${y(t).toFixed(1)}" y2="${y(t).toFixed(1)}" stroke="#e5e7eb"/><text x="${L - 6}" y="${(y(t) + 4).toFixed(1)}" text-anchor="end" font-size="11" fill="#6b7280">${esc(compactNf.format(t))}</text>`).join("");
+  const labelEvery = Math.max(1, Math.ceil(points.length / 12));
+  const labels = points.map((p, i) => (i % labelEvery ? "" : `<text x="${x(i).toFixed(1)}" y="${H - B + 16}" text-anchor="middle" font-size="11" fill="#4b5563">${esc(clip(p.label, step * labelEvery > 70 ? 12 : 7))}</text>`)).join("");
+  const tip = (p) => `<title>${esc(p.label)}: ${esc(format(p.value))}${p.prior !== undefined ? ` (pembanding ${esc(format(p.prior))})` : ""}</title>`;
+  let marks;
+  if (line) {
+    const path = (get) => points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(get(p)).toFixed(1)}`).join("");
+    marks = `${hasPrior ? `<path d="${path((p) => p.prior ?? 0)}" fill="none" stroke="#9ca3af" stroke-width="2" stroke-dasharray="5 4"/>` : ""}<path d="${path((p) => p.value)}" fill="none" stroke="#4f46e5" stroke-width="2.5"/>${points.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="3.5" fill="#4f46e5">${tip(p)}</circle>`).join("")}`;
+  } else {
+    const gap = Math.min(step * 0.7, hasPrior ? 44 : 40);
+    const bw = hasPrior ? gap / 2 : gap;
+    const bar = (cx, v, fill, p) => `<rect x="${cx.toFixed(1)}" y="${Math.min(y(v), y(0)).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1, Math.abs(y(v) - y(0))).toFixed(1)}" rx="2" fill="${fill}">${tip(p)}</rect>`;
+    marks = points.map((p, i) => (hasPrior ? bar(x(i) - bw, p.prior ?? 0, "#9ca3af", p) + bar(x(i), p.value, p.value < 0 ? "#fb7185" : "#4f46e5", p) : bar(x(i) - bw / 2, p.value, p.value < 0 ? "#fb7185" : "#4f46e5", p))).join("");
+  }
+  const legend = hasPrior ? '<div class="mt-1 text-xs text-gray-500 flex gap-4"><span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:#4f46e5"></span> Periode ini</span><span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:#9ca3af"></span> Pembanding</span></div>' : "";
+  return `<figure data-chart class="bg-white rounded-xl shadow-sm border border-gray-200 px-4 py-3 mb-4"><figcaption class="text-sm font-semibold mb-1">${esc(title)}</figcaption>
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}" class="w-full h-auto" preserveAspectRatio="xMidYMid meet">${grid}<line x1="${L}" x2="${W - R}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}" stroke="#9ca3af"/>${marks}${labels}</svg>${legend}</figure>`;
+}
+
 async function renderGroup(cfg, query, from, to) {
   const { dimKey, dim, base } = groupSetup(cfg, query);
   const aggregates = cfg.measures.map((m) => m.agg);
@@ -391,9 +440,14 @@ async function renderGroup(cfg, query, from, to) {
     : mode
       ? '<p class="mt-3 text-xs text-gray-500">Rentang tanggal tidak valid untuk perbandingan.</p>'
       : "";
+  // Grafik: dimensi waktu sebagai garis dari lama ke baru; lainnya sebagai batang untuk 12 kelompok terbesar. Ukuran = ukuran pembanding (bawaan: berbatang).
+  const ci = range ? cm : barIndex;
+  const shown = list.filter((r) => !r.outside);
+  const plotted = (unit ? [...shown].reverse() : shown.slice(0, 12)).map((r) => ({ label: r.label, value: r.values[ci], ...(range ? { prior: r.prior?.[ci] ?? 0 } : {}) }));
+  const chart = chartSvg(plotted, { line: Boolean(unit), format: FORMATS[cfg.measures[ci].fmt], title: `${cfg.measures[ci].label} per ${dim.label}${!unit && shown.length > 12 ? " (12 terbesar)" : ""}` });
   return {
     controls: `${dimSelect}${filterSelectHtml}${compareSelect}${measureSelect}`,
-    html: `<div class="grid md:grid-cols-4 gap-4 mb-4">${cards}</div>
+    html: `<div class="grid md:grid-cols-4 gap-4 mb-4">${cards}</div>${chart}
       <section class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto"><div class="px-4 py-3 border-b border-gray-200 text-sm font-semibold">Per ${esc(dim.label)} <span class="font-normal text-gray-500">· ${list.length} baris${cfg.drill ? " · klik nama untuk melihat rincian" : ""}</span></div>
         <table class="w-full text-left"><thead class="bg-gray-50"><tr>${[...head, ...compareHead].map((h, i) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${i ? "text-right" : ""}">${esc(h)}</th>`).join("")}<th></th></tr></thead>
           <tbody class="divide-y divide-gray-100">${rowsHtml || `<tr><td colspan="${head.length + compareHead.length + 1}" class="py-8 text-center text-sm text-gray-500">Tidak ada data pada rentang ini.</td></tr>`}</tbody>

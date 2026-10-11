@@ -2,6 +2,7 @@
 // JSON-2 (laporan PDF Odoo dirender oleh server dan tidak bisa dipanggil lewat API key). Kop surat memakai data dari Company Setting:
 // logo (bila bukan logo bawaan), nama, alamat, NPWP, kontak, tagline, dan footer. Dokumen yang punya bentuk struk (pos.order) bisa dicetak
 // di kertas A4 atau lebar struk 80 mm; pilihannya ada di pratinjau.
+import { qrSvg } from "./qr.js";
 import { button, call, ctx, dateText, dateTimeText, esc, guarded, money, openModal, plain } from "./common.js";
 
 const num = (n, currency) => {
@@ -204,6 +205,8 @@ const BUILDERS = {
         items: lines.map((l) => ({ name: l.full_product_name, detail: `${num(l.qty)} × ${money(l.price_unit)}${l.discount ? ` (−${discountText(l)})` : ""}`, total: money(l.price_subtotal_incl) })),
         totals: [["Pajak", money(o.amount_tax)], ["Total", money(o.amount_total), true]],
         payments: [...paid.map((p) => [name2(p.payment_method_id), money(p.amount)]), ...(change ? [["Kembalian", money(change)]] : [])],
+        // Isi QR: nomor struk, waktu, dan total (teks biasa, bisa dipindai untuk mencocokkan struk dengan pesanan).
+        qr: `${number}\n${o.date_order}\nTotal ${o.amount_total}`,
       },
     };
   },
@@ -369,6 +372,10 @@ hr { border: 0; border-top: 1px dashed #000; margin: 6px 0; }
 .row span:last-child { white-space: nowrap; }
 .item { margin-bottom: 3px; }
 .strong { font-size: 13px; font-weight: 700; }
+.logo { display: block; margin: 0 auto 4px; max-width: 50mm; max-height: 18mm; object-fit: contain; filter: grayscale(1) contrast(1.6); }
+.qr { text-align: center; margin-top: 8px; line-height: 0; }
+.qr svg { width: 28mm; height: 28mm; }
+.qrcap { font-size: 9px; line-height: 1.3; margin-top: 2px; }
 @media print { body { padding: 0; width: auto; } }
 `;
 
@@ -378,15 +385,17 @@ function receiptPage(doc, company) {
   const row = (a, b, cls = "") => `<div class="row ${cls}"><span>${esc(a)}</span><span>${esc(b)}</span></div>`;
   const r = doc.receipt;
   const footer = rich(company.report_footer);
+  const logo = company.logo && !company.uses_default_logo ? `<img class="logo" alt="Logo" src="data:image/png;base64,${company.logo}">` : "";
+  const qr = r.qr ? `<div class="qr">${qrSvg(r.qr)}<div class="qrcap">${esc(doc.number)}</div></div>` : "";
   return `<!doctype html><html lang="id"><head><meta charset="utf-8"><title>${esc(doc.number)}</title><style>${RECEIPT_STYLE}</style></head><body>
-    <div class="c b" style="font-size:13px">${esc(company.name)}</div>
+    ${logo}<div class="c b" style="font-size:13px">${esc(company.name)}</div>
     ${addr ? `<div class="c">${esc(addr)}</div>` : ""}${contact ? `<div class="c">${esc(contact)}</div>` : ""}${company.vat ? `<div class="c">NPWP: ${esc(company.vat)}</div>` : ""}
     <hr>${r.head.map((line, i) => `<div class="c ${i === 0 ? "b" : ""}">${esc(line)}</div>`).join("")}
     ${doc.draft ? '<div class="c b">** BELUM FINAL **</div>' : ""}<hr>
     ${r.items.map((it) => `<div class="item"><div>${esc(it.name)}</div>${row(it.detail, it.total)}</div>`).join("") || '<div class="c">Tidak ada barang.</div>'}<hr>
     ${r.totals.map(([k, v, strong]) => row(k, v, strong ? "strong" : "")).join("")}<hr>
     ${r.payments.map(([k, v]) => row(k, v)).join("") || '<div class="c">Belum ada pembayaran.</div>'}
-    <div class="c" style="margin-top:10px">${esc(footer || "Terima kasih")}</div>
+    ${qr}<div class="c" style="margin-top:10px">${esc(footer || "Terima kasih")}</div>
   </body></html>`;
 }
 
