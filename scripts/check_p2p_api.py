@@ -728,6 +728,29 @@ def check_crm(api):
     api.call("crm.lead", "write", ids=[opp], vals={"stage_id": stages[0]["id"]})
     check(api.call("crm.stage", "unlink", ids=[new_stage]) is True, "tahap yang sudah kosong bisa dihapus")
 
+    # Kueri laporan CRM (Forecast, Pipeline, Leads, Activities)
+    [forecast_opp] = api.call("crm.lead", "create", vals_list=[{"name": f"Forecast {tag}", "type": "opportunity", "expected_revenue": 12_000_000.0, "date_deadline": "2998-03-10", "probability": 50.0}])
+    open_domain = [["type", "=", "opportunity"], ["active", "=", True], ["won_status", "=", "pending"]]
+    rows = api.call("crm.lead", "formatted_read_group", domain=open_domain + [["name", "=", f"Forecast {tag}"]], groupby=["date_deadline:month", "stage_id"], aggregates=["__count", "expected_revenue:sum", "prorated_revenue:sum"])
+    march = [r for r in rows if r["date_deadline:month"] and r["date_deadline:month"][0].startswith("2998-03")]
+    check(len(march) == 1 and march[0]["expected_revenue:sum"] == 12_000_000.0 and march[0]["prorated_revenue:sum"] == 6_000_000.0, "forecast: pendapatan dan nilai berbobot per bulan tenggat dan tahap")
+    stage_rows = api.call("crm.lead", "formatted_read_group", domain=open_domain, groupby=["stage_id"], aggregates=["__count", "expected_revenue:sum", "prorated_revenue:sum", "probability:avg"])
+    check(bool(stage_rows) and all("probability:avg" in r for r in stage_rows), "pipeline: ringkasan per tahap dengan rata-rata probabilitas")
+    sales_rows = api.call("crm.lead", "formatted_read_group", domain=open_domain, groupby=["user_id"], aggregates=["__count", "expected_revenue:sum"])
+    check(bool(sales_rows), "pipeline: ringkasan per sales")
+    closed = api.call("crm.lead", "formatted_read_group", domain=[["type", "=", "opportunity"], ["won_status", "=", "lost"]], groupby=[], aggregates=["__count", "expected_revenue:sum"], context={"active_test": False})
+    check(bool(closed) and closed[0]["__count"] >= 0, "pipeline: total kalah (termasuk yang diarsipkan)")
+    origin = ["|", ["type", "=", "lead"], ["date_conversion", "!=", False]]
+    by_source = api.call("crm.lead", "formatted_read_group", domain=origin, groupby=["source_id"], aggregates=["__count"], context={"active_test": False})
+    converted = api.call("crm.lead", "formatted_read_group", domain=origin + [["date_conversion", "!=", False]], groupby=["user_id"], aggregates=["__count"], context={"active_test": False})
+    check(sum(r["__count"] for r in by_source) >= 1 and sum(r["__count"] for r in converted) >= 1, "leads: lead masuk dan dikonversi (termasuk yang sudah menjadi opportunity)")
+    monthly = api.call("crm.lead", "formatted_read_group", domain=origin, groupby=["create_date:month"], aggregates=["__count"], context={"active_test": False})
+    check(bool(monthly), "leads: kueri per bulan dibuat")
+    api.call("mail.activity", "create", vals_list=[{"res_model_id": model, "res_id": forecast_opp, "activity_type_id": 4, "summary": f"Tindak lanjut {tag}", "date_deadline": "2000-01-01", "user_id": api.search("res.users", [["login", "!=", False]], ["id"], limit=1)[0]["id"]}])
+    overdue = api.search("mail.activity", [["res_model", "=", "crm.lead"], ["date_deadline", "<", datetime.date.today().isoformat()]], ["res_name", "state", "date_deadline"], order="date_deadline, id")
+    check(any(a["res_name"] == f"Forecast {tag}" and a["state"] == "overdue" for a in overdue), "activities: aktivitas lewat tenggat dicari lewat tanggal (state tidak bisa dicari) dan berstatus overdue")
+    api.call("crm.lead", "unlink", ids=[forecast_opp])
+
 
 def check_bank_reconciliation(api):
     """Mutasi bank dicocokkan dengan pembayaran tertunda (urutan panggilan yang sama dengan UI), lalu biaya bank ke akun beban."""

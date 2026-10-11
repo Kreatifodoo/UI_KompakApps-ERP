@@ -71,7 +71,7 @@ export const MENU = [
       { title: "Master", items: [{ title: "Master Customer", route: "customer" }, { title: "Master Product/Service", route: "product?state=sale" }] },
       { title: "Leads", route: "lead" },
       { title: "Opportunity", route: "opportunity" },
-      { title: "Reporting", items: [{ title: "Forecast", odoo: "crm.lead" }, { title: "Pipeline", odoo: "crm.lead" }, { title: "Leads", odoo: "crm.lead" }, { title: "Activities", odoo: "mail.activity" }] },
+      { title: "Reporting", items: [{ title: "Forecast", route: "crmreport/forecast" }, { title: "Pipeline", route: "crmreport/pipeline" }, { title: "Leads", route: "crmreport/leads" }, { title: "Activities", route: "crmreport/activities" }] },
       { title: "Setting", route: "crmsetting" },
     ],
   },
