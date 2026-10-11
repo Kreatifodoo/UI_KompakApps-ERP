@@ -5,7 +5,7 @@ export const MENU = [
   {
     title: "Purchase Request", icon: "fas fa-file-signature",
     items: [
-      { title: "Dashboard" },
+      { title: "Dashboard", route: "dashboard/pr" },
       { title: "Master", items: [{ title: "Product Master", route: "product?state=purchase" }] },
       { title: "Purchase Request", route: "pr" },
       { title: "Report", items: [{ title: "Purchase Request Line", odoo: "purchase.request.line" }, { title: "Purchase Request Analisis", odoo: "purchase.request.line" }] },
@@ -15,7 +15,7 @@ export const MENU = [
   {
     title: "Purchase", icon: "fas fa-shopping-cart",
     items: [
-      { title: "Dashboard" },
+      { title: "Dashboard", route: "dashboard/purchase" },
       { title: "Master", items: [{ title: "Vendor Master", route: "vendor" }, { title: "Vendor Price list", route: "pricelist" }, { title: "Product Master", route: "product?state=purchase" }] },
       { title: "Request for Quotation", route: "po?state=rfq" },
       { title: "Purchase Order", route: "po?state=purchase" },
@@ -27,7 +27,7 @@ export const MENU = [
   {
     title: "Inventory", icon: "fas fa-boxes",
     items: [
-      { title: "Dashboard" },
+      { title: "Dashboard", route: "dashboard/inventory" },
       {
         title: "Master",
         items: [
@@ -56,7 +56,7 @@ export const MENU = [
   {
     title: "Manufacture", icon: "fas fa-industry",
     items: [
-      { title: "Dashboard" },
+      { title: "Dashboard", route: "dashboard/manufacture" },
       { title: "Master", items: [{ title: "Bill of Material", route: "bom" }, { title: "WorkCenter/workStation", route: "workcenter" }] },
       { title: "Schedule Production", route: "schedule" },
       { title: "Manufacturing Order", route: "mo" },
@@ -67,7 +67,7 @@ export const MENU = [
   {
     title: "CRM", icon: "fas fa-handshake",
     items: [
-      { title: "Dashboard" },
+      { title: "Dashboard", route: "dashboard/crm" },
       { title: "Master", items: [{ title: "Master Customer", route: "customer" }, { title: "Master Product/Service", route: "product?state=sale" }] },
       { title: "Leads", route: "lead" },
       { title: "Opportunity", route: "opportunity" },
@@ -78,7 +78,7 @@ export const MENU = [
   {
     title: "POS", icon: "fas fa-cash-register",
     items: [
-      { title: "Dashboard" },
+      { title: "Dashboard", route: "dashboard/pos" },
       { title: "Master", items: [{ title: "Product Master", route: "product?state=sale" }, { title: "Customers Master", route: "customer" }] },
       { title: "POS Station", route: "posconfig" },
       { title: "Kasir", route: "kasir" },
@@ -92,7 +92,7 @@ export const MENU = [
   {
     title: "Sales", icon: "fas fa-chart-line",
     items: [
-      { title: "Dashboard" },
+      { title: "Dashboard", route: "dashboard/sales" },
       {
         title: "Master",
         items: [{ title: "Product Master", route: "product?state=sale" }, { title: "Customers Master", route: "customer" }, { title: "Promotion & Loyalty", odoo: "loyalty.program" }, { title: "Pricelis Master", route: "salespricelist" }],
@@ -110,7 +110,7 @@ export const MENU = [
   {
     title: "Accounting", icon: "fas fa-calculator",
     items: [
-      { title: "Dashboard" },
+      { title: "Dashboard", route: "dashboard/accounting" },
       {
         title: "Master",
         items: [

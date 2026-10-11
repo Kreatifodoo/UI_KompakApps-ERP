@@ -195,6 +195,7 @@ def main():
     check_pos(api, product)
     check_sales_pricelist(api, product)
     check_account_reports(api)
+    check_dashboards(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -897,6 +898,55 @@ def check_account_reports(api):
     check(True, "invoice analysis: lima dimensi pengelompokan diterima Odoo")
     api.call("account.analytic.line", "formatted_read_group", domain=[["date", ">=", year], ["amount", ">", 0]], groupby=["account_id"], aggregates=["__count", "amount:sum"])
     check(isinstance(api.search("account.analytic.account", [], ["name", "code", "plan_id"], context={"active_test": False}), list), "analytic report: kueri akun dan baris analitik diterima Odoo")
+
+
+def check_dashboards(api):
+    """Kueri yang dipakai dashboard tiap modul: hitungan, jumlah, dan deret bulanan atau harian (menu Dashboard)."""
+    step("Dashboard modul: kueri hitungan, jumlah, dan deret waktu")
+    today = datetime.date.today()
+    now_text = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    month_start = f"{today.year}-{today.month:02d}-01 00:00:00"
+    six_months = f"{(today.replace(day=1) - datetime.timedelta(days=150)).strftime('%Y-%m')}-01"
+
+    def grouped(model, domain, groupby, aggregates, **extra):
+        return api.call(model, "formatted_read_group", domain=domain, groupby=groupby, aggregates=aggregates, **extra)
+
+    grouped("purchase.request", [], ["state"], ["__count"])
+    grouped("purchase.request", [["date_start", ">=", six_months]], ["date_start:month"], ["__count"])
+    check(True, "purchase request: hitungan per status dan per bulan diterima Odoo")
+    rfq = grouped("purchase.order", [["state", "in", ["draft", "sent", "to approve"]]], [], ["__count", "amount_total:sum"])
+    api.call("purchase.order", "search_count", domain=[["state", "=", "purchase"], ["receipt_status", "in", ["pending", "partial"]]])
+    api.call("purchase.order", "search_count", domain=[["invoice_status", "=", "to invoice"]])
+    grouped("purchase.order", [["state", "in", ["purchase", "done"]], ["date_order", ">=", f"{six_months} 00:00:00"]], ["date_order:month"], ["amount_untaxed:sum"])
+    check(isinstance(rfq, list), "purchase: RFQ, PO berjalan, belum diterima, belum ditagih, dan pembelian per bulan diterima Odoo")
+    grouped("sale.order", [["state", "in", ["draft", "sent"]]], [], ["__count", "amount_total:sum"])
+    api.call("sale.order", "search_count", domain=[["state", "=", "sale"], ["delivery_status", "in", ["pending", "started", "partial"]]])
+    grouped("sale.order", [["state", "in", ["sale", "done"]]], ["partner_id"], ["amount_untaxed:sum"])
+    check(True, "sales: quotation, perlu dikirim, dan pelanggan terbesar diterima Odoo")
+    api.call("stock.picking", "search_count", domain=[["state", "in", ["assigned", "confirmed", "waiting"]], ["scheduled_date", "<", now_text]])
+    api.call("stock.quant", "search_count", domain=[["location_id.usage", "=", "internal"], ["quantity", "<", 0]])
+    value = grouped("stock.quant", [["location_id.usage", "=", "internal"]], [], ["value:sum"])
+    grouped("stock.move.line", [["state", "=", "done"], ["date", ">=", f"{six_months} 00:00:00"], ["location_id.usage", "!=", "internal"], ["location_dest_id.usage", "=", "internal"], ["location_id.usage", "!=", "inventory"]], ["date:month"], ["quantity:sum"])
+    api.search("stock.warehouse.orderpoint", [["trigger", "=", "manual"]], ["qty_to_order"], limit=50)
+    check(bool(value), "inventory: nilai stok, stok minus, terlambat, dan barang masuk per bulan diterima Odoo")
+    grouped("mrp.production", [], ["state"], ["__count"])
+    grouped("mrp.production", [["state", "=", "done"], ["date_finished", ">=", month_start]], [], ["product_qty:sum"])
+    grouped("mrp.production", [["state", "=", "done"], ["date_finished", ">=", f"{six_months} 00:00:00"]], ["date_finished:month"], ["product_qty:sum"])
+    check(True, "manufacture: MO per status, produksi bulan ini, dan per bulan diterima Odoo")
+    grouped("crm.lead", [["type", "=", "opportunity"], ["active", "=", True], ["won_status", "=", "pending"]], ["stage_id"], ["__count", "expected_revenue:sum"])
+    grouped("crm.lead", [["type", "=", "opportunity"], ["won_status", "=", "won"], ["date_closed", ">=", f"{six_months} 00:00:00"]], ["date_closed:month"], ["expected_revenue:sum"])
+    api.call("mail.activity", "search_count", domain=[["res_model", "=", "crm.lead"], ["date_deadline", "<", today.isoformat()]])
+    check(True, "crm: pipeline per tahap, menang per bulan, dan aktivitas lewat tenggat diterima Odoo")
+    grouped("pos.order", [["state", "in", ["paid", "done", "invoiced"]], ["date_order", ">=", f"{six_months} 00:00:00"]], ["date_order:day"], ["amount_total:sum"])
+    grouped("pos.payment", [["payment_date", ">=", month_start]], ["payment_method_id"], ["amount:sum"])
+    api.search("pos.session", [["state", "in", ["opened", "opening_control"]]], ["name", "config_id", "user_id", "order_count"], limit=10)
+    check(True, "pos: penjualan harian, pembayaran per metode, dan sesi berjalan diterima Odoo")
+    liquidity = grouped("account.move.line", [["parent_state", "=", "posted"], ["account_id.account_type", "=", "asset_cash"]], ["account_id"], ["balance:sum"])
+    grouped("account.move.line", [["parent_state", "=", "posted"], ["account_id.account_type", "=", "asset_receivable"], ["reconciled", "=", False], ["date_maturity", "<", today.isoformat()]], [], ["amount_residual:sum"])
+    grouped("account.move.line", [["parent_state", "=", "posted"], ["account_id.account_type", "in", ["income", "income_other"]], ["date", ">=", six_months]], ["date:month"], ["balance:sum"])
+    grouped("account.move.line", [["parent_state", "=", "posted"], ["account_id.account_type", "in", ["expense", "expense_depreciation", "expense_direct_cost"]], ["date", ">=", six_months]], ["date:month"], ["balance:sum"])
+    api.call("account.move", "search_count", domain=[["state", "=", "draft"], ["move_type", "in", ["out_invoice", "in_invoice", "out_refund", "in_refund"]]])
+    check(bool(liquidity), "accounting: kas dan bank, piutang jatuh tempo, serta pendapatan dan biaya per bulan diterima Odoo")
 
 
 def check_bank_reconciliation(api):
