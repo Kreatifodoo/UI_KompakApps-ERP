@@ -192,6 +192,7 @@ def main():
     check_lots(api, vendor)
     check_manufacturing(api)
     check_crm(api)
+    check_pos(api, product)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -751,6 +752,99 @@ def check_crm(api):
     check(any(a["res_name"] == f"Forecast {tag}" and a["state"] == "overdue" for a in overdue), "activities: aktivitas lewat tenggat dicari lewat tanggal (state tidak bisa dicari) dan berstatus overdue")
     api.call("crm.lead", "unlink", ids=[forecast_opp])
 
+
+def check_pos(api, product):
+    """POS Station, sesi, penjualan kasir dengan kembalian, pembayaran campuran, faktur, dan jurnal saat sesi ditutup (halaman POS dan Kasir)."""
+    step("POS: stasiun, sesi, penjualan kasir, penutupan sesi dan jurnal")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    # Metode tunai hanya boleh dipakai satu stasiun (dan satu jurnal kas satu metode tunai), jadi setiap stasiun baru butuh jurnal kas sendiri.
+    [cash_journal] = api.call("account.journal", "create", vals_list=[{"name": f"Kas Kasir {tag}", "type": "cash", "code": f"K{tag[-4:]}"}])
+    bank_journal = api.search("account.journal", [["type", "=", "bank"]], ["id"], limit=1)[0]["id"]
+    customer = api.search("res.partner", [["name", "=", "PT Pelanggan Nusantara"]], ["id"], limit=1)[0]["id"]
+    user = api.search("res.users", [["login", "!=", False]], ["id"], limit=1)[0]["id"]
+
+    cash = api.call("pos.payment.method", "create", vals_list=[{"name": f"Tunai Regresi {tag}", "journal_id": cash_journal}])[0]
+    bank_found = api.search("pos.payment.method", [["journal_id", "=", bank_journal]], ["id"], limit=1)
+    bank = bank_found[0]["id"] if bank_found else api.call("pos.payment.method", "create", vals_list=[{"name": f"Transfer Regresi {tag}", "journal_id": bank_journal}])[0]
+    kinds = {m["id"]: m["type"] for m in api.search("pos.payment.method", [["id", "in", [cash, bank]]], ["type"])}
+    check(kinds == {cash: "cash", bank: "bank"}, "metode pembayaran tunai dan bank terbentuk dari jurnalnya")
+    [config] = api.call("pos.config", "create", vals_list=[{"name": f"Kasir Regresi {tag}", "payment_method_ids": [[6, 0, [cash, bank]]], "cash_control": True}])
+    check(api.read("pos.config", config, ["current_session_id"])["current_session_id"] is False, "stasiun baru belum punya sesi")
+    template = api.read("product.product", product["id"], ["product_tmpl_id"])["product_tmpl_id"][0]
+    api.call("product.template", "write", ids=[template], vals={"available_in_pos": True})
+    taxes = api.read("product.product", product["id"], ["taxes_id", "lst_price"])
+    check(bool(api.search("product.product", [["available_in_pos", "=", True], ["sale_ok", "=", True], ["id", "=", product["id"]]], ["id"])), "produk yang ditandai Dijual di POS muncul di kasir")
+
+    [session] = api.call("pos.session", "create", vals_list=[{"config_id": config, "user_id": user}])
+    api.call("pos.session", "set_opening_control", ids=[session], cashbox_value=100_000.0, notes="Modal awal")
+    check(api.read("pos.session", session, ["state"])["state"] == "opened", "sesi dibuka dengan kas awal")
+
+    unit = taxes["lst_price"]
+
+    def price(qty):
+        if not taxes["taxes_id"]:
+            return {"total_excluded": unit * qty, "total_included": unit * qty}
+        return api.call("account.tax", "compute_all", ids=taxes["taxes_id"], price_unit=unit, quantity=qty)
+
+    def make_order(sequence, qty, payments, partner=False, invoice=False):
+        computed = price(qty)
+        total = computed["total_included"]
+        now = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        payload = {
+            "name": f"Order R-{tag}-{sequence}", "uuid": f"regresi-{tag}-{sequence}", "session_id": session, "config_id": config, "user_id": user, "sequence_number": sequence, "date_order": now,
+            "amount_tax": total - computed["total_excluded"], "amount_total": total, "amount_paid": total, "amount_return": 0.0, "partner_id": partner, "to_invoice": invoice,
+            "pricelist_id": False, "fiscal_position_id": False,
+            "lines": [[0, 0, {"uuid": f"line-{tag}-{sequence}", "product_id": product["id"], "qty": qty, "price_unit": unit, "discount": 0.0, "tax_ids": [[6, 0, taxes["taxes_id"]]],
+                              "price_subtotal": computed["total_excluded"], "price_subtotal_incl": total, "full_product_name": "Produk kasir", "name": "Produk kasir"}]],
+            "payment_ids": [[0, 0, {"payment_method_id": method, "amount": amount, "name": now, **extra}] for method, amount, extra in payments(total)],
+        }
+        return total, api.call("pos.order", "sync_from_ui", orders=[payload])["pos.order"][0]
+
+    # Tunai dengan kembalian: uang diterima dan baris kembalian negatif (is_change), seperti yang dikirim kasir.
+    def cash_with_change(total):
+        tendered = (int(total / 10_000) + 1) * 10_000.0
+        return [(cash, tendered, {}), (cash, -(tendered - total), {"is_change": True})]
+
+    total, first = make_order(1, 2.0, cash_with_change)
+    check(first["state"] == "paid" and first["amount_total"] == total, "penjualan tunai dengan kembalian: pesanan dibayar sebesar total")
+    amounts = sorted(p["amount"] for p in api.search("pos.payment", [["pos_order_id", "=", first["id"]]], ["amount"]))
+    check(len(amounts) == 2 and amounts[0] < 0 < amounts[1] and abs(sum(amounts) - total) < 0.01, "pembayaran tunai dan baris kembalian tersimpan")
+    check(bool(api.read("pos.order", first["id"], ["picking_ids"])["picking_ids"]), "pesanan membuat pengiriman stok")
+    try:
+        make_order(2, 1.0, lambda _total: [(cash, 1_000.0, {})])
+        check(False, "pembayaran kurang dari total seharusnya ditolak")
+    except RuntimeError as error:
+        check("not fully paid" in str(error), "pembayaran kurang dari total ditolak Odoo")
+
+    # Pembayaran campuran tunai dan bank, dengan pelanggan dan faktur.
+    total2, second = make_order(3, 1.0, lambda total: [(cash, 100_000.0, {}), (bank, total - 100_000.0, {})], customer, True)
+    invoice = api.read("pos.order", second["id"], ["account_move", "state"])
+    check(second["state"] == "done" and bool(invoice["account_move"]), "pesanan dengan pelanggan dan faktur: faktur terbentuk")
+    check(api.read("account.move", invoice["account_move"][0], ["move_type", "state"]) == {"id": invoice["account_move"][0], "move_type": "out_invoice", "state": "posted"}, "faktur POS berstatus posted")
+
+    data = api.call("pos.session", "get_closing_control_data", ids=[session])
+    expected = data["default_cash_details"]["amount"]
+    check(abs(expected - (100_000.0 + total + 100_000.0)) < 0.01, f"kas diharapkan = kas awal + tunai bersih ({expected:,.0f})")
+    api.call("pos.session", "post_closing_cash_details", ids=[session], counted_cash=expected - 2_000.0)
+    api.call("pos.session", "update_closing_control_state_session", ids=[session], notes="Penutupan regresi")
+    closed = api.call("pos.session", "close_session_from_ui", ids=[session], bank_payment_method_diff_pairs=[])
+    info = api.read("pos.session", session, ["state", "move_id", "cash_register_difference", "statement_line_ids", "bank_payment_ids", "order_count"])
+    check(closed.get("successful") is True and info["state"] == "closed", "sesi ditutup")
+    check(info["cash_register_difference"] == -2_000.0, "selisih hitung kas -2.000 tercatat")
+    statement_moves = [r["move_id"][0] for r in api.search("account.bank.statement.line", [["id", "in", info["statement_line_ids"]]], ["move_id"])]
+    payment_moves = [r["move_id"][0] for r in api.search("account.payment", [["id", "in", info["bank_payment_ids"]]], ["move_id"])]
+    move_ids = {info["move_id"][0], *statement_moves, *payment_moves}
+    check(len(move_ids) >= 3, "jurnal sesi: penjualan, pemindahan kas, selisih kas, dan pembayaran bank")
+    balanced = True
+    for move_id in move_ids:
+        items = api.search("account.move.line", [["move_id", "=", move_id]], ["debit", "credit"])
+        balanced = balanced and abs(sum(i["debit"] for i in items) - sum(i["credit"] for i in items)) < 0.005
+    check(balanced, "semua jurnal sesi seimbang")
+    session_items = api.search("account.move.line", [["move_id", "=", info["move_id"][0]]], ["account_id", "debit", "credit"])
+    check(any(i["credit"] > 0 for i in session_items) and any(i["debit"] > 0 for i in session_items), "jurnal penjualan sesi memuat penjualan, pajak, dan piutang POS")
+    check(len(api.search("pos.order", [["session_id", "=", session]], ["id"])) == info["order_count"], "daftar pesanan sesi sesuai jumlah pesanan")
+    groups = api.call("pos.payment", "formatted_read_group", domain=[["session_id", "=", session]], groupby=["payment_method_id"], aggregates=["__count", "amount:sum"])
+    check({g["payment_method_id"][0] for g in groups} == {cash, bank}, "ringkasan pembayaran per metode memuat tunai dan bank")
 
 def check_bank_reconciliation(api):
     """Mutasi bank dicocokkan dengan pembayaran tertunda (urutan panggilan yang sama dengan UI), lalu biaya bank ke akun beban."""

@@ -14,6 +14,7 @@
         "product_expiry",  # tanggal kedaluwarsa pada lot dan penarikan FEFO
         "mrp",  # BoM, Manufacturing Order, work center, work order, unbuild
         "crm",  # lead, peluang, tahap pipeline (sale_crm terpasang otomatis bersama sale)
+        "point_of_sale",  # kasir, sesi, pesanan POS, metode pembayaran
         # OCA (purchase-workflow)
         "purchase_request",
         # OCA akuntansi: Community tidak membawa laporan keuangan, aset, atau rekonsiliasi bank.
