@@ -139,7 +139,7 @@ export const MENU = [
       { title: "Setting", route: "modsetting/accounting" },
     ],
   },
-  { title: "General Setting", icon: "fas fa-cog", items: [{ title: "Company Setting", route: "company" }, { title: "Users & Access", route: "users" }] },
+  { title: "General Setting", icon: "fas fa-cog", items: [{ title: "Company Setting", route: "company" }, { title: "Users & Access", route: "users" }, { title: "Import Data", route: "dataimport" }] },
 ];
 
 /** Beri setiap simpul kunci berbasis indeks ("0", "0.1", "0.1.0"), dan hitung `mod` dari route. */
