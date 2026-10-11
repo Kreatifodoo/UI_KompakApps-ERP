@@ -42,6 +42,7 @@ Jalankan perintah `docker compose` dari folder worktree Anda: folder `addons` da
 - Mengubah `qty_producing` lewat API tidak menyesuaikan komponen atau produk sampingan (onchange hanya jalan di klien web).
 - Memasang modul lewat API menyetel ulang registri; pasang lewat manifest `nusara_base` dan `-u nusara_base`.
 - Pesan galat Odoo ditampilkan apa adanya di toast; pastikan validasi sisi klien memberi pesan Indonesia yang jelas lebih dulu.
+- Inisialisasi (`-i nusara_base`) dan upgrade (`-u`) jangan dijalankan sementara layanan `odoo` yang menunjuk database yang sama masih menyala: dua proses memuat registri bersamaan dan salah satunya gagal dengan `could not serialize access due to concurrent update`, meninggalkan database setengah terpasang. Urutan aman: `up -d db`, jalankan `-i` atau `-u`, baru `up -d odoo ui` (atau `stop odoo` dulu). Ditemukan saat menyiapkan uji backup (D32).
 
 ## Alur kerja
 
@@ -50,3 +51,7 @@ Jalankan perintah `docker compose` dari folder worktree Anda: folder `addons` da
 3. Jalankan pre-commit dan hanya lanjut commit bila lulus (rantai dengan `&&`).
 4. Commit, push, buka PR; tunggu CI hijau; squash-merge dengan `--match-head-commit` lalu hapus branch.
 5. Upgrade database `nusara` pemilik hanya setelah merge, dengan backup lebih dulu: `docker compose run --rm -T --no-deps odoo odoo -d nusara -u nusara_base --stop-after-init`, lalu restart Odoo.
+
+## Operasional (backup, pemulihan, pemantauan, uji beban)
+
+Skrip dan prosedurnya ada di [OPERATIONS.md](OPERATIONS.md): `scripts/backup.sh`, `scripts/restore.sh`, `scripts/check_backup_restore.sh` (uji pulih otomatis), `scripts/healthcheck.py`, dan `scripts/loadtest.py`. Semuanya mewajibkan nama proyek Compose dan database secara eksplisit (tanpa nilai bawaan), jadi tidak mungkin tanpa sengaja mengarah ke database `nusara` milik pemilik. Sebelum meng-upgrade database `nusara` setelah merge, jalankan backup lebih dulu.
