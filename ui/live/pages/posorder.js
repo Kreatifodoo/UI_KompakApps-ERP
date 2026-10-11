@@ -4,7 +4,7 @@ import {
   app, badge, button, call, cell, dateTimeText, esc, fieldBlock, filterSelect, guarded, money, pageHeader, readOne, readonlyValue, rowLink, searchBox,
   searchRead, statTiles, statusbar, table, toast,
 } from "../common.js";
-import { printReceipt, receiptHtml } from "./kasir.js";
+import { printButton } from "../print.js";
 
 const STATES = { draft: ["Baru", "muted"], paid: ["Dibayar", "info"], done: ["Selesai", "success"], invoiced: ["Difaktur", "success"], cancel: ["Dibatalkan", "danger"] };
 const FLOW = ["draft", "paid", "done", "invoiced"];
@@ -87,7 +87,7 @@ async function renderForm(id) {
   app.innerHTML = `
     <div class="text-sm text-gray-500 mb-2"><a href="#/posorder" class="hover:text-indigo-600">POS Order</a> / ${esc(order.pos_reference || order.name)}</div>
     <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-3">
-      <div class="flex flex-wrap gap-2">${button("print", "Cetak Struk", "plain", { id: order.id })}${canInvoice ? button("invoice", "Buat Faktur", "primary", { id: order.id }) : ""}</div>
+      <div class="flex flex-wrap gap-2">${printButton("pos.order", order.id, "Cetak Struk")}${canInvoice ? button("invoice", "Buat Faktur", "primary", { id: order.id }) : ""}</div>
       ${statusbar(FLOW, STATES, order.state)}
     </div>
     <div class="flex flex-wrap gap-2 mb-4">${statTiles([
@@ -113,10 +113,7 @@ async function renderForm(id) {
 export async function onClick(event, el) {
   const { action } = el.dataset;
   const id = Number(el.dataset.id) || null;
-  if (action === "print") {
-    const html = await guarded(el, () => receiptHtml(id));
-    if (html) printReceipt(html);
-  } else if (action === "invoice") {
+  if (action === "invoice") {
     const ok = await guarded(el, () => call("pos.order", "action_pos_order_invoice", { ids: [id] }));
     if (ok !== undefined) {
       toast("Faktur dibuat.");

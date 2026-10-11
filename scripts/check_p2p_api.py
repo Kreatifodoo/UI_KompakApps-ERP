@@ -13,12 +13,16 @@ Butuh data contoh dari scripts/seed_demo.py dan API key milik pengguna uji.
 """
 
 import argparse
+import base64
 import datetime
+import io
 import json
 import os
 import sys
 import urllib.error
 import urllib.request
+import zipfile
+from xml.sax.saxutils import escape
 
 
 class Api:
@@ -200,6 +204,7 @@ def main():
     check_analysis_reports(api)
     check_settings_and_users(api)
     check_data_import(api)
+    check_data_import_xlsx(api)
     check_print_documents(api)
     check_auditlog(api)
     check_budget(api)
@@ -1137,9 +1142,112 @@ def check_data_import(api):
     api.call("account.move", "unlink", ids=journal["ids"])
 
 
+XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def make_xlsx(sheets):
+    """Berkas .xlsx minimal tanpa pustaka. sheets = [(nama lembar, [[sel]])]; sel str = teks, int atau float = angka, datetime.date = tanggal."""
+    names = [name for name, _ in sheets]
+    ns_main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    ns_rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    ns_pkg = "http://schemas.openxmlformats.org/package/2006/relationships"
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+        + "".join(f'<Override PartName="/xl/worksheets/sheet{i}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' for i in range(1, len(names) + 1))
+        + "</Types>"
+    )
+    styles = (
+        f'<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="{ns_main}"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>'
+        '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>'
+        '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+        '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+        '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+        '<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs></styleSheet>'
+    )
+
+    def cell(row, col, value):
+        ref = f"{chr(65 + col)}{row}"
+        if isinstance(value, datetime.date):
+            return f'<c r="{ref}" s="1"><v>{(value - datetime.date(1899, 12, 30)).days}</v></c>'
+        if isinstance(value, (int, float)):
+            return f'<c r="{ref}"><v>{value}</v></c>'
+        return f'<c r="{ref}" t="inlineStr"><is><t>{escape(str(value))}</t></is></c>'
+
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", content_types)
+        z.writestr("_rels/.rels", f'<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="{ns_pkg}"><Relationship Id="rId1" Type="{ns_rel}/officeDocument" Target="xl/workbook.xml"/></Relationships>')
+        z.writestr("xl/workbook.xml", f'<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="{ns_main}" xmlns:r="{ns_rel}"><sheets>' + "".join(f'<sheet name="{escape(n)}" sheetId="{i}" r:id="rId{i}"/>' for i, n in enumerate(names, 1)) + "</sheets></workbook>")
+        z.writestr("xl/_rels/workbook.xml.rels", f'<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="{ns_pkg}">' + "".join(f'<Relationship Id="rId{i}" Type="{ns_rel}/worksheet" Target="worksheets/sheet{i}.xml"/>' for i in range(1, len(names) + 1)) + f'<Relationship Id="rId{len(names) + 1}" Type="{ns_rel}/styles" Target="styles.xml"/></Relationships>')
+        z.writestr("xl/styles.xml", styles)
+        for i, (_, rows) in enumerate(sheets, 1):
+            body = "".join(f'<row r="{r}">' + "".join(cell(r, c, v) for c, v in enumerate(row) if v is not None) + "</row>" for r, row in enumerate(rows, 1))
+            z.writestr(f"xl/worksheets/sheet{i}.xml", f'<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="{ns_main}"><sheetData>{body}</sheetData></worksheet>')
+    return out.getvalue()
+
+
+def import_xlsx(api, model, content, dryrun, sheet=None, context=None):
+    """Impor .xlsx seperti halaman Import Data: unggah base64 lewat nusara_create_from_file, baca lembar, petakan kolom, lalu jalankan."""
+    upload = api.call("base_import.import", "nusara_create_from_file", res_model=model, file_name="regresi.xlsx", file_type=XLSX_TYPE, data=base64.b64encode(content).decode())
+    options = {"quoting": '"', "separator": ",", "has_headers": True, "date_format": "", "datetime_format": ""}
+    if sheet:
+        options["sheet"] = sheet
+    preview = api.call("base_import.import", "parse_preview", ids=[upload["id"]], options=options)
+    if preview.get("error"):
+        return upload, preview, None
+    fields = ["/".join(preview["matches"].get(str(i)) or []) or False for i in range(len(preview["headers"]))]
+    params = {"ids": [upload["id"]], "fields": fields, "columns": preview["headers"], "options": preview["options"], "dryrun": dryrun}
+    if context:
+        params["context"] = context
+    return upload, preview, api.call("base_import.import", "execute_import", **params)
+
+
+def check_data_import_xlsx(api):
+    """Impor Excel (D36): berkas biner dikirim sebagai base64 lewat nusara_create_from_file, daftar lembar kembali, lembar dipilih, angka desimal, teks khusus, dan tanggal sel terbaca."""
+    step("Impor data Excel (.xlsx): lembar, angka, teks khusus, tanggal")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    products = [
+        ["name", "default_code", "categ_id", "type", "is_storable", "list_price", "standard_price"],
+        [f'Impor Xlsx A & Co <1> {tag}', f"XL-A-{tag}", "Goods", "consu", 1, 15000, 7000.5],
+        [f'Impor Xlsx "B", Tbk {tag}', f"XL-B-{tag}", "Goods", "consu", 1, 2500.25, 1000],
+    ]
+    book = make_xlsx([("Catatan", [["Lembar pertama hanya catatan"]]), ("Produk", products)])
+    codes = [f"XL-A-{tag}", f"XL-B-{tag}"]
+    count = lambda: api.call("product.template", "search_count", domain=[["default_code", "in", codes]])  # noqa: E731
+
+    upload, first, _ = import_xlsx(api, "product.template", book, dryrun=True)
+    check(upload["sheets"] == ["Catatan", "Produk"], "daftar lembar Excel dikembalikan saat unggah")
+    check(bool(first.get("error")), "lembar pertama yang kosong dilaporkan sebagai galat (pengguna diminta memilih lembar lain)")
+    _, preview, dry = import_xlsx(api, "product.template", book, dryrun=True, sheet="Produk")
+    check(preview["headers"] == products[0] and len(dry["ids"]) == 2 and not dry["messages"] and count() == 0, "lembar Produk terbaca, uji tanpa simpan lulus dan tidak menyimpan produk")
+    _, _, real = import_xlsx(api, "product.template", book, dryrun=False, sheet="Produk")
+    rows = api.call("product.template", "read", ids=real["ids"], fields=["name", "list_price", "standard_price", "categ_id"])
+    by_code = {r["name"]: r for r in rows}
+    check(count() == 2 and by_code[f'Impor Xlsx "B", Tbk {tag}']["list_price"] == 2500.25 and by_code[f'Impor Xlsx A & Co <1> {tag}']["standard_price"] == 7000.5, "angka desimal dan nama dengan tanda kutip, koma, &, dan < terbaca benar")
+    check(all(r["categ_id"][1] == "Goods" for r in rows), "kategori dicocokkan dengan nama")
+
+    account = api.search("account.account", [["account_type", "=", "asset_cash"]], ["code"], limit=1)[0]["code"]
+    equity = api.search("account.account", [["account_type", "=", "equity"]], ["code"], limit=1)[0]["code"]
+    header = ["ref", "date", "journal_id", "line_ids/account_id", "line_ids/name", "line_ids/debit", "line_ids/credit"]
+    journal = make_xlsx([("Jurnal", [header,
+        [f"Saldo Xlsx {tag}", datetime.date(2026, 3, 5), "Miscellaneous Operations", account, "Kas", 250000, 0],
+        [None, None, None, equity, "Modal", 0, 250000]])])
+    _, _, moves = import_xlsx(api, "account.move", journal, dryrun=False)
+    move = api.read("account.move", moves["ids"][0], ["state", "amount_total", "date"])
+    check(len(moves["ids"]) == 1 and move["date"] == "2026-03-05" and move["amount_total"] == 250000 and move["state"] == "draft", "sel tanggal Excel menjadi tanggal jurnal yang benar (2026-03-05) dan baris kedua dilanjutkan")
+    api.call("account.move", "unlink", ids=moves["ids"])
+
+    check(fails_with(lambda: api.call("base_import.import", "nusara_create_from_file", res_model="product.template", file_name="x.xlsx", file_type=XLSX_TYPE, data="bukan base64!!"), "base64"), "isi yang bukan base64 ditolak dengan pesan jelas")
+    _, broken, _ = import_xlsx(api, "product.template", b"ini bukan berkas excel", dryrun=True)
+    check(bool(broken.get("error")), "berkas yang bukan Excel dilaporkan sebagai galat baca")
+
+
 def check_print_documents(api):
     """Field yang dibaca halaman cetak (ui/live/print.js) harus ada dan terbaca untuk dokumen nyata, agar cetak tidak rusak diam-diam saat Odoo diperbarui."""
-    step("Data cetak dokumen (PO, SO, faktur, surat jalan, pembayaran, PR)")
+    step("Data cetak dokumen (PO, SO, faktur, surat jalan, pembayaran, PR, struk POS, Perintah Produksi)")
     docs = {
         "purchase.order": ([["state", "=", "purchase"]], ["name", "state", "partner_id", "date_order", "date_planned", "partner_ref", "payment_term_id", "user_id", "currency_id", "amount_untaxed", "amount_tax", "amount_total", "note"]),
         "purchase.order.line": ([], ["display_type", "name", "product_qty", "product_uom_id", "price_unit", "tax_ids", "price_subtotal"]),
@@ -1153,6 +1261,11 @@ def check_print_documents(api):
         "account.payment": ([["state", "in", ["paid", "in_process"]]], ["name", "state", "payment_type", "partner_id", "amount", "currency_id", "date", "journal_id", "payment_method_line_id", "memo", "reconciled_invoice_ids", "reconciled_bill_ids"]),
         "purchase.request": ([], ["name", "state", "requested_by", "assigned_to", "date_start", "origin", "description"]),
         "purchase.request.line": ([], ["name", "product_id", "product_qty", "product_uom_id", "date_required", "estimated_cost"]),
+        "pos.order": ([], ["name", "pos_reference", "state", "session_id", "config_id", "date_order", "partner_id", "user_id", "amount_total", "amount_tax", "currency_id", "lines", "payment_ids"]),
+        "pos.order.line": ([], ["full_product_name", "qty", "price_unit", "discount", "tax_ids", "price_subtotal", "price_subtotal_incl"]),
+        "pos.payment": ([], ["payment_method_id", "amount", "is_change"]),
+        "mrp.production": ([], ["name", "state", "product_id", "product_qty", "product_uom_id", "bom_id", "origin", "user_id", "date_start", "date_finished", "date_deadline", "picking_type_id", "location_src_id", "location_dest_id", "move_raw_ids", "workorder_ids"]),
+        "mrp.workorder": ([], ["name", "workcenter_id", "duration_expected", "state", "date_start", "date_finished"]),
         "res.company": ([], ["name", "street", "street2", "city", "zip", "state_id", "country_id", "phone", "email", "website", "vat", "company_registry", "report_header", "report_footer", "logo", "uses_default_logo"]),
         "res.partner": ([], ["name", "street", "street2", "city", "zip", "state_id", "country_id", "vat", "phone", "email"]),
     }

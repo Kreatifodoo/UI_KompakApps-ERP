@@ -12,3 +12,4 @@ from . import test_crm
 from . import test_pos
 from . import test_budget
 from . import test_loyalty
+from . import test_data_import

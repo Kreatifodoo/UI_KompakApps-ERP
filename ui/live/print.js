@@ -1,7 +1,8 @@
 // Cetak dokumen berlogo: pratinjau A4 di dialog lalu cetak atau simpan sebagai PDF lewat browser. Dokumen dibangun di sisi klien dari data
 // JSON-2 (laporan PDF Odoo dirender oleh server dan tidak bisa dipanggil lewat API key). Kop surat memakai data dari Company Setting:
-// logo (bila bukan logo bawaan), nama, alamat, NPWP, kontak, tagline, dan footer.
-import { button, call, ctx, dateText, dateTimeText, esc, guarded, openModal, plain } from "./common.js";
+// logo (bila bukan logo bawaan), nama, alamat, NPWP, kontak, tagline, dan footer. Dokumen yang punya bentuk struk (pos.order) bisa dicetak
+// di kertas A4 atau lebar struk 80 mm; pilihannya ada di pratinjau.
+import { button, call, ctx, dateText, dateTimeText, esc, guarded, money, openModal, plain } from "./common.js";
 
 const num = (n, currency) => {
   const value = Number(n ?? 0);
@@ -12,7 +13,7 @@ const text = (v) => (v ? String(v) : "");
 const rich = (html) => plain(html || "");
 const name2 = (m2o) => (Array.isArray(m2o) ? m2o[1] : "");
 
-export const printButton = (model, id) => button("print-doc", "Cetak", "plain", { model, id });
+export const printButton = (model, id, label = "Cetak") => button("print-doc", label, "plain", { model, id });
 
 /** Partner sebagai blok alamat: nama, alamat, NPWP, dan kontak. */
 async function partnerBlock(id) {
@@ -171,6 +172,75 @@ const BUILDERS = {
     };
   },
 
+  async "pos.order"(id) {
+    const [o] = await call("pos.order", "read", {
+      ids: [id],
+      fields: ["name", "pos_reference", "state", "session_id", "config_id", "date_order", "partner_id", "user_id", "amount_total", "amount_tax", "currency_id", "lines", "payment_ids"],
+    });
+    const [lines, payments] = await Promise.all([
+      call("pos.order.line", "search_read", { domain: [["id", "in", o.lines]], fields: ["full_product_name", "qty", "price_unit", "discount", "tax_ids", "price_subtotal", "price_subtotal_incl"], order: "id" }),
+      call("pos.payment", "search_read", { domain: [["id", "in", o.payment_ids]], fields: ["payment_method_id", "amount", "is_change"], order: "id" }),
+    ]);
+    const taxes = await taxNames(lines);
+    const cur = o.currency_id?.[1];
+    const number = o.pos_reference || o.name;
+    const paid = payments.filter((p) => !p.is_change);
+    const change = payments.filter((p) => p.is_change).reduce((sum, p) => sum - p.amount, 0);
+    const discountText = (l) => (l.discount ? `${num(l.discount)}%` : "");
+    const payTotals = [...paid.map((p) => [name2(p.payment_method_id), num(p.amount, cur)]), ...(change ? [["Kembalian", num(change, cur)]] : [])];
+    return {
+      title: "Bukti Penjualan",
+      number,
+      draft: ["draft", "cancel"].includes(o.state),
+      parties: o.partner_id ? [{ label: "Pelanggan", block: await partnerBlock(o.partner_id[0]) }] : [],
+      meta: [["Nomor", number], ["Waktu", dateTimeText(o.date_order)], ["Kasir", name2(o.user_id)], ["Titik Kasir", name2(o.config_id)], ["Sesi", name2(o.session_id)]],
+      columns: [["Produk", ""], ["Qty", "r"], ["Harga Satuan", "r"], ["Diskon", "r"], ["Pajak", ""], ["Total", "r"]],
+      rows: lines.map((l) => ({ cells: [l.full_product_name, num(l.qty), num(l.price_unit), discountText(l), taxText(l, taxes), num(l.price_subtotal_incl)] })),
+      totals: [["Subtotal", num(o.amount_total - o.amount_tax, cur)], ["Pajak", num(o.amount_tax, cur)], ["Total", num(o.amount_total, cur), true], ...payTotals],
+      notes: [],
+      signatures: [],
+      receipt: {
+        head: [name2(o.config_id), number, dateTimeText(o.date_order), `Kasir: ${name2(o.user_id)}`, ...(o.partner_id ? [`Pelanggan: ${name2(o.partner_id)}`] : [])].filter(Boolean),
+        items: lines.map((l) => ({ name: l.full_product_name, detail: `${num(l.qty)} × ${money(l.price_unit)}${l.discount ? ` (−${discountText(l)})` : ""}`, total: money(l.price_subtotal_incl) })),
+        totals: [["Pajak", money(o.amount_tax)], ["Total", money(o.amount_total), true]],
+        payments: [...paid.map((p) => [name2(p.payment_method_id), money(p.amount)]), ...(change ? [["Kembalian", money(change)]] : [])],
+      },
+    };
+  },
+
+  async "mrp.production"(id) {
+    const [m] = await call("mrp.production", "read", {
+      ids: [id],
+      fields: ["name", "state", "product_id", "product_qty", "product_uom_id", "bom_id", "origin", "user_id", "date_start", "date_finished", "date_deadline", "picking_type_id", "location_src_id", "location_dest_id", "move_raw_ids", "workorder_ids"],
+    });
+    const [moves, orders] = await Promise.all([
+      m.move_raw_ids.length ? call("stock.move", "search_read", { domain: [["id", "in", m.move_raw_ids]], fields: ["product_id", "product_uom_qty", "quantity", "product_uom"], order: "sequence, id" }) : [],
+      m.workorder_ids.length ? call("mrp.workorder", "search_read", { domain: [["id", "in", m.workorder_ids]], fields: ["name", "workcenter_id", "duration_expected", "state", "date_start", "date_finished"], order: "id" }) : [],
+    ]);
+    const state = { draft: "Draft", confirmed: "Dikonfirmasi", progress: "Diproduksi", to_close: "Siap Ditutup", done: "Selesai", cancel: "Dibatalkan" }[m.state] ?? m.state;
+    const woState = { blocked: "Menunggu operasi lain", ready: "Siap", progress: "Berjalan", pause: "Dijeda", done: "Selesai", cancel: "Dibatalkan" };
+    const productLines = [`Jumlah: ${num(m.product_qty)} ${name2(m.product_uom_id)}`.trim(), ...(m.bom_id ? [`BoM: ${name2(m.bom_id)}`] : [])];
+    return {
+      title: "Perintah Produksi",
+      number: m.name,
+      draft: ["draft", "cancel"].includes(m.state),
+      parties: [{ label: "Produk Jadi", block: { name: name2(m.product_id), lines: productLines } }],
+      meta: [["Nomor", m.name], ["Status", state], ["Jadwal Mulai", m.date_start ? dateTimeText(m.date_start) : ""], ["Jadwal Selesai", m.date_finished ? dateTimeText(m.date_finished) : ""], ["Batas Waktu", m.date_deadline ? dateTimeText(m.date_deadline) : ""], ["Penanggung Jawab", name2(m.user_id)], ["Asal Dokumen", text(m.origin)], ["Jenis Operasi", name2(m.picking_type_id)], ["Lokasi Komponen", name2(m.location_src_id)], ["Lokasi Barang Jadi", name2(m.location_dest_id)]],
+      columns: [["Komponen yang Dibutuhkan", ""], ["Dibutuhkan", "r"], ["Satuan", ""], [m.state === "done" ? "Dikonsumsi" : "Dicadangkan", "r"]],
+      rows: moves.map((mv) => ({ cells: [name2(mv.product_id), num(mv.product_uom_qty), name2(mv.product_uom), num(mv.quantity)] })),
+      sections: orders.length
+        ? [{
+            title: "Work Order",
+            columns: [["Operasi", ""], ["Work Center", ""], ["Durasi Rencana (menit)", "r"], ["Mulai", ""], ["Status", ""]],
+            rows: orders.map((w) => ({ cells: [w.name, name2(w.workcenter_id), num(w.duration_expected), w.date_start ? dateTimeText(w.date_start) : "", woState[w.state] ?? w.state] })),
+          }]
+        : [],
+      totals: [],
+      notes: [],
+      signatures: ["Dibuat oleh", "Disetujui oleh", "Penanggung Jawab Produksi"],
+    };
+  },
+
   async "purchase.request"(id) {
     const [r] = await call("purchase.request", "read", { ids: [id], fields: ["name", "state", "requested_by", "assigned_to", "date_start", "origin", "description"] });
     const lines = await call("purchase.request.line", "search_read", { domain: [["request_id", "=", id]], fields: ["name", "product_id", "product_qty", "product_uom_id", "date_required", "estimated_cost"], order: "id" });
@@ -235,15 +305,37 @@ async function loadCompany() {
   return c;
 }
 
-function companyHtml(c) {
+function companyContact(c) {
   const cityLine = [c.city, c.zip].filter(Boolean).join(" ");
-  const addr = [c.street, c.street2, [cityLine, name2(c.state_id)].filter(Boolean).join(", "), name2(c.country_id)].filter(Boolean).join(", ");
-  const contact = [c.phone && `Telp. ${c.phone}`, c.email, c.website].filter(Boolean).join(" · ");
+  return {
+    addr: [c.street, c.street2, [cityLine, name2(c.state_id)].filter(Boolean).join(", "), name2(c.country_id)].filter(Boolean).join(", "),
+    contact: [c.phone && `Telp. ${c.phone}`, c.email, c.website].filter(Boolean).join(" · "),
+  };
+}
+
+function companyHtml(c) {
+  const { addr, contact } = companyContact(c);
   const logo = c.logo && !c.uses_default_logo ? `<img alt="Logo" src="data:image/png;base64,${c.logo}">` : "";
   return `<div class="co">${logo}<div><div class="name">${esc(c.name)}</div>
     ${rich(c.report_header) ? `<div class="line">${esc(rich(c.report_header))}</div>` : ""}
     ${addr ? `<div class="line">${esc(addr)}</div>` : ""}${contact ? `<div class="line">${esc(contact)}</div>` : ""}
     ${c.vat ? `<div class="line">NPWP: ${esc(c.vat)}</div>` : ""}</div></div>`;
+}
+
+/** Tabel kolom dan baris; dipakai untuk tabel utama dan bagian tambahan (mis. Work Order). */
+function tableHtml(columns, rows, empty = "Tidak ada baris.") {
+  const head = columns.map(([label, align]) => `<th class="${align}">${esc(label)}</th>`).join("");
+  const span = columns.length;
+  const body = rows.length
+    ? rows
+        .map((r) =>
+          r.cells
+            ? `<tr>${r.cells.map((cell, i) => `<td class="${columns[i][1]}">${esc(cell)}</td>`).join("")}</tr>`
+            : `<tr class="${r.section ? "sec" : "nt"}"><td colspan="${span}">${esc(r.note)}</td></tr>`,
+        )
+        .join("")
+    : `<tr><td colspan="${span}" style="text-align:center;color:#6b7280">${esc(empty)}</td></tr>`;
+  return `<table class="lines"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
 function documentHtml(doc, company) {
@@ -252,17 +344,7 @@ function documentHtml(doc, company) {
     .map((p) => `<div class="party"><div class="label">${esc(p.label)}</div><div class="pname">${esc(p.block.name)}</div>${p.block.lines.map((l) => `<div>${esc(l)}</div>`).join("")}</div>`)
     .join("");
   const meta = doc.meta.filter(([, v]) => v).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("");
-  const head = doc.columns.map(([label, align]) => `<th class="${align}">${esc(label)}</th>`).join("");
-  const span = doc.columns.length;
-  const body = doc.rows.length
-    ? doc.rows
-        .map((r) =>
-          r.cells
-            ? `<tr>${r.cells.map((cell, i) => `<td class="${doc.columns[i][1]}">${esc(cell)}</td>`).join("")}</tr>`
-            : `<tr class="${r.section ? "sec" : "nt"}"><td colspan="${span}">${esc(r.note)}</td></tr>`,
-        )
-        .join("")
-    : `<tr><td colspan="${span}" style="text-align:center;color:#6b7280">Tidak ada baris.</td></tr>`;
+  const extra = (doc.sections ?? []).map((sec) => `<div class="notes"><div class="label">${esc(sec.title)}</div>${tableHtml(sec.columns, sec.rows)}</div>`).join("");
   const totals = doc.totals.length ? `<table class="totals">${doc.totals.map(([k, v, strong]) => `<tr class="${strong ? "strong" : ""}"><td>${esc(k)}</td><td class="r">${esc(v)}</td></tr>`).join("")}</table>` : "";
   const notes = doc.notes.filter(([, v]) => v).map(([k, v]) => `<div class="notes"><div class="label">${esc(k)}</div><div class="body">${esc(v)}</div></div>`).join("");
   const sign = doc.signatures.length ? `<div class="sign">${doc.signatures.map((s) => `<div><div class="space"></div>${esc(s)}</div>`).join("")}</div>` : "";
@@ -270,31 +352,90 @@ function documentHtml(doc, company) {
   return `<!doctype html><html lang="id"><head><meta charset="utf-8"><title>${esc(doc.number)}</title><style>${STYLE}</style></head><body>
     <div class="head">${companyHtml(company)}<div class="doc"><div class="title">${esc(doc.title)}</div><div class="no">${esc(doc.number)}</div>${doc.draft ? '<div class="draft">Belum final</div>' : ""}</div></div>
     <div class="info"><div>${blocks}</div><div><table class="meta">${meta}</table></div></div>
-    <table class="lines"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
-    ${totals}${notes}${sign}
+    ${tableHtml(doc.columns, doc.rows)}
+    ${extra}${totals}${notes}${sign}
     <div class="foot"><div>${esc(footer)}</div><div>Dicetak oleh ${esc(ctx.user?.name ?? "")} · ${esc(dateTimeText(new Date().toISOString().replace("T", " ").slice(0, 19)))}</div></div>
   </body></html>`;
 }
+
+const RECEIPT_STYLE = `
+@page { size: 80mm 297mm; margin: 3mm; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 8px 10px; width: 80mm; font: 11px/1.4 "Courier New", ui-monospace, monospace; color: #000; }
+.c { text-align: center; }
+.b { font-weight: 700; }
+hr { border: 0; border-top: 1px dashed #000; margin: 6px 0; }
+.row { display: flex; justify-content: space-between; gap: 8px; }
+.row span:last-child { white-space: nowrap; }
+.item { margin-bottom: 3px; }
+.strong { font-size: 13px; font-weight: 700; }
+@media print { body { padding: 0; width: auto; } }
+`;
+
+/** Struk lebar 80 mm (printer thermal): kop singkat, barang, total, pembayaran, dan kembalian. */
+function receiptPage(doc, company) {
+  const { addr, contact } = companyContact(company);
+  const row = (a, b, cls = "") => `<div class="row ${cls}"><span>${esc(a)}</span><span>${esc(b)}</span></div>`;
+  const r = doc.receipt;
+  const footer = rich(company.report_footer);
+  return `<!doctype html><html lang="id"><head><meta charset="utf-8"><title>${esc(doc.number)}</title><style>${RECEIPT_STYLE}</style></head><body>
+    <div class="c b" style="font-size:13px">${esc(company.name)}</div>
+    ${addr ? `<div class="c">${esc(addr)}</div>` : ""}${contact ? `<div class="c">${esc(contact)}</div>` : ""}${company.vat ? `<div class="c">NPWP: ${esc(company.vat)}</div>` : ""}
+    <hr>${r.head.map((line, i) => `<div class="c ${i === 0 ? "b" : ""}">${esc(line)}</div>`).join("")}
+    ${doc.draft ? '<div class="c b">** BELUM FINAL **</div>' : ""}<hr>
+    ${r.items.map((it) => `<div class="item"><div>${esc(it.name)}</div>${row(it.detail, it.total)}</div>`).join("") || '<div class="c">Tidak ada barang.</div>'}<hr>
+    ${r.totals.map(([k, v, strong]) => row(k, v, strong ? "strong" : "")).join("")}<hr>
+    ${r.payments.map(([k, v]) => row(k, v)).join("") || '<div class="c">Belum ada pembayaran.</div>'}
+    <div class="c" style="margin-top:10px">${esc(footer || "Terima kasih")}</div>
+  </body></html>`;
+}
+
+/* ---------- Pratinjau ---------- */
+
+let session = null; // { doc, company, variant }
+
+const VARIANTS = [["receipt", "Struk 80 mm"], ["a4", "A4"]];
+const variantButton = (key, label, active) =>
+  `<button data-action="print-variant" data-variant="${key}" class="px-3 py-1.5 rounded-lg text-sm font-medium ${active ? "bg-indigo-600 text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}">${label}</button>`;
+const variantPicker = (active) => `<span class="text-sm text-gray-500">Ukuran kertas</span>${VARIANTS.map(([key, label]) => variantButton(key, label, key === active)).join("")}`;
+const frameStyle = (variant) => (variant === "receipt" ? "width:340px;max-width:100%;margin:0 auto;display:block;height:70vh" : "width:100%;height:70vh");
+const pageFor = ({ doc, company, variant }) => (variant === "receipt" && doc.receipt ? receiptPage(doc, company) : documentHtml(doc, company));
 
 /** Membuka pratinjau cetak dokumen. Mengembalikan false bila model belum didukung. */
 export async function printDocument(model, id, trigger = null) {
   const build = BUILDERS[model];
   if (!build || !id) return false;
-  const html = await guarded(trigger, async () => {
+  const loaded = await guarded(trigger, async () => {
     const [doc, company] = await Promise.all([build(id), loadCompany()]);
-    return { doc, page: documentHtml(doc, company) };
+    return { doc, company };
   });
-  if (!html) return true;
+  if (!loaded) return true;
+  const { doc } = loaded;
+  session = { ...loaded, variant: doc.receipt ? "receipt" : "a4" };
+  const picker = doc.receipt ? `<div id="print-variants" class="flex items-center gap-2">${variantPicker(session.variant)}</div>` : "";
   openModal(
-    `Pratinjau cetak: ${html.doc.title} ${html.doc.number}`,
-    `<iframe id="print-frame" title="Pratinjau dokumen" class="w-full border border-gray-200 rounded bg-white" style="height:70vh" srcdoc="${esc(html.page)}"></iframe>
-     <div class="text-xs text-gray-500">Pilih "Cetak" lalu "Simpan sebagai PDF" untuk menyimpan dokumen. Kop surat diambil dari Company Setting.</div>`,
+    `Pratinjau cetak: ${doc.title} ${doc.number}`,
+    `${picker}<iframe id="print-frame" title="Pratinjau dokumen" class="border border-gray-200 rounded bg-white" style="${frameStyle(session.variant)}" srcdoc="${esc(pageFor(session))}"></iframe>
+     <div class="text-xs text-gray-500">Pilih "Cetak" lalu "Simpan sebagai PDF" untuk menyimpan dokumen${doc.receipt ? ", atau pilih printer struk dan kertas 80 mm" : ""}. Kop surat diambil dari Company Setting.</div>`,
     `<button data-action="modal-close" class="px-4 py-2 rounded-lg text-sm font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50">Tutup</button>
      <button data-action="print-now" class="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700">Cetak / Simpan PDF</button>`,
-    null,
+    () => {
+      session = null;
+    },
     { wide: true },
   );
   return true;
+}
+
+/** Ganti ukuran kertas pada pratinjau yang terbuka (A4 atau struk 80 mm). */
+export function printVariant(variant) {
+  const frame = document.querySelector("#print-frame");
+  if (!session || !frame || !VARIANTS.some(([key]) => key === variant)) return;
+  session.variant = variant;
+  frame.style.cssText = frameStyle(variant);
+  frame.srcdoc = pageFor(session);
+  const picker = document.querySelector("#print-variants");
+  if (picker) picker.innerHTML = variantPicker(variant);
 }
 
 export function printNow() {

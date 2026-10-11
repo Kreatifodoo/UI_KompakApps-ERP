@@ -6,6 +6,7 @@ import {
   loadMessages, money, openModal, pageHeader, readOne, readonlyValue, referenceUsers, registerLookup, rowLink, runLookup, searchBox, searchRead,
   selectOptions, statTiles, statusbar, table, toast, toInputDateTime, actionBar,
 } from "../common.js";
+import { printButton } from "../print.js";
 
 const STATES = {
   draft: ["Draft", "muted"],
@@ -306,7 +307,7 @@ async function renderForm(id, query) {
   app.innerHTML = `
     <div class="text-sm text-gray-500 mb-2"><a href="#/mo" class="hover:text-indigo-600">Manufacturing Order</a> / ${esc(mo.name)}</div>
     <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-3">
-      <div class="flex flex-wrap gap-2">${actionBar(BUTTONS, mo)}</div>
+      <div class="flex flex-wrap gap-2">${actionBar(BUTTONS, mo)}${printButton("mrp.production", mo.id)}</div>
       ${statusbar(FLOW, STATES, mo.state)}
     </div>
     <div class="flex flex-wrap gap-2 mb-4">${statTiles([
