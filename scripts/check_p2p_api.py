@@ -199,6 +199,7 @@ def main():
     check_accounting_masters(api)
     check_analysis_reports(api)
     check_settings_and_users(api)
+    check_data_import(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -1085,6 +1086,51 @@ def check_settings_and_users(api):
           "peran diturunkan (pengguna ditautkan lebih dulu), dicabut, dan dinaikkan")
     api.call("res.users", "action_archive", ids=[user])
     check(api.read("res.users", user, ["active"])["active"] is False, "pengguna bisa diarsipkan")
+
+
+def import_csv(api, model, csv, dryrun, context=None):
+    """Impor CSV lewat base_import seperti halaman Import Data: baca berkas, petakan kolom dari pencocokan otomatis, lalu jalankan."""
+    [rid] = api.call("base_import.import", "create", vals_list=[{"res_model": model, "file": csv, "file_type": "text/csv", "file_name": "regresi.csv"}])
+    options = {"quoting": '"', "separator": ",", "encoding": "utf-8", "has_headers": True, "date_format": "", "datetime_format": ""}
+    preview = api.call("base_import.import", "parse_preview", ids=[rid], options=options)
+    fields = ["/".join(preview["matches"].get(str(i)) or []) or False for i in range(len(preview["headers"]))]
+    params = {"ids": [rid], "fields": fields, "columns": preview["headers"], "options": preview["options"], "dryrun": dryrun}
+    if context:
+        params["context"] = context
+    return fields, api.call("base_import.import", "execute_import", **params)
+
+
+def check_data_import(api):
+    """Halaman Import Data: kolom dipetakan otomatis, uji tanpa simpan tidak menyimpan, galat membatalkan semuanya, impor memasukkan data."""
+    step("Impor data CSV (produk, stok awal, jurnal)")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    header = "name,default_code,categ_id,type,is_storable,list_price,standard_price\n"
+    good = header + f"Impor Regresi A {tag},IMP-A-{tag},Goods,consu,1,15000,7000\nImpor Regresi B {tag},IMP-B-{tag},Goods,consu,1,2500,1000\n"
+    count = lambda: api.call("product.template", "search_count", domain=[["default_code", "in", [f"IMP-A-{tag}", f"IMP-B-{tag}"]]])  # noqa: E731
+
+    fields, bad = import_csv(api, "product.template", good.replace("2500", "abc"), dryrun=True)
+    check(fields == ["name", "default_code", "categ_id", "type", "is_storable", "list_price", "standard_price"], "kolom CSV dipetakan otomatis ke field produk")
+    check(not bad.get("ids") and any(m["type"] == "error" and m.get("field_path") == ["list_price"] for m in bad["messages"]), "angka tidak valid ditolak dengan galat pada kolomnya")
+    _, dry = import_csv(api, "product.template", good, dryrun=True)
+    check(len(dry["ids"]) == 2 and not dry["messages"] and count() == 0, "uji tanpa simpan lulus dan tidak menyimpan produk")
+    _, real = import_csv(api, "product.template", good, dryrun=False)
+    products = api.call("product.template", "read", ids=real["ids"], fields=["name", "list_price", "standard_price", "categ_id", "is_storable"])
+    check(count() == 2 and sorted(p["list_price"] for p in products) == [2500, 15000] and all(p["is_storable"] and p["categ_id"][1] == "Goods" for p in products), "impor menyimpan produk dengan harga dan kategori yang benar")
+
+    _, stock = import_csv(api, "stock.quant", f"product_id,location_id,inventory_quantity\nIMP-A-{tag},WH/Stock,40\n", dryrun=False, context={"inventory_mode": True})
+    api.call("stock.quant", "action_apply_inventory", ids=stock["ids"])
+    onhand = api.search("stock.quant", [["product_id.default_code", "=", f"IMP-A-{tag}"], ["location_id.complete_name", "=", "WH/Stock"]], ["quantity"])
+    check(onhand and onhand[0]["quantity"] == 40, "stok awal diimpor lalu diterapkan sebagai penyesuaian persediaan")
+
+    account = api.search("account.account", [["account_type", "=", "asset_cash"]], ["code"], limit=1)[0]["code"]
+    equity = api.search("account.account", [["account_type", "=", "equity"]], ["code"], limit=1)[0]["code"]
+    lines = "ref,date,journal_id,line_ids/account_id,line_ids/name,line_ids/debit,line_ids/credit\n"
+    _, unbalanced = import_csv(api, "account.move", lines + f"Saldo Tak Seimbang {tag},2026-01-01,Miscellaneous Operations,{account},Kas,1000,0\n,,,{equity},Modal,0,900\n", dryrun=True)
+    check(not unbalanced.get("ids") and any(m["type"] == "error" and "not balanced" in m["message"] for m in unbalanced["messages"]), "jurnal tak seimbang ditolak saat uji impor")
+    _, journal = import_csv(api, "account.move", lines + f"Saldo Regresi {tag},2026-01-01,Miscellaneous Operations,{account},Kas,250000,0\n,,,{equity},Modal,0,250000\n", dryrun=False)
+    move = api.read("account.move", journal["ids"][0], ["state", "amount_total", "ref"])
+    check(len(journal["ids"]) == 1 and move["state"] == "draft" and move["amount_total"] == 250000, "jurnal banyak baris yang seimbang diimpor sebagai draf")
+    api.call("account.move", "unlink", ids=journal["ids"])
 
 
 def check_bank_reconciliation(api):
