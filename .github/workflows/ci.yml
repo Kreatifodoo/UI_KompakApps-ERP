@@ -23,6 +23,13 @@ jobs:
         run: |
           pip install pre-commit
           pre-commit run --all-files --show-diff-on-failure
+      - name: Periksa skrip operasional
+        run: |
+          command -v shellcheck >/dev/null || sudo apt-get install -y -qq shellcheck
+          shellcheck -x scripts/backup.sh scripts/restore.sh scripts/check_backup_restore.sh scripts/ops-lib.sh
+          python3 -X pycache_prefix="$RUNNER_TEMP/pyc" -m py_compile scripts/*.py
+          python3 -I scripts/healthcheck.py --help >/dev/null
+          python3 -I scripts/loadtest.py --help >/dev/null
 
   test:
     runs-on: ubuntu-24.04

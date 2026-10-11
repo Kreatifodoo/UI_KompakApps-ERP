@@ -42,6 +42,7 @@ config/odoo.conf              # konfigurasi Odoo
 deploy/                       # compose dan skrip update untuk server
 ui/                           # UI Nusara terhubung ke Odoo (nginx, sidebar, halaman P2P)
 scripts/                      # fetch-oca.sh, seed_demo.py, check_p2p_api.py (uji regresi)
+                              # operasional: backup.sh, restore.sh, check_backup_restore.sh, healthcheck.py, loadtest.py (docs/OPERATIONS.md)
 .github/workflows/            # CI (lint + test) dan CD (image + deploy)
 docs/                         # peta modul, keputusan, dan CI/CD
 ```
@@ -164,6 +165,22 @@ NUSARA_API_KEY=<api-key-uji> python3 scripts/check_p2p_api.py --yes --url http:/
 Detail CI/CD dan penyiapan server ada di [docs/CICD.md](docs/CICD.md).
 
 Untuk mengubah form: edit data di `generate_forms.py`, lalu jalankan `python3 generate_forms.py`. Jangan edit file di `forms/` langsung, karena akan tertimpa.
+
+## Operasional: backup, pemulihan, pemantauan, uji beban
+
+Skrip di `scripts/` dan prosedur lengkapnya ada di [docs/OPERATIONS.md](docs/OPERATIONS.md). Semuanya wajib diberi nama proyek Compose dan database secara eksplisit (tidak ada nilai bawaan).
+
+```bash
+# backup database + filestore + manifest (rotasi simpan 14 terbaru), cocok untuk cron
+COMPOSE_PROJECT=<proyek> ODOO_DB=<database> BACKUP_DIR=/var/backups/nusara KEEP=14 scripts/backup.sh
+# pulihkan ke database BARU lalu verifikasi (tidak menimpa database yang ada)
+COMPOSE_PROJECT=<proyek> scripts/restore.sh /var/backups/nusara/<database>_<tanggal-jam> <database-baru>
+# uji siklus backup -> ubah data -> restore -> cocokkan angka (hanya database uji)
+COMPOSE_PROJECT=<proyek> ODOO_DB=<database-uji> scripts/check_backup_restore.sh --yes
+# kesehatan (kode keluar 0/1/2 untuk cron) dan uji beban (hanya loopback tanpa --yes-remote)
+python3 -I scripts/healthcheck.py --odoo-url http://127.0.0.1:8069 --backup-dir /var/backups/nusara
+NUSARA_API_KEY=<api-key-uji> python3 -I scripts/loadtest.py --url http://127.0.0.1:8080 --users 10 --duration 30
+```
 
 ## Peta jalan
 
