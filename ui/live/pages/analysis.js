@@ -497,10 +497,20 @@ async function renderLines(cfg, query, from, to) {
   const domain = [...dateDomain(cfg, from, to)];
   if (state && cfg.state) domain.push([cfg.state.field, "=", state]);
   if (q && cfg.search?.length) domain.push(...Array(cfg.search.length - 1).fill("|"), ...cfg.search.map((s) => [s, "ilike", q]));
-  const rows = await searchRead(cfg.model, domain, cfg.fields, { order: cfg.order, limit: 300 });
+  // dari tombol pintas halaman produk: hanya baris produk (template) itu
+  const productId = cfg.fields.includes("product_id") ? Number(query.get("product")) || null : null;
+  if (productId) domain.push(["product_id.product_tmpl_id", "=", productId]);
+  const [rows, [product]] = await Promise.all([
+    searchRead(cfg.model, domain, cfg.fields, { order: cfg.order, limit: 300 }),
+    productId ? searchRead("product.template", [["id", "=", productId]], ["display_name"], { limit: 1 }) : Promise.resolve([]),
+  ]);
   exportRows = detailExport(cfg.columns, rows);
+  const clearHref = location.hash.replace(/([?&])product=\d+&?/, "$1").replace(/[?&]$/, "");
+  const productChip = productId
+    ? `<span class="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-200 text-sm text-indigo-900">Produk: <b>${esc(product?.display_name ?? `#${productId}`)}</b><a href="${esc(clearHref)}" class="text-indigo-700 underline">Semua produk</a></span>`
+    : "";
   return {
-    controls: `${searchBox(q, "Cari...")}${cfg.state ? filterSelect([["", "Semua status"], ...cfg.state.options], state) : ""}`,
+    controls: `${productChip}${searchBox(q, "Cari...")}${cfg.state ? filterSelect([["", "Semua status"], ...cfg.state.options], state) : ""}`,
     html: detailTable(cfg.columns, rows, `${rows.length} baris${rows.length >= 300 ? " (300 terbaru; persempit dengan tanggal atau pencarian)" : ""}`, "Tidak ada baris pada rentang ini."),
   };
 }

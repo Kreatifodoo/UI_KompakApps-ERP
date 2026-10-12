@@ -195,6 +195,7 @@ def main():
     check_warehouse_master(api, product)
     check_multi_warehouse(api)
     check_stock_picker(api)
+    check_product_smart_buttons(api)
     check_lots(api, vendor)
     check_removal_strategy(api, vendor)
     check_manufacturing(api)
@@ -2406,6 +2407,25 @@ def check_stock_picker(api):
     check(got == expected, f"on hand dan tersedia per produk ({len(expected)} produk) sama dengan hitungan quant langsung")
     other = api.call("stock.quant", "formatted_read_group", domain=[["location_id", "child_of", location], ["product_id", "=", -1]], groupby=["product_id"], aggregates=["quantity:sum"])
     check(other == [], "produk tanpa stok di lokasi itu tidak muncul (dianggap 0)")
+
+
+def check_product_smart_buttons(api):
+    """Tombol pintas halaman produk: angka Stok Tersedia dan Dibeli sama dengan isi halaman tujuannya (laporan stok dan Purchase Order Line yang difilter produk)."""
+    step("Tombol pintas produk: Stok Tersedia dan Dibeli")
+    # purchased_product_qty tidak tersimpan (tidak bisa dicari): ambil produk berstok lalu saring di sini
+    candidates = api.search("product.template", [["is_storable", "=", True]], ["name", "qty_available", "purchased_product_qty"], limit=100, order="id desc")
+    products = [p for p in candidates if p["purchased_product_qty"] > 0][:5]
+    check(bool(products), "ada produk berstok yang pernah dibeli untuk diuji")
+    stock_ok = buy_ok = True
+    for product in products:
+        quants = api.call("stock.quant", "formatted_read_group", domain=[["product_id.product_tmpl_id", "=", product["id"]], ["location_id.usage", "=", "internal"]], groupby=[], aggregates=["quantity:sum"])
+        on_hand = quants[0]["quantity:sum"] if quants else 0
+        lines = api.call("purchase.order.line", "formatted_read_group", domain=[["product_id.product_tmpl_id", "=", product["id"]], ["state", "=", "purchase"]], groupby=[], aggregates=["product_qty:sum"])
+        bought = lines[0]["product_qty:sum"] if lines else 0
+        stock_ok = stock_ok and abs(on_hand - product["qty_available"]) < 1e-6
+        buy_ok = buy_ok and abs(bought - product["purchased_product_qty"]) < 1e-6
+    check(stock_ok, "Stok Tersedia di tombol sama dengan jumlah quant yang dibuka laporan stok per produk")
+    check(buy_ok, "Dibeli di tombol sama dengan jumlah baris PO terkonfirmasi yang dibuka Purchase Order Line")
 
 
 def check_bank_reconciliation(api):

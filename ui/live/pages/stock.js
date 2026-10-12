@@ -37,11 +37,15 @@ export async function render(sub, query) {
   else if (filter === "reserved") domain.push(["reserved_quantity", ">", 0]);
   else if (filter === "negative") domain.push(["quantity", "<", 0]);
   if (text) domain.push("|", "|", "|", ["product_id.name", "ilike", text], ["product_id.default_code", "ilike", text], ["location_id.complete_name", "ilike", text], ["lot_id.name", "ilike", text]);
-  const [quants, gl] = await Promise.all([
+  // dari tombol pintas "Stok Tersedia" di halaman produk (id template produk)
+  const productId = Number(query.get("product")) || null;
+  if (productId) domain.push(["product_id.product_tmpl_id", "=", productId]);
+  const [quants, gl, [product]] = await Promise.all([
     searchRead("stock.quant", domain, ["product_id", "location_id", "lot_id", "quantity", "reserved_quantity", "available_quantity", "value", "product_uom_id", "product_categ_id"], {
       order: "product_id, location_id", limit: 1000,
     }),
     glBalance(),
+    productId ? searchRead("product.template", [["id", "=", productId]], ["display_name"], { limit: 1 }) : Promise.resolve([]),
   ]);
   const def = MODES[mode];
   const groups = new Map();
@@ -83,6 +87,9 @@ export async function render(sub, query) {
          .map(([key]) => `<a href="#/stock/${key}" class="px-3 py-2 ${key === mode ? "bg-indigo-600 text-white" : "hover:bg-gray-50"}">${MODE_LABEL[key]}</a>`)
          .join("")}</div>`,
     ) +
+    (productId
+      ? `<div class="mb-4 flex flex-wrap items-center justify-between gap-2 text-sm bg-indigo-50 border border-indigo-200 text-indigo-900 rounded-lg px-4 py-2"><span>Menampilkan stok produk <b>${esc(product?.display_name ?? `#${productId}`)}</b></span><a href="#/stock/${mode}" class="text-indigo-700 underline">Tampilkan semua produk</a></div>`
+      : "") +
     `<div class="grid md:grid-cols-3 gap-4 mb-4">
       ${card("Nilai stok (barang di gudang)", esc(money(totalValue)), `${groups.size} ${mode === "report" ? "produk" : "lokasi"}, biaya rata-rata`)}
       ${card("Saldo akun Persediaan (buku besar)", esc(money(gl.balance)), "dijurnal saat tagihan dan faktur diposting")}
