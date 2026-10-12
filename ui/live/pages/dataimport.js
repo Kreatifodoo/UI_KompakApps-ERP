@@ -4,13 +4,14 @@
 // CSV dikirim sebagai teks UTF-8. Excel (.xlsx) dikirim sebagai base64 lewat nusara_create_from_file (addons/nusara_base/models/base_import.py)
 // karena JSON-2 tidak membawa byte mentah; pembacaan lembar, angka, dan tanggal dikerjakan pembaca xlsx Odoo (openpyxl), D36.
 import { INPUT, app, call, esc, guarded, pageHeader, toast } from "../common.js";
+import { buildXlsx } from "../xlsx.js";
 
 const MAX_BYTES = 5 * 1024 * 1024;
 const MAX_XLSX_BYTES = 3 * 1024 * 1024; // base64 menambah sepertiga dan nginx membatasi badan permintaan 5 MB
 const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 /** f = nama field Odoo (judul kolom CSV), req = wajib, ex = isi contoh pada baris-baris template. */
-const TARGETS = {
+export const TARGETS = {
   product: {
     title: "Produk",
     model: "product.template",
@@ -209,9 +210,18 @@ function templateCsv(target) {
   return `﻿${lines.join("\r\n")}\r\n`;
 }
 
-function downloadTemplate(target) {
-  const url = URL.createObjectURL(new Blob([templateCsv(target)], { type: "text/csv;charset=utf-8" }));
-  const a = Object.assign(document.createElement("a"), { href: url, download: `template-impor-${st.key}.csv` });
+/** Template Excel: lembar "Data" (judul kolom dan contoh, yang dibaca saat impor) dan lembar "Petunjuk" (arti tiap kolom). */
+export function templateXlsx(target) {
+  return buildXlsx([
+    { name: "Data", rows: [target.columns.map((c) => c.f), ...target.rows], widths: target.columns.map((c) => Math.max(14, c.f.length + 4)) },
+    { name: "Petunjuk", rows: [["Judul kolom", "Isi", "Status"], ...target.columns.map((c) => [c.f, c.label, c.req ? "Wajib" : "Opsional"])], widths: [24, 60, 10] },
+  ]);
+}
+
+function downloadTemplate(target, kind = "csv") {
+  const blob = kind === "xlsx" ? new Blob([templateXlsx(target)], { type: XLSX_TYPE }) : new Blob([templateCsv(target)], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement("a"), { href: url, download: `template-impor-${st.key}.${kind}` });
   document.body.append(a);
   a.click();
   a.remove();
@@ -318,7 +328,7 @@ function targetCard() {
   return card(
     "1. Pilih jenis data",
     `<div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">${choices}</div>
-     <div class="mt-4 flex flex-wrap items-center gap-3"><div class="text-sm font-medium text-gray-900">Format kolom ${esc(target.title)}</div>${plainBtn("imp-template", "Unduh template CSV")}</div>
+     <div class="mt-4 flex flex-wrap items-center gap-3"><div class="text-sm font-medium text-gray-900">Format kolom ${esc(target.title)}</div>${plainBtn("imp-template-xlsx", "Unduh template Excel (.xlsx)")}${plainBtn("imp-template", "Unduh template CSV")}</div>
      <div class="mt-2 overflow-x-auto border border-gray-200 rounded-lg"><table class="w-full text-left"><thead class="bg-gray-50"><tr>
        <th class="py-2 px-3 text-xs font-semibold text-gray-600 uppercase">Judul kolom</th><th class="py-2 px-3 text-xs font-semibold text-gray-600 uppercase">Isi</th><th class="py-2 px-3 text-xs font-semibold text-gray-600 uppercase">Status</th>
      </tr></thead><tbody class="divide-y divide-gray-100">${guide}</tbody></table></div>
@@ -560,6 +570,7 @@ export async function onClick(event, el) {
       draw();
     }
   } else if (action === "imp-template") downloadTemplate(TARGETS[st.key]);
+  else if (action === "imp-template-xlsx") downloadTemplate(TARGETS[st.key], "xlsx");
   else if (action === "imp-read") await readFile(el);
   else if (action === "imp-dry") await dryRun(el);
   else if (action === "imp-run") await runImport(el);
