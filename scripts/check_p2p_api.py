@@ -2426,6 +2426,12 @@ def check_product_smart_buttons(api):
         buy_ok = buy_ok and abs(bought - product["purchased_product_qty"]) < 1e-6
     check(stock_ok, "Stok Tersedia di tombol sama dengan jumlah quant yang dibuka laporan stok per produk")
     check(buy_ok, "Dibeli di tombol sama dengan jumlah baris PO terkonfirmasi yang dibuka Purchase Order Line")
+    sold = api.search("product.template", [["sale_ok", "=", True]], ["name", "sales_count"], limit=100, order="id desc")
+    sold_ok = True
+    for product in [p for p in sold if p["sales_count"] > 0][:5]:
+        report = api.call("sale.report", "formatted_read_group", domain=[["product_tmpl_id", "=", product["id"]], ["state", "in", ["sale", "done"]]], groupby=[], aggregates=["product_uom_qty:sum"])
+        sold_ok = sold_ok and abs((report[0]["product_uom_qty:sum"] if report else 0) - product["sales_count"]) < 1e-6
+    check(sold_ok, "Terjual di tombol sama dengan jumlah Sales Order Analisis (Sales Order dan POS) yang dibuka tombolnya")
 
 
 def check_bank_reconciliation(api):

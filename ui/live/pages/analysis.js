@@ -104,7 +104,7 @@ export const REPORTS = {
       { label: "Subtotal", value: (r) => money(r.price_subtotal), right: true },
     ],
   }),
-  soanalysis: GROUP({ title: "Sales Order Analisis", model: "sale.report", dateField: "date", datetime: true, base: [["state", "in", ["sale", "done"]]], dims: SALES_DIMS, dim: "month", measures: SALES_MEASURES, note: "Sales Order yang sudah dikonfirmasi, ditambah penjualan kasir POS: Odoo menggabungkan keduanya pada laporan penjualan. Baris Sales Order saja ada di Sales Order Line." }),
+  soanalysis: GROUP({ title: "Sales Order Analisis", model: "sale.report", productField: "product_tmpl_id", dateField: "date", datetime: true, base: [["state", "in", ["sale", "done"]]], dims: SALES_DIMS, dim: "month", measures: SALES_MEASURES, note: "Sales Order yang sudah dikonfirmasi, ditambah penjualan kasir POS: Odoo menggabungkan keduanya pada laporan penjualan. Baris Sales Order saja ada di Sales Order Line." }),
   salesperson: GROUP({
     title: "Sales Person", model: "sale.report", dateField: "date", datetime: true, base: [["state", "in", ["sale", "done"]]], dims: { user_id: SALES_DIMS.user_id, team_id: SALES_DIMS.team_id, month: SALES_DIMS.month }, dim: "user_id",
     measures: SALES_MEASURES, note: "Penjualan per salesperson dan tim, termasuk penjualan kasir POS. Komisi tidak dihitung di Odoo Community.",
@@ -270,7 +270,9 @@ const dateDomain = (cfg, from, to) => [[cfg.dateField, ">=", cfg.datetime === fa
 function groupSetup(cfg, query) {
   const dimKey = cfg.dims[query.get("by")] ? query.get("by") : cfg.dim;
   const filter = cfg.filter && query.get(cfg.filter.key) ? cfg.filter.domain(query.get(cfg.filter.key)) : [];
-  return { dimKey, dim: cfg.dims[dimKey], base: [...cfg.base, ...filter] };
+  // dari tombol pintas "Terjual" di halaman produk (id template produk)
+  const productId = cfg.productField ? Number(query.get("product")) || null : null;
+  return { dimKey, dim: cfg.dims[dimKey], base: [...cfg.base, ...filter, ...(productId ? [[cfg.productField, "=", productId]] : [])], productId };
 }
 const readGroups = (cfg, dim, base, from, to, aggregates) => call(cfg.model, "formatted_read_group", { domain: [...base, ...dateDomain(cfg, from, to)], groupby: [dim.by], aggregates });
 const readMeta = async (cfg, dim) => {
@@ -349,8 +351,13 @@ export function chartSvg(points, { line = false, format = num, title = "Grafik" 
 }
 
 async function renderGroup(cfg, query, from, to) {
-  const { dimKey, dim, base } = groupSetup(cfg, query);
+  const { dimKey, dim, base, productId } = groupSetup(cfg, query);
   const aggregates = cfg.measures.map((m) => m.agg);
+  const [filterProduct] = productId ? await searchRead("product.template", [["id", "=", productId]], ["display_name"], { limit: 1 }) : [];
+  const clearHref = location.hash.replace(/([?&])product=\d+&?/, "$1").replace(/[?&]$/, "");
+  const productChip = productId
+    ? `<span class="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-200 text-sm text-indigo-900">Produk: <b>${esc(filterProduct?.display_name ?? `#${productId}`)}</b><a href="${esc(clearHref)}" class="text-indigo-700 underline">Semua produk</a></span>`
+    : "";
   const mode = COMPARISONS[query.get("cmp")] ? query.get("cmp") : "";
   const range = mode ? compareRange(from, to, mode) : null;
   const [rows, priorRows, meta] = await Promise.all([
@@ -446,7 +453,7 @@ async function renderGroup(cfg, query, from, to) {
   const plotted = (unit ? [...shown].reverse() : shown.slice(0, 12)).map((r) => ({ label: r.label, value: r.values[ci], ...(range ? { prior: r.prior?.[ci] ?? 0 } : {}) }));
   const chart = chartSvg(plotted, { line: Boolean(unit), format: FORMATS[cfg.measures[ci].fmt], title: `${cfg.measures[ci].label} per ${dim.label}${!unit && shown.length > 12 ? " (12 terbesar)" : ""}` });
   return {
-    controls: `${dimSelect}${filterSelectHtml}${compareSelect}${measureSelect}`,
+    controls: `${productChip}${dimSelect}${filterSelectHtml}${compareSelect}${measureSelect}`,
     html: `<div class="grid md:grid-cols-4 gap-4 mb-4">${cards}</div>${chart}
       <section class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto"><div class="px-4 py-3 border-b border-gray-200 text-sm font-semibold">Per ${esc(dim.label)} <span class="font-normal text-gray-500">· ${list.length} baris${cfg.drill ? " · klik nama untuk melihat rincian" : ""}</span></div>
         <table class="w-full text-left"><thead class="bg-gray-50"><tr>${[...head, ...compareHead].map((h, i) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${i ? "text-right" : ""}">${esc(h)}</th>`).join("")}<th></th></tr></thead>
