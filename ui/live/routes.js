@@ -12,7 +12,7 @@ export async function loadRoutes() {
   const action = new Map(rules.map((r) => [r.route_id[0], r.action]));
   return routes.map((r) => {
     const kind = r.supplied_wh_id ? "resupply" : (action.get(r.id) ?? "other");
-    return { ...r, kind, label: routeLabel(r, kind) };
+    return { ...r, kind, label: routeLabel(r, kind), short: routeShort(r, kind) };
   });
 }
 
@@ -21,6 +21,9 @@ const routeLabel = (route, kind) =>
     : kind === "manufacture" ? "Produksi (Manufacturing Order)"
       : kind === "resupply" ? `Suplai dari ${route.supplier_wh_id?.[1] ?? "gudang lain"} (transfer antar gudang)`
         : route.display_name;
+
+const routeShort = (route, kind) =>
+  kind === "buy" ? "Beli" : kind === "manufacture" ? "Produksi" : kind === "resupply" ? `Suplai dari ${route.supplier_wh_id?.[1] ?? "gudang lain"}` : route.display_name;
 
 /** Rute suplai antar gudang hanya berlaku untuk gudang yang disuplai; rute yang sedang terpilih tetap tampil agar tidak hilang diam-diam. */
 export const routesFor = (routes, warehouse, selected) => routes.filter((x) => !x.supplied_wh_id || x.supplied_wh_id[0] === warehouse || x.id === selected);
@@ -50,10 +53,10 @@ export function routeWarning(kind, support, tmplId) {
   return "";
 }
 
-/** Galat Odoo yang umum pada pengisian ulang, diterjemahkan; selain itu pesan aslinya dipakai apa adanya. */
-export function friendlyReplenishError(message, productName = "produk ini") {
+/** Galat Odoo yang umum pada pengisian ulang, diterjemahkan; selain itu pesan aslinya (baris pertama) dipakai apa adanya. */
+export function friendlyReplenishError(message) {
   const text = String(message ?? "");
-  if (text.includes("No rule has been found")) return `Tidak ada rute pengisian untuk ${productName}. Pilih rute Beli atau Produksi, atau lengkapi Vendor Price list atau BoM produk.`;
-  if (text.includes("no matching vendor price")) return `${productName} belum punya pemasok yang cocok (Vendor Price list), RFQ tidak bisa dibuat.`;
+  if (text.includes("No rule has been found")) return "Tidak ada rute pengisian yang berlaku. Pilih rute Beli atau Produksi, atau lengkapi Vendor Price list atau BoM produk.";
+  if (text.includes("no matching vendor price")) return "Belum ada pemasok yang cocok (Vendor Price list: pemasok, jumlah minimum, tanggal berlaku), RFQ tidak bisa dibuat.";
   return text.split("\n")[0] || "Pengisian ulang gagal.";
 }
