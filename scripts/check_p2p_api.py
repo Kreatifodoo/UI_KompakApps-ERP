@@ -194,6 +194,7 @@ def main():
     check_inventory(api, product)
     check_warehouse_master(api, product)
     check_multi_warehouse(api)
+    check_stock_picker(api)
     check_lots(api, vendor)
     check_removal_strategy(api, vendor)
     check_manufacturing(api)
@@ -2382,6 +2383,29 @@ def check_loyalty_pos(api, product, info, tag, created):
 def balanced_move(api, move_id):
     items = api.search("account.move.line", [["move_id", "=", move_id]], ["debit", "credit"])
     return abs(sum(i["debit"] for i in items) - sum(i["credit"] for i in items)) < 0.005
+
+
+def check_stock_picker(api):
+    """Pemilih produk form Transfer (ui/live/stockqty.js): on hand dan tersedia di lokasi asal, termasuk sublokasi, sama dengan hitungan langsung dari quant."""
+    step("Stok tersedia di pemilih produk (Transfer Internal)")
+    quants = api.search("stock.quant", [["location_id.usage", "=", "internal"], ["quantity", ">", 0]], ["product_id", "location_id", "quantity", "reserved_quantity"], limit=500)
+    by_location = {}
+    for q in quants:
+        by_location.setdefault(q["location_id"][0], []).append(q)
+    check(bool(by_location), "ada stok di lokasi internal untuk diuji")
+    if not by_location:
+        return
+    location = max(by_location, key=lambda k: len(by_location[k]))
+    products = sorted({q["product_id"][0] for q in by_location[location]})[:5]
+    rows = api.call("stock.quant", "formatted_read_group", domain=[["location_id", "child_of", location], ["product_id", "in", products]], groupby=["product_id"], aggregates=["quantity:sum", "reserved_quantity:sum"])
+    got = {r["product_id"][0]: (round(r["quantity:sum"], 3), round(r["quantity:sum"] - r["reserved_quantity:sum"], 3)) for r in rows}
+    expected = {}
+    for q in api.search("stock.quant", [["location_id", "child_of", location], ["product_id", "in", products]], ["product_id", "quantity", "reserved_quantity"], limit=500):
+        on_hand, available = expected.get(q["product_id"][0], (0, 0))
+        expected[q["product_id"][0]] = (round(on_hand + q["quantity"], 3), round(available + q["quantity"] - q["reserved_quantity"], 3))
+    check(got == expected, f"on hand dan tersedia per produk ({len(expected)} produk) sama dengan hitungan quant langsung")
+    other = api.call("stock.quant", "formatted_read_group", domain=[["location_id", "child_of", location], ["product_id", "=", -1]], groupby=["product_id"], aggregates=["quantity:sum"])
+    check(other == [], "produk tanpa stok di lokasi itu tidak muncul (dianggap 0)")
 
 
 def check_bank_reconciliation(api):
