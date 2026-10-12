@@ -48,7 +48,7 @@ export const MENU = [
       },
       {
         title: "Report",
-        items: [{ title: "Stock", route: "stock/report" }, { title: "Location", route: "stock/location" }, { title: "Move History", route: "moves" }, { title: "Move Analisis", route: "analysis/moveanalysis" }],
+        items: [{ title: "Stock", route: "stock/report" }, { title: "Location", route: "stock/location" }, { title: "Stock per Gudang", route: "stock/warehouse" }, { title: "Move History", route: "moves" }, { title: "Move Analisis", route: "analysis/moveanalysis" }],
       },
       { title: "Setting", route: "modsetting/inventory" },
     ],

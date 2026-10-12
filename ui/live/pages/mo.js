@@ -3,7 +3,7 @@
 // unbuild. Nilai persediaan tercatat pada pergerakan stok; Odoo tidak membuat jurnal saat produksi.
 import {
   INPUT, app, badge, call, cell, chatterHtml, closeLookup, closeModal, ctx, dateTimeText, esc, fieldBlock, filterSelect, fromInputDateTime, guarded,
-  loadMessages, money, openModal, pageHeader, readOne, readonlyValue, referenceUsers, registerLookup, rowLink, runLookup, searchBox, searchRead,
+  loadMessages, money, openModal, pageHeader, readOne, readonlyValue, referenceUsers, referenceWarehouses, registerLookup, rowLink, runLookup, searchBox, searchRead,
   selectOptions, statTiles, statusbar, table, toast, toInputDateTime, actionBar,
 } from "../common.js";
 import { printButton } from "../print.js";
@@ -112,7 +112,7 @@ async function renderList(query) {
 
 async function renderNew(query) {
   if (!form || form.id !== null) {
-    form = { id: null, product: null, bomId: null, boms: [], values: { qty: 1, start: "", deadline: "", user: ctx.user?.id ?? null, origin: "" }, prefilled: false };
+    form = { id: null, product: null, bomId: null, boms: [], values: { qty: 1, start: "", deadline: "", user: ctx.user?.id ?? null, origin: "", picking_type_id: null }, prefilled: false };
   }
   const bomParam = Number(query?.get("bom")) || null;
   if (bomParam && !form.prefilled) {
@@ -130,7 +130,7 @@ async function renderNew(query) {
       }
     }
   }
-  const users = await referenceUsers();
+  const [users, warehouses] = await Promise.all([referenceUsers(), referenceWarehouses()]);
   const v = form.values;
   const bom = form.boms.find((b) => b.id === form.bomId);
   app.innerHTML = `
@@ -148,8 +148,9 @@ async function renderNew(query) {
       ${fieldBlock("Mulai", `<input type="datetime-local" data-mo="start" value="${esc(v.start)}" class="${INPUT}">`)}
       ${fieldBlock("Batas Waktu", `<input type="datetime-local" data-mo="deadline" value="${esc(v.deadline)}" class="${INPUT}">`)}
       ${fieldBlock("Dokumen Sumber", `<input data-mo="origin" value="${esc(v.origin)}" class="${INPUT}">`)}
+      ${warehouses.length > 1 ? fieldBlock("Gudang Produksi", `<select data-mo="picking_type_id" data-kind="id" class="${INPUT}">${selectOptions(warehouses.filter((w) => w.manu_type_id).map((w) => ({ id: w.manu_type_id[0], display_name: w.display_name })), v.picking_type_id, "Otomatis (gudang utama)")}</select>`) : ""}
     </section>
-    <p class="text-xs text-gray-500 mt-3">Komponen dan produk sampingan mengikuti BoM. Kosongkan Mulai untuk memakai waktu sekarang.</p>
+    <p class="text-xs text-gray-500 mt-3">Komponen dan produk sampingan mengikuti BoM; komponen diambil dari lokasi gudang yang dipilih. Kosongkan Mulai untuk memakai waktu sekarang.</p>
     <div class="flex flex-wrap gap-2 mt-4">
       <button data-action="save-new" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Simpan sebagai Draft</button>
       <button data-action="save-confirm" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan dan Konfirmasi</button>
@@ -168,6 +169,7 @@ async function createMo() {
   if (v.start) vals.date_start = fromInputDateTime(v.start);
   if (v.deadline) vals.date_deadline = fromInputDateTime(v.deadline);
   if (v.origin.trim()) vals.origin = v.origin.trim();
+  if (v.picking_type_id) vals.picking_type_id = v.picking_type_id;
   const [id] = await call("mrp.production", "create", { vals_list: [vals] });
   return id;
 }
@@ -202,7 +204,7 @@ async function renderForm(id, query) {
     return;
   }
   moData = mo;
-  const [raw, finished, orders, users] = await Promise.all([
+  const [raw, finished, orders, users, moWarehouses] = await Promise.all([
     mo.move_raw_ids.length
       ? searchRead("stock.move", [["id", "in", mo.move_raw_ids]], ["product_id", "product_uom_qty", "quantity", "product_uom", "state", "value", "has_tracking"], { order: "id" })
       : [],
@@ -213,6 +215,7 @@ async function renderForm(id, query) {
       ? searchRead("mrp.workorder", [["id", "in", mo.workorder_ids]], ["name", "workcenter_id", "state", "duration_expected", "duration", "is_user_working"], { order: "sequence, id" })
       : [],
     referenceUsers(),
+    referenceWarehouses(),
   ]);
   const trackedMoves = raw.filter((m) => m.has_tracking && m.has_tracking !== "none").map((m) => m.id);
   const lotLines = trackedMoves.length ? await searchRead("stock.move.line", [["move_id", "in", trackedMoves]], ["move_id", "lot_id", "quantity"], { order: "id" }) : [];
@@ -322,6 +325,7 @@ async function renderForm(id, query) {
       ${fieldBlock("Produk", readonlyValue(mo.product_id[1]))}
       ${fieldBlock("Bill of Material", mo.bom_id ? `<div class="mt-1 py-2 text-sm"><a href="#/bom/${mo.bom_id[0]}" class="text-indigo-700 hover:underline">${esc(mo.bom_id[1])}</a></div>` : readonlyValue("-"))}
       ${headerFields}
+      ${moWarehouses.length > 1 ? fieldBlock("Gudang Produksi", readonlyValue(mo.picking_type_id?.[1])) : ""}
       ${fieldBlock("Lokasi Komponen", readonlyValue(mo.location_src_id[1]))}
       ${fieldBlock("Lokasi Barang Jadi", readonlyValue(mo.location_dest_id[1]))}
     </section>

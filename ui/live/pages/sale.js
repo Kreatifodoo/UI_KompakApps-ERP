@@ -4,7 +4,7 @@
 // jumlah), dialog Buat Faktur (wizard sale.advance.payment.inv), dan total.
 import {
   INPUT, actionBar, app, badge, call, cell, chatterHtml, closeLookup, closeModal, ctx, dateText, esc, fieldBlock, filterSelect, fromInputDateTime,
-  guarded, loadMessages, money, openModal, pageHeader, readOne, readonlyValue, referencePricelists, referenceTerms, referenceUsers, registerLookup,
+  guarded, loadMessages, money, openModal, pageHeader, readOne, readonlyValue, referencePricelists, referenceTerms, referenceUsers, referenceWarehouses, registerLookup,
   rowLink, runLookup, searchBox, searchRead, selectOptions, statTiles, statusbar, table, toInputDateTime, toast, dateTimeText,
 } from "../common.js";
 import { loadTaxNames, productDefaultTaxes, registerTaxes, taxCell, taxChange, taxList } from "../taxpick.js";
@@ -248,7 +248,7 @@ function readonlyLinesTable(lines, currency, showFlow) {
 async function renderForm(id) {
   closeLookup();
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
-  const [users, terms, pricelists] = await Promise.all([referenceUsers(), referenceTerms(), referencePricelists(), preloadAnalytic()]);
+  const [users, terms, pricelists, warehouses] = await Promise.all([referenceUsers(), referenceTerms(), referencePricelists(), referenceWarehouses(), preloadAnalytic()]);
   let so = null;
   let lines = [];
   let rewardLines = [];
@@ -256,7 +256,7 @@ async function renderForm(id) {
     so = await readOne("sale.order", id, [
       "name", "state", "locked", "partner_id", "client_order_ref", "date_order", "validity_date", "user_id", "origin", "payment_term_id", "pricelist_id",
       "currency_id", "delivery_count", "picking_ids", "invoice_count", "invoice_ids", "invoice_status", "delivery_status", "amount_untaxed", "amount_tax",
-      "amount_total", "loyalty_data",
+      "amount_total", "loyalty_data", "warehouse_id",
     ]);
     if (!so) {
       app.innerHTML = '<p class="text-sm text-rose-600">Dokumen tidak ditemukan.</p>';
@@ -286,9 +286,9 @@ async function renderForm(id) {
           id: so.id,
           partner: so.partner_id ? { id: so.partner_id[0], display_name: so.partner_id[1] } : null,
           client_order_ref: so.client_order_ref || "", date_order: toInputDateTime(so.date_order), validity_date: so.validity_date || "",
-          user_id: so.user_id?.[0] ?? null, origin: so.origin || "", payment_term_id: so.payment_term_id?.[0] ?? null, pricelist_id: so.pricelist_id?.[0] ?? null,
+          user_id: so.user_id?.[0] ?? null, origin: so.origin || "", payment_term_id: so.payment_term_id?.[0] ?? null, pricelist_id: so.pricelist_id?.[0] ?? null, warehouse_id: so.warehouse_id?.[0] ?? null,
           initial: {
-            partner_id: so.partner_id?.[0] ?? null, client_order_ref: so.client_order_ref || "", date_order: toInputDateTime(so.date_order),
+            warehouse_id: so.warehouse_id?.[0] ?? null, partner_id: so.partner_id?.[0] ?? null, client_order_ref: so.client_order_ref || "", date_order: toInputDateTime(so.date_order),
             validity_date: so.validity_date || "", user_id: so.user_id?.[0] ?? null, origin: so.origin || "",
             payment_term_id: so.payment_term_id?.[0] ?? null, pricelist_id: so.pricelist_id?.[0] ?? null,
           },
@@ -304,7 +304,7 @@ async function renderForm(id) {
         }
       : {
           id: null, partner: null, client_order_ref: "", date_order: "", validity_date: "", user_id: ctx.user.id, origin: "", payment_term_id: null,
-          pricelist_id: null, lines: [emptyLine()], removed: [],
+          pricelist_id: null, warehouse_id: null, lines: [emptyLine()], removed: [],
         };
   }
 
@@ -320,6 +320,7 @@ async function renderForm(id) {
        ${fieldBlock("Daftar Harga", `<select data-value="pricelist_id" class="${INPUT}">${selectOptions(pricelists, f.pricelist_id, "Otomatis dari pelanggan")}</select>`)}
        ${fieldBlock("Syarat Pembayaran", `<select data-value="payment_term_id" class="${INPUT}">${selectOptions(terms, f.payment_term_id, "Otomatis dari pelanggan")}</select>`)}
        ${fieldBlock("Dokumen Sumber", `<input data-value="origin" value="${esc(f.origin)}" class="${INPUT}">`)}
+       ${warehouses.length > 1 ? fieldBlock("Gudang Pengiriman", `<select data-value="warehouse_id" class="${INPUT}">${selectOptions(warehouses, f.warehouse_id, "Otomatis (gudang utama)")}</select>`) : ""}
        ${fieldBlock("Mata Uang", readonlyValue(currency))}`
     : `${fieldBlock("Pelanggan", readonlyValue(so.partner_id?.[1]))}
        ${fieldBlock("Referensi Pelanggan", readonlyValue(so.client_order_ref))}
@@ -329,6 +330,7 @@ async function renderForm(id) {
        ${fieldBlock("Daftar Harga", readonlyValue(so.pricelist_id?.[1]))}
        ${fieldBlock("Syarat Pembayaran", readonlyValue(so.payment_term_id?.[1]))}
        ${fieldBlock("Dokumen Sumber", readonlyValue(so.origin))}
+       ${warehouses.length > 1 ? fieldBlock("Gudang Pengiriman", readonlyValue(so.warehouse_id?.[1])) : ""}
        ${fieldBlock("Mata Uang", readonlyValue(currency))}`;
 
   const totals = so
@@ -416,7 +418,7 @@ function changedHeader() {
   const f = form;
   const current = {
     partner_id: f.partner?.id ?? null, client_order_ref: f.client_order_ref, date_order: f.date_order, validity_date: f.validity_date,
-    user_id: Number(f.user_id) || null, origin: f.origin, payment_term_id: Number(f.payment_term_id) || null, pricelist_id: Number(f.pricelist_id) || null,
+    user_id: Number(f.user_id) || null, origin: f.origin, payment_term_id: Number(f.payment_term_id) || null, pricelist_id: Number(f.pricelist_id) || null, warehouse_id: Number(f.warehouse_id) || null,
   };
   const initial = f.initial ?? {};
   const header = {};
@@ -428,6 +430,7 @@ function changedHeader() {
   // Syarat bayar dan daftar harga kosong pada quotation baru dihitung Odoo dari pelanggan.
   if (f.id ? differs("payment_term_id") : current.payment_term_id) header.payment_term_id = current.payment_term_id || false;
   if (f.id ? differs("pricelist_id") : current.pricelist_id) header.pricelist_id = current.pricelist_id || false;
+  if (f.id ? differs("warehouse_id") : current.warehouse_id) header.warehouse_id = current.warehouse_id || false;
   if (current.date_order && differs("date_order")) header.date_order = fromInputDateTime(current.date_order);
   if (f.id ? differs("validity_date") : current.validity_date) header.validity_date = current.validity_date || false;
   return header;

@@ -17,6 +17,7 @@ let refs = null;
 let last = { sub: "", query: new URLSearchParams() };
 export const leave = () => {
   form = null;
+  refs = null; // gudang dan rute bisa berubah di halaman lain (D42)
 };
 const reload = () => render(last.sub, last.query);
 
@@ -34,7 +35,7 @@ async function references() {
   refs ??= {
     warehouses: await searchRead("stock.warehouse", [], ["display_name", "lot_stock_id"], { order: "name" }),
     locations: await searchRead("stock.location", [["usage", "=", "internal"]], ["display_name"], { order: "complete_name" }),
-    routes: await searchRead("stock.route", [], ["display_name"], { order: "sequence, name" }),
+    routes: await searchRead("stock.route", [["product_selectable", "=", true]], ["display_name", "supplied_wh_id"], { order: "sequence, name" }),
   };
   return refs;
 }
@@ -53,7 +54,7 @@ async function renderList(query) {
   const body = rows
     .map((r) =>
       rowLink(`#/orderpoint/${r.id}`, [
-        cell(r.product_id[1], { strong: true }), cell(r.location_id[1]),
+        cell(r.product_id[1], { strong: true }), cell(r.location_id[1]), cell(r.route_id?.[1] ?? "-"),
         cell(nf.format(r.product_min_qty), { right: true }), cell(nf.format(r.product_max_qty), { right: true }),
         cell(nf.format(r.qty_on_hand), { right: true }), cell(nf.format(r.qty_forecast), { right: true }),
         cell(r.qty_to_order > 0 ? badge({ x: [nf.format(r.qty_to_order), "warning"] }, "x") : "-", { raw: true }), cell(TRIGGERS[r.trigger] ?? r.trigger),
@@ -67,7 +68,7 @@ async function renderList(query) {
        <a href="#/orderpoint/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>Aturan Baru</a>`,
     ) +
     table(
-      [{ label: "Produk" }, { label: "Lokasi" }, { label: "Min", right: true }, { label: "Maks", right: true }, { label: "Tersedia", right: true }, { label: "Prakiraan", right: true }, { label: "Perlu Dipesan", right: true }, { label: "Pemicu" }],
+      [{ label: "Produk" }, { label: "Lokasi" }, { label: "Rute" }, { label: "Min", right: true }, { label: "Maks", right: true }, { label: "Tersedia", right: true }, { label: "Prakiraan", right: true }, { label: "Perlu Dipesan", right: true }, { label: "Pemicu" }],
       body,
       "Belum ada aturan stok minimum. Tambahkan aturan agar pengisian ulang bisa dipicu.",
     ) +
@@ -103,12 +104,22 @@ async function renderForm(id) {
       ${fieldBlock("Pemicu", `<select data-op="trigger" class="${INPUT}">${Object.entries(TRIGGERS).map(([k, label]) => `<option value="${k}" ${k === f.trigger ? "selected" : ""}>${esc(label)}</option>`).join("")}</select>`)}
       ${fieldBlock("Stok Minimum", `<input type="number" min="0" step="any" data-op="min" value="${esc(f.min)}" class="${INPUT} text-right">`)}
       ${fieldBlock("Stok Maksimum", `<input type="number" min="0" step="any" data-op="max" value="${esc(f.max)}" class="${INPUT} text-right">`)}
-      ${fieldBlock("Rute (opsional)", `<select data-op="route" class="${INPUT}">${selectOptions(r.routes, f.route, "Otomatis dari produk")}</select>`)}
+      ${fieldBlock("Rute (opsional)", `<select data-op="route" class="${INPUT}">${selectOptions(routesFor(r, f.warehouse, f.route), f.route, "Otomatis dari produk (beli dari pemasok)")}</select>`)}
     </section>
+    ${supplyNote(r, f)}
     <p class="text-xs text-gray-500 mt-3">Bila prakiraan stok turun di bawah minimum, jumlah yang dipesan = maksimum dikurangi prakiraan. Pemasok dan harga diambil dari Vendor Price list produk.</p>
     <div class="flex gap-2 mt-4"><button data-action="save" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
       <a href="#/orderpoint" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a></div>`;
 }
+
+/** Rute suplai antar gudang hanya berlaku untuk gudang yang disuplai; rute yang sedang terpilih tetap tampil agar tidak hilang diam-diam. */
+const routesFor = (r, warehouse, selected) => r.routes.filter((x) => !x.supplied_wh_id || x.supplied_wh_id[0] === warehouse || x.id === selected);
+const supplyNote = (r, f) => {
+  const route = r.routes.find((x) => x.id === f.route);
+  return route?.supplied_wh_id
+    ? `<p class="mt-3 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3">Rute suplai antar gudang: kekurangan stok dipenuhi lewat transfer dari gudang pemasok (keluar ke lokasi transit, lalu diterima di gudang ini), bukan lewat RFQ. Dokumennya dibuka di <a href="#/transfer?scope=transit" class="underline">Transfer Antar Gudang</a>.</p>`
+    : "";
+};
 
 async function persist() {
   const f = form;
@@ -124,6 +135,16 @@ async function persist() {
   }
   const [id] = await call("stock.warehouse.orderpoint", "create", { vals_list: [vals] });
   return id;
+}
+
+/** Ganti gudang -> lokasi bawaan gudang itu dan rute yang tidak berlaku dilepas; ganti rute -> catatan suplai diperbarui. */
+async function changed(what) {
+  const r = await references();
+  if (what === "warehouse") {
+    form.location = r.warehouses.find((w) => w.id === form.warehouse)?.lot_stock_id?.[0] ?? form.location;
+    if (!routesFor(r, form.warehouse, null).some((x) => x.id === form.route)) form.route = null;
+  }
+  await renderForm(form.id);
 }
 
 export async function onClick(event, el) {
@@ -152,7 +173,10 @@ export async function onClick(event, el) {
 
 export function onInput(event, el) {
   if (!form) return;
-  if (el.dataset.op) form[el.dataset.op] = ["warehouse", "location", "route"].includes(el.dataset.op) ? Number(el.value) || null : el.value;
+  if (el.dataset.op) {
+    form[el.dataset.op] = ["warehouse", "location", "route"].includes(el.dataset.op) ? Number(el.value) || null : el.value;
+    if (el.dataset.op === "warehouse" || el.dataset.op === "route") changed(el.dataset.op);
+  }
   else if (el.dataset.lookup === "op-product") {
     form.product = null;
     runLookup(el, 250);

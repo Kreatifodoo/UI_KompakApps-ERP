@@ -249,6 +249,9 @@ export const resetReferences = () => {
 };
 /** Apakah pengguna saat ini termasuk grup Odoo (fitur yang diaktifkan lewat pengaturan, mis. Lots & Serial Numbers). */
 export const hasGroup = (group) => reference(`group-${group}`, () => call("res.users", "has_group", { ids: [ctx.user.id], group_ext_id: group }).then(Boolean));
+/** Gudang aktif beserta tipe operasi penerimaan, pengiriman, dan produksinya; pemilih gudang di dokumen hanya muncul bila ada lebih dari satu (D42). */
+export const referenceWarehouses = () =>
+  reference("warehouses", () => searchRead("stock.warehouse", [], ["display_name", "code", "lot_stock_id", "in_type_id", "out_type_id", "manu_type_id"], { order: "name" }));
 export const referenceTerms = () => reference("terms", () => searchRead("account.payment.term", [], ["display_name"], { limit: 50 }));
 export const referenceCurrencies = () => reference("currencies", () => searchRead("res.currency", [["active", "=", true]], ["display_name"], { order: "name" }));
 export const referenceCountries = () => reference("countries", () => searchRead("res.country", [], ["display_name", "code"], { order: "name" }));
