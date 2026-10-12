@@ -1,6 +1,6 @@
 // Analytic Account (account.analytic.account): akun analitik untuk melacak pendapatan dan biaya per proyek, departemen, atau
 // pusat biaya. Terkait Analytic Plan (pengelompokan). Laporannya ada di Accounting › Reporting › Analytic Report.
-import { money, searchRead } from "../common.js";
+import { money, resetReferences, searchRead } from "../common.js";
 import { createMasterPage } from "./masters.js";
 
 const page = createMasterPage({
@@ -17,6 +17,7 @@ const page = createMasterPage({
     { label: "Saldo", value: (r) => money(r.balance), right: true },
   ],
   search: ["name", "code"],
+  onSaved: resetReferences, // cache akun dan plan pada pemilih analitik (analyticpick.js)
   headerExtra: '<a href="#/analyticplan" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50"><i class="fas fa-layer-group mr-2"></i>Plan</a>',
   fields: [
     { key: "name", label: "Nama", type: "text", required: true },

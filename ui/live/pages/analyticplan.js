@@ -1,6 +1,6 @@
 // Analytic Plan (account.analytic.plan): pengelompokan akun analitik, bisa bertingkat.
 import { createMasterPage } from "./masters.js";
-import { searchRead } from "../common.js";
+import { resetReferences, searchRead } from "../common.js";
 
 const APPLICABILITY = { optional: "Opsional", mandatory: "Wajib", unavailable: "Tidak tersedia" };
 
@@ -14,6 +14,7 @@ const page = createMasterPage({
     { label: "Penggunaan Bawaan", value: (r) => APPLICABILITY[r.default_applicability] ?? "-" },
   ],
   search: ["name"],
+  onSaved: resetReferences, // cache akun dan plan pada pemilih analitik (analyticpick.js)
   headerExtra: '<a href="#/analytic" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50"><i class="fas fa-diagram-project mr-2"></i>Akun Analitik</a>',
   fields: [
     { key: "name", label: "Nama Plan", type: "text", required: true },

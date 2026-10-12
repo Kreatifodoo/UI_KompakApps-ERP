@@ -20,6 +20,7 @@ Setiap menu pada sidebar prototipe sudah punya halaman kecuali tiga kelompok pad
 | 4.2 | Budget Plan Master, Budget, Budget Report | Agen B | Selesai (D31): OCA `mis_builder_budget` per akun |
 | 4.3 | Sales › Report › Commissions | Ditunda | Tidak ada di Odoo Community; butuh OCA `sale_commission` dan keputusan aturan komisi |
 | 4.4 | Drill-down dan perbandingan periode di laporan analisis | Selesai (D37) | Hanya UI (`analysis.js`): baris rincian per kelompok dengan tautan dokumen, pembanding periode sebelumnya atau tahun lalu, CSV mengikuti; sisa: grafik dan komisi |
+| 4.5 | Akun analitik (dan anggaran) bisa dipilih pada baris transaksi | Selesai (D39) | Pemilih distribusi bersama `analyticpick.js` di PR, RFQ/PO, Quotation/SO, tagihan, faktur, dan nota; dialog menampilkan sisa anggaran terkonfirmasi; sisa: ubah analitik pada dokumen terkonfirmasi, form jurnal manual, kolom analitik pada cetakan |
 
 ## Antrian Fase 5 (pengerasan)
 

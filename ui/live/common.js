@@ -238,8 +238,14 @@ const reference = (key, loader) =>
     delete refCache[key]; // jangan simpan kegagalan: muat ulang pada pemanggilan berikutnya
     throw error;
   }));
+const resetHooks = [];
+/** Modul lain yang menyimpan cache referensi sendiri (mis. analyticpick.js) mendaftar di sini agar ikut dikosongkan. */
+export const onResetReferences = (fn) => {
+  resetHooks.push(fn);
+};
 export const resetReferences = () => {
   for (const key of Object.keys(refCache)) delete refCache[key];
+  for (const fn of resetHooks) fn();
 };
 /** Apakah pengguna saat ini termasuk grup Odoo (fitur yang diaktifkan lewat pengaturan, mis. Lots & Serial Numbers). */
 export const hasGroup = (group) => reference(`group-${group}`, () => call("res.users", "has_group", { ids: [ctx.user.id], group_ext_id: group }).then(Boolean));
