@@ -217,6 +217,7 @@ def main():
     check_loyalty(api, product)
     check_analysis_drill(api)
     check_inventory_valuation(api, vendor)
+    check_replenish_routes(api, vendor)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -2754,6 +2755,214 @@ def check_inventory_valuation(api, vendor):
     check(abs(stock_a(7) - 2_200_000) < 0.5 and abs(gl(7) - 2_200_000) < 0.5, "hari -7: stok dan buku besar 2.200.000 (kedua tagihan terposting)")
     check(abs(stock_a(0) - gl(0) + 770_000) < 0.5, "hari ini: selisih stok terhadap buku besar = -770.000, yaitu pengiriman 550.000 dan penyesuaian 220.000 yang belum dijurnal")
     check(abs(gl(0) - 2_200_000) < 0.5, "saldo buku besar akun uji hari ini 2.200.000 (dua tagihan)")
+
+
+def check_replenish_routes(api, vendor):
+    """Replenishment digerakkan permintaan dan rute Beli, Produksi, suplai antar gudang (ui/live/pages/replenish.js, orderpoint.js, routes.js, D47):
+    aturan manual otomatis untuk produk bertuntutan tanpa aturan min/maks (action_open_orderpoints), rute dan pemicu per aturan, dokumen yang terbentuk."""
+    import random
+
+    step("Replenishment dari permintaan: aturan manual otomatis, rute Beli, Produksi, suplai antar gudang, pemicu Otomatis")
+    tag = f"{random.randint(0, 99999):05d}"
+    api.call("res.config.settings", "execute", ids=api.call("res.config.settings", "create", vals_list=[{"group_stock_multi_locations": True, "group_stock_adv_location": True, "group_mrp_routings": True}]))
+    goods = api.search("product.category", [["name", "=", "Goods"]], ["id"], limit=1)
+    customer = api.search("res.partner", [["name", "=", "PT Pelanggan Nusantara"]], ["id"], limit=1)[0]["id"]
+    wh1 = api.search("stock.warehouse", [], ["id", "lot_stock_id"], order="id", limit=1)[0]
+    stock_location = wh1["lot_stock_id"][0]
+    mode = {"inventory_mode": True}
+    cleanup = {"po": [], "mo": [], "so": [], "picking": []}
+
+    def new_product(name, seller=True):
+        vals = {"name": f"{name} {tag}", "type": "consu", "is_storable": True, "categ_id": goods[0]["id"] if goods else False, "standard_price": 1000.0, "list_price": 2000.0}
+        if seller:
+            vals["seller_ids"] = [[0, 0, {"partner_id": vendor["id"], "min_qty": 1.0, "price": 900.0}]]
+        [tmpl] = api.call("product.template", "create", vals_list=[vals])
+        info = api.read("product.template", tmpl, ["product_variant_id", "uom_id"])
+        return {"tmpl": tmpl, "id": info["product_variant_id"][0], "uom": info["uom_id"][0]}
+
+    def set_stock(product, location, quantity):
+        [quant] = api.call("stock.quant", "create", vals_list=[{"product_id": product, "location_id": location, "inventory_quantity": quantity}], context=mode)
+        api.call("stock.quant", "action_apply_inventory", ids=[quant], context=mode)
+
+    def demand(product, quantity):
+        [so] = api.call("sale.order", "create", vals_list=[{"partner_id": customer, "order_line": [[0, 0, {"product_id": product["id"], "product_uom_qty": quantity}]]}])
+        api.call("sale.order", "action_confirm", ids=[so])
+        cleanup["so"].append(so)
+        return so
+
+    def rules(product):
+        return api.search("stock.warehouse.orderpoint", [["product_id", "=", product["id"]]], [
+            "id", "name", "trigger", "route_id", "effective_route_id", "qty_to_order", "qty_forecast", "qty_on_hand", "product_min_qty", "product_max_qty", "location_id", "warehouse_id",
+        ])
+
+    def replenish(rule):
+        """Pengisian ulang satu aturan seperti tombol Pesan: label dokumen dari pemberitahuan Odoo."""
+        notice = api.call("stock.warehouse.orderpoint", "action_replenish", ids=[rule])
+        return [link["label"] for link in notice.get("params", {}).get("links", [])] if isinstance(notice, dict) else []
+
+    def fails(call, *needles):
+        try:
+            call()
+        except RuntimeError as error:
+            return all(n in str(error) for n in needles)
+        return False
+
+    # rute: domain yang dipakai UI (route_id Odoo) memuat Beli dan Produksi walau product_selectable-nya salah
+    route_domain = ["|", ["product_selectable", "=", True], ["rule_ids.action", "in", ["buy", "manufacture"]]]
+    selectable = {r["id"]: r for r in api.search("stock.route", route_domain, ["display_name", "product_selectable", "supplied_wh_id"])}
+    buy_rule = api.search("stock.rule", [["action", "=", "buy"]], ["route_id"], limit=1)[0]["route_id"][0]
+    make_rule = api.search("stock.rule", [["action", "=", "manufacture"]], ["route_id"], limit=1)[0]["route_id"][0]
+    check(buy_rule in selectable and make_rule in selectable, "pilihan rute aturan stok memuat Beli dan Produksi (bukan hanya product_selectable)")
+    check(not selectable[buy_rule]["product_selectable"] and not selectable[make_rule]["product_selectable"], "Beli dan Produksi bukan rute product_selectable (filter lama menyembunyikannya)")
+
+    # 1. produk bervendor tanpa aturan dan tanpa stok: Sales Order memunculkan aturan manual dengan rute Beli
+    item = new_product("Barang Permintaan")
+    check(not rules(item), "produk baru belum punya aturan stok")
+    demand(item, 7.0)
+    api.call("stock.warehouse.orderpoint", "action_open_orderpoints")
+    [rule] = rules(item)
+    check(rule["trigger"] == "manual" and rule["product_min_qty"] == 0 and rule["product_max_qty"] == 0, "permintaan tanpa stok membuat aturan manual (min = maks = 0)")
+    check(rule["qty_forecast"] == -7.0 and rule["qty_to_order"] == 7.0 and rule["qty_on_hand"] == 0.0, "prakiraan -7, perlu dipesan 7 (sama dengan permintaan)")
+    check(rule["location_id"][0] == stock_location and rule["effective_route_id"] and rule["effective_route_id"][0] == buy_rule and not rule["route_id"], "rute kosong, rute berlaku bawaan produk bervendor = Beli")
+    check(any(r["id"] == rule["id"] for r in api.search("stock.warehouse.orderpoint", [["qty_to_order", ">", 0]], ["id"])), "aturan muncul pada daftar Replenishment (qty_to_order > 0)")
+    api.call("stock.warehouse.orderpoint", "action_open_orderpoints")
+    check(len(rules(item)) == 1, "membuka halaman berulang tidak menggandakan aturan")
+    labels = replenish(rule["id"])
+    rfq = api.search("purchase.order", [["name", "in", labels]], ["id", "state", "partner_id"]) if labels else []
+    check(len(rfq) == 1 and rfq[0]["state"] == "draft" and rfq[0]["partner_id"][0] == vendor["id"], f"rute Beli: RFQ draft ke pemasok produk terbentuk dan disebut pemberitahuan: {labels}")
+    cleanup["po"].extend(r["id"] for r in rfq)
+    line = api.search("purchase.order.line", [["product_id", "=", item["id"]]], ["product_qty", "price_unit"])
+    check(len(line) == 1 and line[0]["product_qty"] == 7.0 and line[0]["price_unit"] == 900.0, "baris RFQ 7 unit dengan harga Vendor Price list 900")
+    check(not rules(item), "aturan manual yang dibuat otomatis hilang setelah dipesan")
+
+    # 2. produk ber-BoM: rute bawaan Produksi, hasilnya Manufacturing Order (komponen ikut), bukan RFQ
+    comp = new_product("Komponen Replenish")
+    set_stock(comp["id"], stock_location, 100.0)
+    made = new_product("Barang Rakitan")
+    [bom] = api.call("mrp.bom", "create", vals_list=[{
+        "product_tmpl_id": made["tmpl"], "product_qty": 1.0, "product_uom_id": made["uom"], "code": f"BOM-RP-{tag}",
+        "bom_line_ids": [[0, 0, {"product_id": comp["id"], "product_qty": 2.0, "product_uom_id": comp["uom"]}]],
+    }])
+    demand(made, 3.0)
+    api.call("stock.warehouse.orderpoint", "action_open_orderpoints")
+    [rule] = rules(made)
+    check(rule["effective_route_id"] and rule["effective_route_id"][0] == make_rule and rule["qty_to_order"] == 3.0, "produk ber-BoM: rute bawaan Produksi, perlu dipesan 3")
+    labels = replenish(rule["id"])
+    mos = api.search("mrp.production", [["name", "in", labels]], ["id", "state", "product_id", "product_qty", "bom_id"]) if labels else []
+    check(len(mos) == 1 and mos[0]["product_id"][0] == made["id"] and mos[0]["product_qty"] == 3.0 and mos[0]["bom_id"][0] == bom and mos[0]["state"] == "confirmed", f"rute Produksi: MO 3 unit dari BoM terbentuk dan dikonfirmasi: {labels}")
+    cleanup["mo"].extend(m["id"] for m in mos)
+    raw = api.search("stock.move", [["raw_material_production_id", "in", [m["id"] for m in mos]]], ["product_id", "product_uom_qty"])
+    check(len(raw) == 1 and raw[0]["product_id"][0] == comp["id"] and raw[0]["product_uom_qty"] == 6.0, "MO membawa komponen 3 x 2 = 6")
+    check(not api.search("purchase.order.line", [["product_id", "=", made["id"]]], ["id"]), "rute Produksi tidak membuat RFQ")
+
+    # 3. rute yang dipilih eksplisit mengalahkan bawaan: produk ber-BoM dan bervendor dipaksa Beli, lalu aturan min/maks dengan rute Produksi (Reorder Level)
+    forced = new_product("Barang Rakitan Dibeli")
+    api.call("mrp.bom", "create", vals_list=[{
+        "product_tmpl_id": forced["tmpl"], "product_qty": 1.0, "product_uom_id": forced["uom"],
+        "bom_line_ids": [[0, 0, {"product_id": comp["id"], "product_qty": 1.0, "product_uom_id": comp["uom"]}]],
+    }])
+    demand(forced, 4.0)
+    api.call("stock.warehouse.orderpoint", "action_open_orderpoints")
+    [rule] = rules(forced)
+    api.call("stock.warehouse.orderpoint", "write", ids=[rule["id"]], vals={"route_id": buy_rule})
+    [after] = rules(forced)
+    check(after["route_id"][0] == buy_rule and after["effective_route_id"][0] == buy_rule, "rute Beli dipilih eksplisit pada aturan (tersimpan dan berlaku)")
+    labels = replenish(rule["id"])
+    rfq = api.search("purchase.order", [["name", "in", labels]], ["id"]) if labels else []
+    check(len(rfq) == 1 and not api.search("mrp.production", [["product_id", "=", forced["id"]]], ["id"]), "produk ber-BoM dengan rute Beli menghasilkan RFQ, bukan MO")
+    cleanup["po"].extend(r["id"] for r in rfq)
+    stocked = new_product("Barang Reorder Produksi")
+    api.call("mrp.bom", "create", vals_list=[{
+        "product_tmpl_id": stocked["tmpl"], "product_qty": 1.0, "product_uom_id": stocked["uom"],
+        "bom_line_ids": [[0, 0, {"product_id": comp["id"], "product_qty": 1.0, "product_uom_id": comp["uom"]}]],
+    }])
+    set_stock(stocked["id"], stock_location, 2.0)
+    [rule_id] = api.call("stock.warehouse.orderpoint", "create", vals_list=[{
+        "product_id": stocked["id"], "warehouse_id": wh1["id"], "location_id": stock_location, "product_min_qty": 5.0, "product_max_qty": 10.0, "trigger": "manual", "route_id": make_rule,
+    }])
+    check(api.read("stock.warehouse.orderpoint", rule_id, ["qty_to_order"])["qty_to_order"] == 8.0, "aturan min 5, maks 10, stok 2 dengan rute Produksi meminta 8 unit")
+    labels = replenish(rule_id)
+    mos = api.search("mrp.production", [["name", "in", labels]], ["id", "product_id", "product_qty"]) if labels else []
+    check(len(mos) == 1 and mos[0]["product_id"][0] == stocked["id"] and mos[0]["product_qty"] == 8.0, f"Reorder Level dengan rute Produksi menghasilkan MO 8 unit: {labels}")
+    cleanup["mo"].extend(m["id"] for m in mos)
+    check(bool(api.search("stock.warehouse.orderpoint", [["id", "=", rule_id]], ["id"])), "aturan min/maks buatan pengguna tidak ikut terhapus setelah dipesan")
+    api.call("stock.warehouse.orderpoint", "unlink", ids=[rule_id])
+
+    # 4. galat yang diterjemahkan UI: tanpa rute sama sekali, Beli tanpa pemasok, Produksi tanpa BoM tetap membuat MO tanpa komponen
+    bare = new_product("Barang Tanpa Rute", seller=False)
+    demand(bare, 2.0)
+    api.call("stock.warehouse.orderpoint", "action_open_orderpoints")
+    [rule] = rules(bare)
+    check(not rule["effective_route_id"], "produk tanpa pemasok dan tanpa BoM: tidak ada rute bawaan")
+    check(fails(lambda: replenish(rule["id"]), "No rule has been found"), "pengisian ulang tanpa rute ditolak Odoo ('No rule has been found', diterjemahkan UI)")
+    api.call("stock.warehouse.orderpoint", "write", ids=[rule["id"]], vals={"route_id": buy_rule})
+    check(fails(lambda: replenish(rule["id"]), "no matching vendor price"), "rute Beli tanpa pemasok ditolak Odoo ('no matching vendor price', diterjemahkan UI)")
+    api.call("stock.warehouse.orderpoint", "write", ids=[rule["id"]], vals={"route_id": make_rule})
+    labels = replenish(rule["id"])
+    mos = api.search("mrp.production", [["name", "in", labels]], ["id", "bom_id", "product_qty"]) if labels else []
+    check(len(mos) == 1 and not mos[0]["bom_id"] and mos[0]["product_qty"] == 2.0, "rute Produksi tanpa BoM tetap membuat MO tetapi tanpa BoM (alasan peringatan di UI)")
+    check(not api.search("stock.move", [["raw_material_production_id", "in", [m["id"] for m in mos]]], ["id"]), "MO tanpa BoM tidak punya komponen")
+    cleanup["mo"].extend(m["id"] for m in mos)
+    check(bool(api.search("mrp.bom", [["product_tmpl_id", "=", made["tmpl"]], ["type", "=", "normal"]], ["id"])) and not api.search("mrp.bom", [["product_tmpl_id", "=", bare["tmpl"]]], ["id"]), "pencarian BoM per produk (dasar peringatan UI) membedakan produk ber-BoM dan tanpa BoM")
+
+    # 5. pemicu Otomatis: tanpa klik Pesan, penjadwal Odoo membuat RFQ; jumlah aturan otomatis tidak bisa diedit
+    auto = new_product("Barang Otomatis")
+    [auto_rule] = api.call("stock.warehouse.orderpoint", "create", vals_list=[{
+        "product_id": auto["id"], "warehouse_id": wh1["id"], "location_id": stock_location, "product_min_qty": 5.0, "product_max_qty": 12.0, "trigger": "auto",
+    }])
+    info = api.read("stock.warehouse.orderpoint", auto_rule, ["qty_to_order", "trigger"])
+    check(info["trigger"] == "auto" and info["qty_to_order"] == 12.0, "aturan otomatis (min 5, maks 12, stok 0) menghitung 12 unit")
+    check(not api.search("purchase.order.line", [["product_id", "=", auto["id"]]], ["id"]), "aturan otomatis tidak membuat apa pun sebelum penjadwal berjalan")
+    api.call("stock.warehouse.orderpoint", "write", ids=[auto_rule], vals={"qty_to_order": 50.0})
+    check(api.read("stock.warehouse.orderpoint", auto_rule, ["qty_to_order"])["qty_to_order"] == 12.0, "jumlah aturan otomatis tidak bisa diedit (tulisan diabaikan Odoo)")
+    api.call("stock.rule", "run_scheduler")
+    lines = api.search("purchase.order.line", [["product_id", "=", auto["id"]]], ["product_qty", "order_id", "state"])
+    check(len(lines) == 1 and lines[0]["product_qty"] == 12.0 and lines[0]["state"] == "draft", "penjadwal membuat RFQ 12 unit untuk aturan otomatis tanpa klik Pesan")
+    cleanup["po"].extend(ln["order_id"][0] for ln in lines)
+    check(api.read("stock.warehouse.orderpoint", auto_rule, ["qty_to_order"])["qty_to_order"] == 0.0, "setelah RFQ dibuat, aturan otomatis tidak lagi meminta pesanan")
+    api.call("stock.warehouse.orderpoint", "write", ids=[auto_rule], vals={"trigger": "manual"})
+    check(api.read("stock.warehouse.orderpoint", auto_rule, ["trigger"])["trigger"] == "manual", "pemicu bisa diganti ke Manual")
+    api.call("stock.warehouse.orderpoint", "unlink", ids=[auto_rule])
+
+    # 6. rute suplai antar gudang: gudang kedua disuplai gudang utama; aturan dengan rute itu membuat transfer
+    code = f"R{tag[:4]}"
+    [wh2_id] = api.call("stock.warehouse", "create", vals_list=[{"name": f"Gudang Replenish {tag}", "code": code, "resupply_wh_ids": [[6, 0, [wh1["id"]]]]}])
+    wh2 = api.read("stock.warehouse", wh2_id, ["lot_stock_id", "resupply_route_ids"])
+    [supply] = api.search("stock.route", [["id", "in", wh2["resupply_route_ids"]]], ["supplied_wh_id", "supplier_wh_id"])
+    check(supply["supplied_wh_id"][0] == wh2_id and supply["supplier_wh_id"][0] == wh1["id"], "rute suplai gudang utama -> gudang kedua terbentuk")
+    check(bool(api.search("stock.route", route_domain + [["id", "=", supply["id"]]], ["id"])), "rute suplai antar gudang ada pada pilihan rute aturan stok")
+    moved = new_product("Barang Suplai Gudang")
+    set_stock(moved["id"], stock_location, 20.0)
+    [supply_rule] = api.call("stock.warehouse.orderpoint", "create", vals_list=[{
+        "product_id": moved["id"], "warehouse_id": wh2_id, "location_id": wh2["lot_stock_id"][0], "product_min_qty": 6.0, "product_max_qty": 6.0, "trigger": "manual", "route_id": supply["id"],
+    }])
+    check(api.read("stock.warehouse.orderpoint", supply_rule, ["qty_to_order"])["qty_to_order"] == 6.0, "aturan gudang kedua (min = maks = 6, stok 0) meminta 6 unit")
+    last_picking = api.search("stock.picking", [], ["id"], order="id desc", limit=1)[0]["id"]
+    rule_name = api.read("stock.warehouse.orderpoint", supply_rule, ["name"])["name"]
+    labels = replenish(supply_rule)
+    transfers = api.search("stock.picking", [["id", ">", last_picking], ["origin", "=", rule_name]], ["id", "name", "picking_type_code", "state"], order="id")
+    check(len(transfers) == 2 and {t["picking_type_code"] for t in transfers} == {"outgoing", "incoming"}, f"rute suplai: transfer keluar dan terima terbentuk: {[t['name'] for t in transfers]}")
+    check(bool(labels) and set(labels) <= {t["name"] for t in transfers}, "pemberitahuan menyebut dokumen transfer")
+    check(not api.search("purchase.order.line", [["product_id", "=", moved["id"]]], ["id"]) and not api.search("mrp.production", [["product_id", "=", moved["id"]]], ["id"]), "rute suplai tidak membuat RFQ atau MO")
+    cleanup["picking"].extend(t["id"] for t in transfers)
+    api.call("stock.warehouse.orderpoint", "unlink", ids=[supply_rule])
+
+    # bersihkan: batalkan dokumen uji agar tidak menumpuk sebagai pekerjaan terbuka, kosongkan stok, arsipkan gudang kedua
+    for picking in cleanup["picking"]:
+        api.call("stock.picking", "action_cancel", ids=[picking])
+    for mo in cleanup["mo"]:
+        api.call("mrp.production", "action_cancel", ids=[mo])
+    mine = {item["id"], forced["id"], auto["id"], moved["id"], made["id"], stocked["id"]}
+    for po in dict.fromkeys(cleanup["po"]):  # RFQ pemasok yang sama digabung Odoo: batalkan hanya yang isinya produk uji ini
+        if {ln["product_id"][0] for ln in api.search("purchase.order.line", [["order_id", "=", po]], ["product_id"])} <= mine:
+            api.call("purchase.order", "button_cancel", ids=[po])
+    for so in cleanup["so"]:
+        api.call("sale.order", "action_cancel", ids=[so])
+    for q in api.search("stock.quant", [["location_id.warehouse_id", "=", wh2_id], ["location_id.usage", "=", "internal"], ["quantity", "!=", 0]], ["id", "product_id", "location_id"]):
+        set_stock(q["product_id"][0], q["location_id"][0], 0.0)
+    api.call("stock.warehouse", "write", ids=[wh2_id], vals={"active": False})
+    check(not api.search("stock.warehouse", [["id", "=", wh2_id]], ["id"]), "gudang uji replenish diarsipkan")
+    check(all(api.read("stock.picking", t, ["state"])["state"] == "cancel" for t in cleanup["picking"]), "transfer uji dibatalkan")
 
 
 def bill_total(api, bill_id):
