@@ -24,6 +24,7 @@ Setiap menu pada sidebar prototipe sudah punya halaman kecuali tiga kelompok pad
 | 4.6 | Pajak pada baris transaksi bisa dipilih manual dan multi tag | Selesai (D40) | Pemilih pajak bersama `taxpick.js` di RFQ/PO, Quotation/SO, tagihan, faktur, dan nota; filter jenis pajak per dokumen; sisa: perkiraan subtotal di klien, pemetaan posisi fiskal pada pratinjau baris baru |
 | 4.7 | Inventory Valuation lengkap (per tanggal, mutasi periode, rincian pergerakan, per akun persediaan) | Selesai (D46) | Hanya UI (`valuation.js`) dan skrip uji; nilai historis dari hitungan Odoo (`to_date`); sisa: valuasi per lot, filter gudang pada mutasi dan rincian, jurnal penyesuaian dan scrap |
 | 4.8 | Replenishment digerakkan permintaan dengan rute Beli, Produksi, dan suplai antar gudang per baris | Selesai (D47) | Hanya UI (`replenish.js`, `orderpoint.js`, `routes.js`) dan skrip uji; aturan manual otomatis dari Sales Order dan MO, rute dan pemicu per baris, peringatan BoM dan pemasok, panel hasil; sisa: kelipatan pesan, snooze, rute per produk dari halaman ini |
+| 4.9 | Vendor Bill dan Customer Invoice: berdiri sendiri atau dari beberapa PO/SO satu mitra, tambah dokumen ke draf | Selesai (D48) | Hanya UI (`invoices.js`, `docbill.js`) dan skrip uji; Q27 (payment/receipt), Q28 (jurnal entry), Q29 (bank recon) menyusul; sisa: Buat berdiri sendiri untuk nota kredit/debit, uang muka dan seksi pada penambahan ke draf |
 
 ## Antrian Fase 5 (pengerasan)
 
@@ -41,6 +42,6 @@ Setiap menu pada sidebar prototipe sudah punya halaman kecuali tiga kelompok pad
 
 - Satu pekerjaan satu branch dan satu PR; branch dari `main` terbaru dan di-squash saat digabung.
 - Pekerjaan yang berjalan bersamaan memakai worktree dan stack Docker sendiri (lihat DEV_GUIDE), agar tidak saling menimpa data uji.
-- Berkas yang sering disentuh bersamaan (`main.js`, `menu.js`, `README.md`, `DECISIONS.md`, `check_p2p_api.py`) hanya ditambah di akhir; konflik saat rebase diselesaikan dengan mempertahankan kedua sisi. Nomor keputusan baru dicadangkan di tabel di atas: Agen A memakai D30, Agen B memakai D31, Agen C memakai D32, Agen E memakai D37, Agen I memakai D42, Q21 memakai D43, Q23 memakai D47.
+- Berkas yang sering disentuh bersamaan (`main.js`, `menu.js`, `README.md`, `DECISIONS.md`, `check_p2p_api.py`) hanya ditambah di akhir; konflik saat rebase diselesaikan dengan mempertahankan kedua sisi. Nomor keputusan baru dicadangkan di tabel di atas: Agen A memakai D30, Agen B memakai D31, Agen C memakai D32, Agen E memakai D37, Agen I memakai D42, Q21 memakai D43, Q23 memakai D47, Q26 memakai D48.
 - Setelah sebuah PR digabung, database `nusara` milik pemilik di-upgrade (dengan backup) oleh orang yang menggabungkannya, bukan oleh pekerja paralel.
 - Bukan bagian antrian pekerjaan teknis, tetapi menunggu pemilik: proteksi branch `main` (ruleset) dan pencabutan token GitHub lama.
