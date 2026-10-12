@@ -7,6 +7,7 @@ import {
   guarded, loadMessages, money, openModal, pageHeader, readOne, readonlyValue, referencePricelists, referenceTerms, referenceUsers, registerLookup,
   rowLink, runLookup, searchBox, searchRead, selectOptions, statTiles, statusbar, table, toInputDateTime, toast, dateTimeText,
 } from "../common.js";
+import { loadTaxNames, productDefaultTaxes, registerTaxes, taxCell, taxChange, taxList } from "../taxpick.js";
 import { analyticCell, distributionChange, preloadAnalytic, readDistribution, registerAnalytic } from "../analyticpick.js";
 import { printButton } from "../print.js";
 
@@ -97,6 +98,7 @@ registerLookup("sale-product", {
     line.lastAutoName = line.name;
     document.querySelector("#lines-box").innerHTML = linesTable();
     document.querySelector(`[data-line="${i}"][data-field="product_uom_qty"]`)?.focus();
+    applyProductTaxes(line, item.id).catch((error) => toast(error.message, "error"));
   },
 });
 
@@ -108,6 +110,28 @@ registerAnalytic("sale", {
   },
   label: (i) => form?.lines[Number(i)]?.text ?? "",
 });
+
+registerTaxes("sale", {
+  use: "sale",
+  get: (i) => form?.lines[Number(i)]?.taxes ?? [],
+  set: (i, taxes) => {
+    const line = form.lines[Number(i)];
+    line.taxes = taxes;
+    line.taxTouched = true;
+    document.querySelector("#lines-box").innerHTML = linesTable();
+  },
+});
+
+/** Mengganti produk menerapkan pajak bawaan produk baru; pilihan manual sebelumnya ditimpa dan penggunanya diberi tahu. */
+async function applyProductTaxes(line, productId) {
+  const defaults = await productDefaultTaxes(productId, "sale");
+  if (line.product_id !== productId) return;
+  const before = line.taxes.map((t) => t.id).sort().join();
+  if (line.taxTouched && before !== defaults.map((t) => t.id).sort().join()) toast("Pajak baris diganti dengan pajak bawaan produk baru.");
+  line.taxes = defaults;
+  line.taxTouched = false;
+  document.querySelector("#lines-box").innerHTML = linesTable();
+}
 
 /* ---------- Render ---------- */
 
@@ -169,7 +193,7 @@ async function renderList(query) {
 
 const emptyLine = () => ({
   id: null, text: "", product_id: null, productText: "", name: "", product_uom_qty: 1, product_uom_id: null, uom_label: "",
-  price_unit: "", price_unit0: "", discount: "", discount0: "", taxLabel: "", subtotal: null, analytic: undefined, // undefined = tidak disentuh
+  price_unit: "", price_unit0: "", discount: "", discount0: "", taxes: [], taxTouched: false, subtotal: null, analytic: undefined, // undefined = tidak disentuh
 });
 
 function linesTable() {
@@ -182,7 +206,7 @@ function linesTable() {
         <td class="py-2 px-2 w-20 text-sm text-gray-600">${esc(l.uom_label || "-")}</td>
         <td class="py-2 px-2 w-36"><input type="number" min="0" step="any" data-line="${i}" data-field="price_unit" value="${esc(l.price_unit)}" placeholder="otomatis" class="${INPUT} text-right"></td>
         <td class="py-2 px-2 w-24"><input type="number" min="0" max="100" step="any" data-line="${i}" data-field="discount" value="${esc(l.discount)}" placeholder="0" class="${INPUT} text-right"></td>
-        <td class="py-2 px-2 w-32 text-sm text-gray-600">${esc(l.taxLabel || "-")}</td>
+        <td class="py-2 px-2 min-w-48">${taxCell("sale", i, l.taxes)}</td>
         <td class="py-2 px-2 w-48">${analyticCell("sale", i, l.analytic)}</td>
         <td class="py-2 px-2 w-32 text-sm text-right text-gray-700">${l.subtotal === null ? "-" : money(l.subtotal)}</td>
         <td class="py-2 pl-2 w-10 text-center"><button type="button" data-action="remove-line" data-line="${i}" class="text-gray-400 hover:text-rose-600 mt-2" aria-label="Hapus baris"><i class="fas fa-trash-alt"></i></button></td>
@@ -210,7 +234,7 @@ function readonlyLinesTable(lines, currency, showFlow) {
         <td class="py-2 px-4 text-sm">${esc(l.product_uom_id?.[1])}</td>
         <td class="py-2 px-4 text-sm text-right">${money(l.price_unit, currency)}</td>
         <td class="py-2 px-4 text-sm text-right">${l.discount ? `${esc(l.discount)}%` : "-"}</td>
-        <td class="py-2 px-4 text-sm">${esc(l.taxLabel || "-")}</td>
+        <td class="py-2 px-4 text-sm">${taxCell("sale", l.id, l.taxes, false)}</td>
         <td class="py-2 px-4 text-sm">${analyticCell("sale", l.id, l.analytic_distribution, false)}</td>
         <td class="py-2 px-4 text-sm text-right">${money(l.price_subtotal, currency)}</td>
       </tr>`,
@@ -244,11 +268,9 @@ async function renderForm(id) {
       ["product_id", "name", "product_uom_qty", "qty_delivered", "qty_invoiced", "product_uom_id", "price_unit", "discount", "tax_ids", "price_subtotal", "reward_id", "coupon_id", "points_cost", "analytic_distribution"],
       { order: "sequence, id" },
     );
-    const taxIds = [...new Set(lines.flatMap((l) => l.tax_ids))];
-    const taxes = taxIds.length ? await searchRead("account.tax", [["id", "in", taxIds]], ["display_name"]) : [];
-    const taxName = new Map(taxes.map((t) => [t.id, t.display_name]));
+    const taxName = await loadTaxNames(lines.flatMap((l) => l.tax_ids));
     lines.forEach((l) => {
-      l.taxLabel = l.tax_ids.map((t) => taxName.get(t) ?? "").filter(Boolean).join(", ");
+      l.taxes = taxList(l.tax_ids, taxName);
     });
     // Baris hadiah promosi (sale_loyalty) dikelola Odoo; ditampilkan di bagian Promosi, bukan sebagai baris yang bisa diedit.
     rewardLines = lines.filter((l) => l.reward_id);
@@ -275,7 +297,7 @@ async function renderForm(id) {
             name: l.name || "", product_uom_qty: l.product_uom_qty, product_uom_id: l.product_uom_id?.[0] ?? null,
             uom_label: l.product_uom_id?.[1] ?? "", price_unit: l.price_unit, price_unit0: l.price_unit, discount: l.discount || "", discount0: l.discount || "",
             initial: { product_id: l.product_id?.[0] ?? null, name: l.name || "", product_uom_qty: l.product_uom_qty },
-            taxLabel: l.taxLabel, subtotal: l.price_subtotal,
+            taxes: l.taxes, taxes0: l.tax_ids, taxTouched: false, subtotal: l.price_subtotal,
             analytic: readDistribution(l.analytic_distribution), analytic0: readDistribution(l.analytic_distribution),
           })),
           removed: [],
@@ -363,6 +385,8 @@ function lineValues(l) {
   const vals = { product_id: l.product_id, name: l.name, product_uom_qty: qty, product_uom_id: l.product_uom_id };
   const analytic = distributionChange(l.analytic, l.analytic0);
   if (analytic !== undefined) vals.analytic_distribution = analytic;
+  const tax = taxChange(l.taxes, l.taxes0, l.taxTouched);
+  if (tax !== undefined) vals.tax_ids = tax;
   return vals;
 }
 
@@ -433,6 +457,7 @@ async function persist() {
     const changed = Object.fromEntries(Object.entries({ product_id: vals.product_id, name: vals.name, product_uom_qty: vals.product_uom_qty })
       .filter(([k, v]) => v !== before[k]));
     if ("analytic_distribution" in vals) changed.analytic_distribution = vals.analytic_distribution;
+    if ("tax_ids" in vals) changed.tax_ids = vals.tax_ids;
     if (Object.keys(changed).length) commands.push([1, l.id, changed]);
   }
   commands.push(...form.removed.map((lineId) => [2, lineId, 0]));
