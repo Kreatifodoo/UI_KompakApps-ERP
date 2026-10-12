@@ -111,10 +111,10 @@ export function statusbar(flow, labels, state) {
     .join("")}</div>`;
 }
 
-/** Tombol statistik ala Odoo; tampil hanya bila jumlahnya lebih dari nol. */
+/** Tombol statistik ala Odoo; tampil hanya bila jumlahnya lebih dari nol, kecuali bertanda always. */
 export function statTiles(tiles) {
   return tiles
-    .filter((t) => t.count > 0)
+    .filter((t) => t.count > 0 || t.always)
     .map((t) => {
       const inner = `<i class="fas ${t.icon} text-gray-400"></i><div><div class="text-base font-semibold leading-none">${esc(t.count)}</div><div class="text-xs text-gray-500">${esc(t.label)}</div></div>`;
       const cls = "flex items-center gap-3 border border-gray-200 bg-white rounded-lg px-4 py-2";

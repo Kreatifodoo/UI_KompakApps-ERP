@@ -266,8 +266,8 @@ async function renderForm(id) {
     </div>
     ${product ? `<div class="flex flex-wrap gap-2 mb-4">${statTiles([
       { count: product.seller_ids.length, label: "Vendor", icon: "fa-truck", href: `#/pricelist?product=${product.id}` },
-      { count: product.is_storable ? product.qty_available : 0, label: "Stok Tersedia", icon: "fa-boxes" },
-      { count: product.purchased_product_qty, label: "Dibeli", icon: "fa-shopping-cart" },
+      { count: product.is_storable ? product.qty_available : 0, label: "Stok Tersedia", icon: "fa-boxes", href: `#/stock/report?product=${product.id}`, always: product.is_storable },
+      { count: product.purchased_product_qty, label: "Dibeli", icon: "fa-shopping-cart", href: `#/analysis/poline?product=${product.id}&state=purchase&from=2000-01-01` },
       { count: product.bom_count, label: "BoM", icon: "fa-sitemap", href: `#/bom?product=${product.id}` },
     ])}${product.type === "consu" && !product.bom_count ? `<a href="#/bom/new?product=${product.id}" class="flex items-center gap-3 border border-dashed border-gray-300 bg-white rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"><i class="fas fa-sitemap text-gray-400"></i>Buat BoM</a>` : ""}</div>` : ""}
     <div class="mb-3"><h1 class="text-2xl font-bold text-gray-900">${title}</h1>
