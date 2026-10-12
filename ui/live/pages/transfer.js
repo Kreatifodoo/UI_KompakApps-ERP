@@ -5,6 +5,7 @@ import {
   INPUT, app, call, esc, fieldBlock, guarded, pageHeader, registerLookup, runLookup, searchRead, selectOptions, toast,
 } from "../common.js";
 import { createPickingPage } from "./pickings.js";
+import { stockAt, stockText } from "../stockqty.js";
 
 const INTERNAL = {
   route: "transfer", code: "internal", returnRoute: null, title: "Transfer Internal", noun: "Transfer", partner: "Kontak", qty: "Jumlah Dipindah", qtyLabel: "dipindah",
@@ -20,14 +21,44 @@ export const leave = () => {
 };
 
 registerLookup("transfer-product", {
-  search: (q) => searchRead("product.product", [["is_storable", "=", true], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name", "uom_id"], { limit: 10, order: "name" }),
-  sub: (r) => r.uom_id?.[1] ?? "",
+  search: async (q) => {
+    const items = await searchRead("product.product", [["is_storable", "=", true], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name", "uom_id"], { limit: 10, order: "name" });
+    const stock = await stockAt(items.map((i) => i.id), form?.src);
+    return items.map((i) => ({ ...i, stock: stock.get(i.id) ?? { onhand: 0, available: 0 } }));
+  },
+  sub: (r) => stockText(r.stock, r.uom_id?.[1]),
   isChosen: (input) => form?.lines[Number(input.dataset.line)]?.product?.display_name === input.value,
   choose: (input, item) => {
-    form.lines[Number(input.dataset.line)].product = item;
+    const i = Number(input.dataset.line);
+    form.lines[i].product = item;
+    form.lines[i].stock = item.stock;
     input.value = item.display_name;
+    paintStock(i);
   },
 });
+
+const srcName = () => refs?.locations.find((l) => l.id === form?.src)?.display_name ?? "";
+
+/** Info stok di bawah kolom jumlah; merah bila jumlah melebihi stok tersedia (transfer tetap bisa dibuat, menunggu stok). */
+function stockLine(l) {
+  if (!l.product || !l.stock) return "";
+  const over = Number(l.qty) > l.stock.available + 1e-9;
+  return `<div class="text-xs mt-1 ${over ? "text-rose-600" : "text-gray-500"}">${esc(stockText(l.stock, l.product.uom_id?.[1], srcName()))}${over ? " · melebihi stok tersedia" : ""}</div>`;
+}
+function paintStock(i) {
+  const box = document.querySelector(`#transfer-stock-${i}`);
+  if (box && form?.lines[i]) box.innerHTML = stockLine(form.lines[i]);
+}
+
+/** Ambil ulang stok semua baris untuk lokasi asal yang sedang dipilih (saat lokasi atau tipe operasi berubah). */
+async function refreshStock() {
+  const ids = form.lines.filter((l) => l.product).map((l) => l.product.id);
+  const stock = await stockAt(ids, form.src);
+  form.lines.forEach((l, i) => {
+    if (l.product) l.stock = stock.get(l.product.id) ?? { onhand: 0, available: 0 };
+    paintStock(i);
+  });
+}
 
 async function references() {
   refs ??= {
@@ -56,7 +87,7 @@ async function renderNew() {
     .map(
       (l, i) => `<tr class="align-top">
         <td class="py-2 pr-2 min-w-64"><input data-lookup="transfer-product" data-line="${i}" autocomplete="off" role="combobox" aria-autocomplete="list" value="${esc(l.product?.display_name ?? "")}" placeholder="Cari produk yang dilacak stoknya..." class="${INPUT}"></td>
-        <td class="py-2 px-2 w-36"><input type="number" min="0" step="any" data-transfer-line="${i}" value="${esc(l.qty)}" class="${INPUT} text-right"></td>
+        <td class="py-2 px-2 w-36"><input type="number" min="0" step="any" data-transfer-line="${i}" value="${esc(l.qty)}" class="${INPUT} text-right"><div id="transfer-stock-${i}">${stockLine(l)}</div></td>
         <td class="py-2 pl-2 w-10 text-center"><button type="button" data-action="remove-transfer-line" data-line="${i}" class="text-gray-400 hover:text-rose-600 mt-2" aria-label="Hapus baris"><i class="fas fa-trash-alt"></i></button></td></tr>`,
     )
     .join("");
@@ -134,13 +165,18 @@ export async function onInput(event, el) {
       form.src = type?.default_location_src_id?.[0] ?? form.src;
       form.dest = type?.default_location_dest_id?.[0] === form.src ? r.locations.find((l) => l.id !== form.src)?.id ?? null : type?.default_location_dest_id?.[0] ?? form.dest;
       await renderNew();
+      await refreshStock();
     } else if (el.dataset.transfer === "src" || el.dataset.transfer === "dest") {
       const r = await references();
       document.querySelector("#transfer-hint")?.remove();
       document.querySelector("#app section")?.insertAdjacentHTML("afterend", warehouseHint(r));
+      if (el.dataset.transfer === "src") await refreshStock();
     }
   }
-  else if (form && el.dataset.transferLine !== undefined) form.lines[Number(el.dataset.transferLine)].qty = el.value;
+  else if (form && el.dataset.transferLine !== undefined) {
+    form.lines[Number(el.dataset.transferLine)].qty = el.value;
+    paintStock(Number(el.dataset.transferLine));
+  }
   else if (form && el.dataset.lookup === "transfer-product") {
     form.lines[Number(el.dataset.line)].product = null;
     runLookup(el, 250);
