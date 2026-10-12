@@ -193,3 +193,4 @@ NUSARA_API_KEY=<api-key-uji> python3 -I scripts/loadtest.py --url http://127.0.0
 3. Irisan vertikal pertama: Purchase Request → RFQ → PO → Goods Receipt → Vendor Bill → Payment
 4. Order-to-Cash, Inventory lanjutan, Manufaktur, Laporan akuntansi, CRM, POS
 5. Pengerasan enterprise: keamanan, approval, audit trail, backup, uji beban
+| Strategi Pengeluaran pada Product Category dan Lokasi Gudang | Pilihan FIFO, LIFO, FEFO, Terdekat, atau Paket Paling Sedikit dengan penjelasan singkat; menentukan lot yang dipesan pengiriman; hanya berubah bila diubah pengguna | D43; `check_removal_strategy` (api uji) dan test Odoo; regresi penuh 496 pemeriksaan lulus; uji browser kategori dan lokasi |

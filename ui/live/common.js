@@ -252,6 +252,25 @@ export const hasGroup = (group) => reference(`group-${group}`, () => call("res.u
 /** Gudang aktif beserta tipe operasi penerimaan, pengiriman, dan produksinya; pemilih gudang di dokumen hanya muncul bila ada lebih dari satu (D42). */
 export const referenceWarehouses = () =>
   reference("warehouses", () => searchRead("stock.warehouse", [], ["display_name", "code", "lot_stock_id", "in_type_id", "out_type_id", "manu_type_id"], { order: "name" }));
+/** Strategi pengeluaran stok (product.removal) dan penjelasan singkatnya (D43). */
+export const referenceRemovals = () => reference("removals", () => searchRead("product.removal", [], ["name", "method"], { order: "id" }));
+export const REMOVAL_HELP = {
+  fifo: "FIFO: barang yang masuk lebih dulu keluar lebih dulu.",
+  lifo: "LIFO: barang yang masuk terakhir keluar lebih dulu.",
+  fefo: "FEFO: lot dengan tanggal kedaluwarsa paling dekat keluar lebih dulu; lot yang sudah lewat tanggal penarikan tidak diambil.",
+  closest: "Terdekat: mengambil dari lokasi dengan urutan terdekat ke tujuan (menurut kode lokasi).",
+  least_packages: "Paket paling sedikit: memilih paket sehingga jumlah paket yang diambil sesedikit mungkin.",
+};
+/** Kotak pilihan strategi pengeluaran; `attr` adalah atribut data pada select, `inherit` teks pilihan kosong. */
+export function removalSelect(removals, selected, attr, inherit) {
+  const options = removals.map((r) => `<option value="${r.id}" ${r.id === selected ? "selected" : ""}>${esc(r.name)}</option>`).join("");
+  return `<select ${attr} data-kind="id" class="${INPUT}"><option value="">${esc(inherit)}</option>${options}</select>`;
+}
+export function removalNote(removals, selected, inherit) {
+  const hit = removals.find((r) => r.id === selected);
+  const help = hit ? REMOVAL_HELP[hit.method] ?? "" : inherit;
+  return `<p class="md:col-span-2 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3" id="removal-note">${esc(help)}</p>`;
+}
 export const referenceTerms = () => reference("terms", () => searchRead("account.payment.term", [], ["display_name"], { limit: 50 }));
 export const referenceCurrencies = () => reference("currencies", () => searchRead("res.currency", [["active", "=", true]], ["display_name"], { order: "name" }));
 export const referenceCountries = () => reference("countries", () => searchRead("res.country", [], ["display_name", "code"], { order: "name" }));

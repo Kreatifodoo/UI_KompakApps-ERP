@@ -195,6 +195,7 @@ def main():
     check_warehouse_master(api, product)
     check_multi_warehouse(api)
     check_lots(api, vendor)
+    check_removal_strategy(api, vendor)
     check_manufacturing(api)
     check_crm(api)
     check_pos(api, product)
@@ -752,6 +753,99 @@ def check_lots(api, vendor):
     check(result["context"].get("expired_lot_name") == f"N-{tag}", "nama lot terbawa di konteks wizard")
     api.call("expiry.picking.confirmation", "process", ids=[expiry_wizard], context=result["context"])
     check(api.read("stock.picking", npicking, ["state"])["state"] == "done", "penerimaan selesai setelah konfirmasi kedaluwarsa")
+
+
+def check_removal_strategy(api, vendor):
+    """Strategi pengeluaran stok (D43): kategori dan lokasi memilih FIFO/LIFO/FEFO; reservasi pengiriman mengikuti strategi."""
+    step("Strategi pengeluaran: FIFO, LIFO, FEFO pada kategori dan lokasi")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    api.call("res.config.settings", "execute", ids=api.call("res.config.settings", "create", vals_list=[{"group_stock_production_lot": True}]))
+    customer = api.search("res.partner", [["name", "=", "PT Pelanggan Nusantara"]], ["id"], limit=1)[0]["id"]
+    stock_location = api.search("stock.warehouse", [], ["lot_stock_id"], limit=1)[0]["lot_stock_id"][0]
+    methods = {r["method"]: r["id"] for r in api.search("product.removal", [], ["method"])}
+    check({"fifo", "lifo", "fefo", "closest", "least_packages"} <= set(methods), "product.removal menyediakan fifo, lifo, fefo, closest, least_packages")
+    fields = api.call("product.category", "fields_get", attributes=["relation"])
+    check(fields["removal_strategy_id"]["relation"] == "product.removal", "kategori punya removal_strategy_id ke product.removal")
+    check("removal_strategy_id" in api.call("stock.location", "fields_get", attributes=["type"]), "lokasi punya removal_strategy_id")
+
+    [category] = api.call("product.category", "create", vals_list=[{"name": f"Kategori Pengeluaran {tag}", "removal_strategy_id": methods["fifo"]}])
+    [tmpl] = api.call("product.template", "create", vals_list=[{
+        "name": f"Susu Pengeluaran {tag}", "type": "consu", "is_storable": True, "tracking": "lot", "categ_id": category, "standard_price": 50_000.0, "list_price": 80_000.0,
+        "use_expiration_date": True, "expiration_time": 365, "use_time": 300, "removal_time": 60, "alert_time": 30,
+    }])
+    api.call("product.supplierinfo", "create", vals_list=[{"partner_id": vendor["id"], "product_tmpl_id": tmpl, "min_qty": 1.0, "price": 50_000.0}])
+    product = api.read("product.template", tmpl, ["product_variant_id", "uom_id"])
+    pv, uom = product["product_variant_id"][0], product["uom_id"][0]
+    today = datetime.datetime.now()
+
+    def stamp(days):
+        return (today + datetime.timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+    def receive(lot, days, qty=5.0):
+        [po] = api.call("purchase.order", "create", vals_list=[{"partner_id": vendor["id"], "order_line": [[0, 0, {"product_id": pv, "product_qty": qty, "product_uom_id": uom}]]}])
+        api.call("purchase.order", "button_confirm", ids=[po])
+        picking = api.search("stock.picking", [["purchase_id", "=", po]], ["id"])[0]["id"]
+        line = api.search("stock.move.line", [["picking_id", "=", picking]], ["id"])[0]["id"]
+        api.call("stock.move.line", "write", ids=[line], vals={"lot_name": lot, "quantity": qty, "picked": True, "expiration_date": stamp(days)})
+        result = api.call("stock.picking", "button_validate", ids=[picking])
+        if result is not True:  # lot yang melewati masa peringatan meminta konfirmasi (wizard kedaluwarsa)
+            [wizard] = api.call(result["res_model"], "create", vals_list=[{}], context=result["context"])
+            api.call(result["res_model"], "process", ids=[wizard], context=result["context"])
+        return api.search("stock.lot", [["name", "=", lot], ["product_id", "=", pv]], ["id"])[0]["id"]
+
+    def reserve():
+        """Satu SO 2 unit; kembalikan nama lot yang dipesan pada pengiriman, lalu batalkan pesanan agar stok bebas."""
+        [so] = api.call("sale.order", "create", vals_list=[{"partner_id": customer, "order_line": [[0, 0, {"product_id": pv, "product_uom_qty": 2.0}]]}])
+        api.call("sale.order", "action_confirm", ids=[so])
+        delivery = api.search("stock.picking", [["sale_id", "=", so]], ["id", "state"])[0]
+        lots = sorted({r["lot_id"][1] for r in api.search("stock.move.line", [["picking_id", "=", delivery["id"]]], ["lot_id"]) if r["lot_id"]})
+        api.call("stock.picking", "do_unreserve", ids=[delivery["id"]])
+        api.call("stock.picking", "action_cancel", ids=[delivery["id"]])
+        return lots, delivery["state"]
+
+    lot_a = receive(f"A-{tag}", 300)
+    receive(f"B-{tag}", 100)
+    lots, state = reserve()
+    check(state == "assigned" and lots == [f"A-{tag}"], f"kategori FIFO: pengiriman memesan lot A (masuk lebih dulu): {lots}")
+    api.call("product.category", "write", ids=[category], vals={"removal_strategy_id": methods["lifo"]})
+    lots, _ = reserve()
+    check(lots == [f"B-{tag}"], f"kategori LIFO: pengiriman memesan lot B (masuk terakhir): {lots}")
+    api.call("product.category", "write", ids=[category], vals={"removal_strategy_id": methods["fefo"]})
+    lots, _ = reserve()
+    check(lots == [f"B-{tag}"], f"kategori FEFO: pengiriman baru memesan lot B (kedaluwarsa paling dekat): {lots}")
+    api.call("product.category", "write", ids=[category], vals={"removal_strategy_id": methods["fifo"]})
+    lots, _ = reserve()
+    check(lots == [f"A-{tag}"], f"kembali ke FIFO: memesan lot A lagi: {lots}")
+
+    # Strategi di lokasi: kategori kosong -> lokasi menentukan; kategori terisi mengalahkan lokasi.
+    original = api.read("stock.location", stock_location, ["removal_strategy_id"])["removal_strategy_id"]
+    api.call("product.category", "write", ids=[category], vals={"removal_strategy_id": False})
+    api.call("stock.location", "write", ids=[stock_location], vals={"removal_strategy_id": methods["fefo"]})
+    lots, _ = reserve()
+    check(lots == [f"B-{tag}"], f"kategori kosong, lokasi FEFO: memesan lot B: {lots}")
+    api.call("product.category", "write", ids=[category], vals={"removal_strategy_id": methods["fifo"]})
+    lots, _ = reserve()
+    check(lots == [f"A-{tag}"], f"kategori FIFO mengalahkan lokasi FEFO: memesan lot A: {lots}")
+
+    # Lot yang lewat tanggal penarikan: laporkan perilaku FEFO yang sebenarnya.
+    api.call("product.category", "write", ids=[category], vals={"removal_strategy_id": methods["fefo"]})
+    receive(f"C-{tag}", 90)  # kedaluwarsa 90 hari, tanggal penarikan 30 hari lagi
+    lots, _ = reserve()
+    check(lots == [f"C-{tag}"], f"FEFO: lot C (kedaluwarsa 90 hari) paling dekat dan dipesan: {lots}")
+    lot_c = api.search("stock.lot", [["name", "=", f"C-{tag}"], ["product_id", "=", pv]], ["id"])[0]["id"]
+    api.call("stock.lot", "write", ids=[lot_c], vals={"expiration_date": stamp(-5)})
+    lots, _ = reserve()
+    check(lots == [f"C-{tag}"], f"temuan: lot yang tanggal kedaluwarsanya lewat tetapi tanggal penarikannya belum lewat masih dipesan FEFO: {lots}")
+    api.call("stock.lot", "write", ids=[lot_c], vals={"removal_date": stamp(-1)})
+    lots, _ = reserve()
+    check(lots == [f"B-{tag}"], f"lot lewat tanggal penarikan tidak dipesan (FEFO memilih lot B): {lots}")
+    api.call("product.category", "write", ids=[category], vals={"removal_strategy_id": methods["fifo"]})
+    lots, _ = reserve()
+    check(f"C-{tag}" not in lots, f"lot lewat tanggal penarikan juga dilewati pada FIFO: {lots}")
+    free = api.call("product.product", "read", ids=[pv], fields=["free_qty"], context={"location": stock_location})[0]["free_qty"]
+    check(free == 10.0, f"stok bebas tidak menghitung lot lewat tanggal penarikan (10 dari 15): {free}")
+    api.call("stock.location", "write", ids=[stock_location], vals={"removal_strategy_id": original[0] if original else False})
+    check(lot_a > 0, "uji strategi pengeluaran selesai, strategi lokasi dikembalikan")
 
 
 def check_manufacturing(api):

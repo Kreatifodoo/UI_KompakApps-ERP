@@ -219,6 +219,35 @@ class TestLotTracking(AccountTestInvoicingCommon):
         lot = self._lot(product, "SUSU-02")
         self.assertLess(abs((lot.expiration_date - (fields.Datetime.now() + timedelta(days=30))).total_seconds()), 3600)
 
+    def test_removal_strategy_on_category_picks_lot(self):
+        """Strategi pengeluaran pada kategori menentukan lot yang dipesan pengiriman (D43)."""
+        removal = {r.method: r for r in self.env["product.removal"].search([])}
+        category = self.env["product.category"].create({"name": "Kategori Strategi", "removal_strategy_id": removal["fifo"].id})
+        product = self._tracked_product("Susu Strategi", use_expiration_date=True, expiration_time=365, removal_time=30, alert_time=10)
+        product.categ_id = category
+        now = fields.Datetime.now()
+        # Lot A masuk lebih dulu tetapi kedaluwarsa lebih lama; lot B masuk belakangan dan kedaluwarsa lebih dekat.
+        self._receive(product, [("FE-A", 5.0)], expiration_date=now + timedelta(days=300))[1].button_validate()
+        self._receive(product, [("FE-B", 5.0)], expiration_date=now + timedelta(days=100))[1].button_validate()
+
+        def reserved_lots():
+            order = self.env["sale.order"].create(
+                {"partner_id": self.customer.id, "order_line": [Command.create({"product_id": product.id, "product_uom_qty": 2.0})]}
+            )
+            order.action_confirm()
+            delivery = order.picking_ids
+            lots = delivery.move_line_ids.lot_id.mapped("name")
+            delivery.do_unreserve()
+            delivery.action_cancel()
+            return lots
+
+        self.assertEqual(reserved_lots(), ["FE-A"], "FIFO: lot yang masuk lebih dulu")
+        category.removal_strategy_id = removal["fefo"]
+        self.assertEqual(reserved_lots(), ["FE-B"], "FEFO: lot yang kedaluwarsa paling dekat")
+        # Lot yang lewat tanggal penarikan tidak dipesan oleh strategi mana pun.
+        self._lot(product, "FE-B").removal_date = now - timedelta(days=1)
+        self.assertEqual(reserved_lots(), ["FE-A"], "Lot lewat tanggal penarikan dilewati")
+
     def test_scrap_needs_lot_and_reduces_that_lot(self):
         product = self._tracked_product("Obat Scrap Lot")
         self._receive(product, [("LOT-A", 6.0), ("LOT-B", 4.0)])[1].button_validate()
