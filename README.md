@@ -123,11 +123,11 @@ Kerangka di `ui/live/` memakai **desain sidebar prototipe** (9 modul, menu berti
 | Sales › Master › Customers Master, Accounting › Master › Customer Master | Pelanggan: alamat, NPWP/PKP, identitas pembeli Coretax, batas kredit, akun piutang | `res.partner` |
 | Sales › Quotations, Sales Orders | Quotation ke Sales Order, dialog Buat Faktur (reguler dan uang muka) | `sale.order`, `sale.advance.payment.inv` |
 | Inventory › Operation › Delivery Order, Return GR, Return DO | Pengiriman barang, backorder, retur | `stock.picking`, `stock.return.picking` |
-| Sales › Create Customer Invoice, Accounting › Customers › Customer Invoice, Credit Note, Customer Payment | Faktur pelanggan (kode transaksi faktur pajak), nota kredit, pembayaran masuk | `account.move`, `account.move.reversal`, `account.payment` |
+| Sales › Create Customer Invoice, Accounting › Customers › Customer Invoice, Credit Note, Customer Payment | Faktur pelanggan (kode transaksi faktur pajak), nota kredit, pembayaran masuk; tombol Buat: faktur berdiri sendiri (form lengkap dengan baris, pajak multi-tag, analitik) atau dari beberapa Sales Order satu pelanggan menjadi satu faktur dengan pratinjau jumlah per SO dan baris (D48), draf bisa diubah barisnya dan ditambah SO lagi | `account.move`, `sale.advance.payment.inv`, `account.move.reversal`, `account.payment` |
 | Accounting › Vendors › Debit Note | Nota debit vendor dari tagihan terposting | `account.move` |
 | Purchase Request › Purchase Request | Daftar dan form PR | `purchase.request` (OCA) |
 | Purchase › Request for Quotation, Purchase Order | RFQ dan PO | `purchase.order` |
-| Purchase › Create Vendor Bill, Accounting › Vendors › Vendor Bills | Tagihan vendor, dialog Bayar | `account.move`, `account.payment.register` |
+| Purchase › Create Vendor Bill, Accounting › Vendors › Vendor Bills | Tagihan vendor, dialog Bayar; tombol Buat: tagihan berdiri sendiri atau dari beberapa Purchase Order satu vendor menjadi satu tagihan (hanya baris yang punya jumlah tertagih, mata uang harus sama), draf bisa diubah barisnya dan ditambah PO lagi (D48) | `account.move`, `purchase.order.line`, `account.payment.register` |
 | Inventory › Operation › Good Receive | Penerimaan barang, backorder | `stock.picking` |
 | Accounting › Vendors › Vendor Payment | Pembayaran | `account.payment` |
 
