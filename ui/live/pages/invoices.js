@@ -750,7 +750,10 @@ export function createInvoicePage(config) {
       /* dibatalkan pengguna */
     } else if (def?.method) {
       const ok = await guarded(el, async () => {
-        if (form?.id === id) await persist(); // simpan referensi, tanggal, dan baris sebelum konfirmasi
+        if (form?.id === id) {
+          if (action === "post" && purchaseSide && !form.invoice_date) throw new Error(`Isi ${config.dateLabel} dulu sebelum konfirmasi.`);
+          await persist(); // simpan referensi, tanggal, dan baris sebelum konfirmasi
+        }
         return call("account.move", def.method, { ids: [id] });
       });
       if (ok !== undefined) {

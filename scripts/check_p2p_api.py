@@ -218,6 +218,7 @@ def main():
     check_analysis_drill(api)
     check_inventory_valuation(api, vendor)
     check_replenish_routes(api, vendor)
+    check_bill_invoice_create(api, vendor)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -2963,6 +2964,187 @@ def check_replenish_routes(api, vendor):
     api.call("stock.warehouse", "write", ids=[wh2_id], vals={"active": False})
     check(not api.search("stock.warehouse", [["id", "=", wh2_id]], ["id"]), "gudang uji replenish diarsipkan")
     check(all(api.read("stock.picking", t, ["state"])["state"] == "cancel" for t in cleanup["picking"]), "transfer uji dibatalkan")
+
+
+def check_bill_invoice_create(api, vendor):
+    """Vendor Bill dan Customer Invoice (ui/live/pages/invoices.js, docbill.js, D48): berdiri sendiri; beberapa PO satu vendor menjadi satu tagihan (baris berjumlah
+    saja); beberapa SO satu pelanggan menjadi satu faktur lewat wizard; baris dokumen ditambahkan ke draf yang ada; posting seimbang. Nilai yang dikirim sama dengan UI."""
+    import random
+
+    step("Vendor Bill dan Customer Invoice: berdiri sendiri, dari beberapa PO atau SO satu mitra, tambah dari dokumen ke draf")
+    tag = f"{random.randint(0, 99999):05d}"
+    today = datetime.date.today().isoformat()
+    customer = api.search("res.partner", [["name", "=", "PT Pelanggan Nusantara"]], ["id"], limit=1)[0]["id"]
+    [other_vendor] = api.call("res.partner", "create", vals_list=[{"name": f"Vendor lain {tag}", "supplier_rank": 1}])
+    [other_customer] = api.call("res.partner", "create", vals_list=[{"name": f"Pelanggan lain {tag}", "customer_rank": 1}])
+    [service_t] = api.call("product.template", "create", vals_list=[{
+        "name": f"Jasa uji tagihan {tag}", "type": "service", "purchase_method": "purchase", "invoice_policy": "order", "standard_price": 1000.0, "list_price": 2000.0}])
+    service = api.read("product.template", service_t, ["product_variant_id"])["product_variant_id"][0]
+    [goods_t] = api.call("product.template", "create", vals_list=[{
+        "name": f"Barang uji tagihan {tag}", "type": "consu", "is_storable": True, "purchase_method": "receive", "standard_price": 500.0, "list_price": 900.0}])
+    goods = api.read("product.template", goods_t, ["product_variant_id"])["product_variant_id"][0]
+    expense = api.search("account.account", [["account_type", "=", "expense"]], ["id"], limit=1)[0]["id"]
+    plan = api.search("account.analytic.plan", [], ["id"], limit=1)
+    plan_id = plan[0]["id"] if plan else api.call("account.analytic.plan", "create", vals_list=[{"name": f"Plan uji {tag}"}])[0]
+    [analytic] = api.call("account.analytic.account", "create", vals_list=[{"name": f"Proyek uji {tag}", "plan_id": plan_id}])
+    no_tax = [[6, 0, []]]
+
+    def move_lines(move_id):
+        return api.search("account.move.line", [["move_id", "=", move_id], ["display_type", "=", "product"]], [
+            "id", "name", "quantity", "price_unit", "discount", "account_id", "product_id", "purchase_line_id", "sale_line_ids", "tax_ids", "analytic_distribution"], order="id")
+
+    def journal_balanced(move_id):
+        items = api.search("account.move.line", [["move_id", "=", move_id]], ["debit", "credit"])
+        return len(items) >= 2 and abs(sum(i["debit"] for i in items) - sum(i["credit"] for i in items)) < 0.005
+
+    def untaxed(move_id):
+        return api.read("account.move", move_id, ["amount_untaxed"])["amount_untaxed"]
+
+    # 1. Tagihan berdiri sendiri: baris dengan produk (harga, akun, pajak otomatis), baris tanpa produk dengan akun, diskon, analitik
+    [bill] = api.call("account.move", "create", vals_list=[{
+        "move_type": "in_invoice", "partner_id": vendor["id"], "invoice_date": today, "ref": f"UI-{tag}", "narration": "<p>catatan uji</p>",
+        "invoice_line_ids": [
+            [0, 0, {"product_id": service, "name": "Jasa A", "quantity": 3.0, "price_unit": 100000.0, "discount": 10.0, "tax_ids": no_tax, "analytic_distribution": {str(analytic): 100.0}}],
+            [0, 0, {"name": "Biaya tanpa produk", "quantity": 2.0, "price_unit": 50000.0, "account_id": expense, "tax_ids": no_tax}],
+            [0, 0, {"product_id": service, "quantity": 1.0, "tax_ids": no_tax}],
+        ]}])
+    info = api.read("account.move", bill, ["state", "partner_id", "amount_untaxed", "ref", "journal_id"])
+    lines = move_lines(bill)
+    check(info["state"] == "draft" and info["partner_id"][0] == vendor["id"], "tagihan berdiri sendiri tersimpan sebagai draf")
+    check(abs(info["amount_untaxed"] - 371000.0) < 0.01, f"total sebelum pajak: 3x100.000 diskon 10% + 2x50.000 + harga produk otomatis = {info['amount_untaxed']}")
+    check(lines[2]["price_unit"] == 1000.0 and bool(lines[2]["account_id"]) and bool(lines[1]["account_id"]), "harga dan akun yang dikosongkan dihitung Odoo dari produk, akun yang dipilih dipakai")
+    check(lines[0]["analytic_distribution"] == {str(analytic): 100.0}, "distribusi analitik baris tersimpan")
+    check(lines[0]["purchase_line_id"] is False and lines[0]["sale_line_ids"] == [], "tagihan berdiri sendiri tidak tertaut PO")
+    # ubah draf: ubah jumlah, hapus baris, tambah baris (perintah invoice_line_ids yang sama dengan UI)
+    api.call("account.move", "write", ids=[bill], vals={"invoice_line_ids": [
+        [1, lines[0]["id"], {"quantity": 4.0}], [2, lines[1]["id"], 0], [0, 0, {"name": "Baris baru", "quantity": 2.0, "price_unit": 500.0, "account_id": expense, "tax_ids": no_tax}]]})
+    check(abs(untaxed(bill) - 362000.0) < 0.01, f"ubah jumlah, hapus, dan tambah baris pada draf: {untaxed(bill)}")
+    api.call("account.move", "action_post", ids=[bill])
+    posted = api.read("account.move", bill, ["state", "name", "amount_total"])
+    check(posted["state"] == "posted" and posted["name"], f"tagihan diposting: {posted['name']}")
+    check(journal_balanced(bill), "jurnal tagihan seimbang")
+    payable = api.search("account.move.line", [["move_id", "=", bill], ["account_id.account_type", "=", "liability_payable"]], ["credit"])
+    check(len(payable) == 1 and abs(payable[0]["credit"] - posted["amount_total"]) < 0.01, "hutang usaha sama dengan total tagihan")
+
+    # 2. Beberapa PO satu vendor menjadi SATU tagihan; baris berjumlah 0 tidak ikut
+    def make_po(partner, order_lines, currency=None):
+        vals = {"partner_id": partner, "order_line": [[0, 0, ln] for ln in order_lines]}
+        if currency:
+            vals["currency_id"] = currency
+        [po] = api.call("purchase.order", "create", vals_list=[vals])
+        api.call("purchase.order", "button_confirm", ids=[po])
+        return po
+
+    usd = api.search("res.currency", [["name", "=", "USD"]], ["id"], context={"active_test": False})[0]["id"]
+    po1 = make_po(vendor["id"], [
+        {"product_id": service, "product_qty": 5.0, "price_unit": 100000.0, "tax_ids": no_tax, "name": "Jasa PO1"},
+        {"product_id": goods, "product_qty": 2.0, "price_unit": 5000.0, "name": "Barang belum diterima"}])
+    po2 = make_po(vendor["id"], [{"product_id": service, "product_qty": 3.0, "price_unit": 200000.0, "discount": 10.0, "tax_ids": no_tax, "name": "Jasa PO2"}])
+    po_other = make_po(other_vendor, [{"product_id": service, "product_qty": 1.0, "price_unit": 1000.0, "name": "Vendor lain"}])
+    po_usd = make_po(vendor["id"], [{"product_id": service, "product_qty": 1.0, "price_unit": 10.0, "name": "Jasa USD"}], currency=usd)
+    po_names = {po: api.read("purchase.order", po, ["name"])["name"] for po in (po1, po2, po_other, po_usd)}
+    open_domain = [["partner_id", "=", vendor["id"]], ["state", "in", ["purchase", "done"]], ["invoice_status", "=", "to invoice"]]
+    listing = api.search("purchase.order", open_domain, ["name", "currency_id"])
+    names = {r["name"] for r in listing}
+    check({po_names[po1], po_names[po2]} <= names and po_names[po_other] not in names, "daftar dokumen satu vendor memuat PO vendor itu dan tidak memuat PO vendor lain")
+    check(len({r["currency_id"][1] for r in listing if r["name"] in (po_names[po1], po_names[po2], po_names[po_usd])}) == 2, "PO satu vendor berbeda mata uang terlihat di daftar (UI menolak mencampurnya)")
+    po_lines = api.search("purchase.order.line", [["order_id", "in", [po1, po2]], ["display_type", "=", False], ["qty_to_invoice", "!=", 0]],
+                          ["order_id", "product_id", "name", "qty_to_invoice", "product_uom_id", "price_unit", "discount", "tax_ids", "is_downpayment"], order="order_id, sequence, id")
+    check(len(po_lines) == 2, f"pratinjau hanya memuat baris berjumlah (baris barang belum diterima tidak muncul): {len(po_lines)}")
+    expected = 5 * 100000.0 + 3 * 200000.0 * 0.9
+    idr = next(r["currency_id"][0] for r in listing if r["name"] == po_names[po1])
+    [merged] = api.call("account.move", "create", vals_list=[{
+        "move_type": "in_invoice", "partner_id": vendor["id"], "currency_id": idr, "invoice_origin": ", ".join(po_names[p] for p in (po1, po2)),
+        "invoice_line_ids": [[0, 0, {
+            "display_type": "product", "name": ln["name"], "product_id": ln["product_id"][0], "product_uom_id": ln["product_uom_id"][0], "quantity": ln["qty_to_invoice"],
+            "discount": ln["discount"] or 0, "price_unit": ln["price_unit"], "tax_ids": [[6, 0, ln["tax_ids"]]], "purchase_line_id": ln["id"]}] for ln in po_lines]}])
+    m_lines = move_lines(merged)
+    check(len(m_lines) == 2 and all(ln["purchase_line_id"] for ln in m_lines), "dua PO satu vendor menjadi satu tagihan dengan dua baris tertaut ke baris PO")
+    check(abs(untaxed(merged) - expected) < 0.01, f"total sebelum pajak tagihan gabungan {expected:,.0f}: {untaxed(merged)}")
+    check(all(api.read("purchase.order", po, ["invoice_ids"])["invoice_ids"] == [merged] for po in (po1, po2)), "kedua PO menunjuk tagihan yang sama (invoice_ids)")
+    check(api.read("account.move", merged, ["purchase_order_count"])["purchase_order_count"] == 2, "tagihan menghitung dua PO sumber")
+    relisted = {r["name"] for r in api.search("purchase.order", open_domain, ["name"])}
+    check(not ({po_names[po1], po_names[po2]} & relisted), "PO yang sudah masuk draf tidak lagi ditawarkan")
+    # temuan Odoo: action_create_invoice menggabungkan PO satu vendor tetapi ikut membawa baris berjumlah 0 (itu sebabnya UI membangun tagihan dari baris pratinjau)
+    po_native = make_po(vendor["id"], [
+        {"product_id": service, "product_qty": 1.0, "price_unit": 1000.0, "tax_ids": no_tax, "name": "A"},
+        {"product_id": goods, "product_qty": 1.0, "price_unit": 1000.0, "name": "B belum diterima"}])
+    api.call("purchase.order", "action_create_invoice", ids=[po_native])
+    native_bill = api.read("purchase.order", po_native, ["invoice_ids"])["invoice_ids"][0]
+    check(any(ln["quantity"] == 0 for ln in move_lines(native_bill)), "temuan: action_create_invoice membawa baris berjumlah 0 untuk barang belum diterima")
+    api.call("account.move", "button_cancel", ids=[native_bill])
+    # tambah PO ke draf yang ada (purchase_line_id), lalu hapus barisnya: PO kembali bisa ditagih
+    po3 = make_po(vendor["id"], [{"product_id": service, "product_qty": 2.0, "price_unit": 50000.0, "tax_ids": no_tax, "name": "Jasa PO3"}])
+    ln3 = api.search("purchase.order.line", [["order_id", "=", po3]], ["name", "product_id", "product_uom_id", "qty_to_invoice", "price_unit", "discount", "tax_ids"])[0]
+    api.call("account.move", "write", ids=[merged], vals={"invoice_line_ids": [[0, 0, {
+        "display_type": "product", "name": ln3["name"], "product_id": ln3["product_id"][0], "product_uom_id": ln3["product_uom_id"][0], "quantity": ln3["qty_to_invoice"],
+        "discount": 0, "price_unit": ln3["price_unit"], "tax_ids": [[6, 0, ln3["tax_ids"]]], "purchase_line_id": ln3["id"]}]]})
+    check(abs(untaxed(merged) - (expected + 100000.0)) < 0.01 and api.read("purchase.order", po3, ["invoice_ids"])["invoice_ids"] == [merged], "PO ketiga ditambahkan ke draf yang sama dan tertaut")
+    added = [ln for ln in move_lines(merged) if ln["purchase_line_id"] and ln["purchase_line_id"][0] == ln3["id"]]
+    api.call("account.move", "write", ids=[merged], vals={"invoice_line_ids": [[2, added[0]["id"], 0]]})
+    check(api.read("purchase.order", po3, ["invoice_status"])["invoice_status"] == "to invoice", "menghapus baris dari draf mengembalikan PO ke Perlu Ditagih")
+    api.call("account.move", "write", ids=[merged], vals={"invoice_date": today})
+    api.call("account.move", "action_post", ids=[merged])
+    check(api.read("account.move", merged, ["state"])["state"] == "posted" and journal_balanced(merged), "tagihan gabungan diposting dan jurnalnya seimbang")
+
+    # 3. Beberapa SO satu pelanggan menjadi SATU faktur lewat wizard; pelanggan berbeda tidak digabung
+    def make_so(partner, order_lines):
+        [so] = api.call("sale.order", "create", vals_list=[{"partner_id": partner, "order_line": [[0, 0, ln] for ln in order_lines]}])
+        api.call("sale.order", "action_confirm", ids=[so])
+        return so
+
+    so1 = make_so(customer, [{"product_id": service, "product_uom_qty": 4.0, "price_unit": 150000.0, "tax_ids": no_tax}])
+    so2 = make_so(customer, [{"product_id": service, "product_uom_qty": 2.0, "price_unit": 100000.0, "discount": 10.0, "tax_ids": no_tax}])
+    so_other = make_so(other_customer, [{"product_id": service, "product_uom_qty": 1.0, "price_unit": 1000.0, "tax_ids": no_tax}])
+    so_names = {so: api.read("sale.order", so, ["name"])["name"] for so in (so1, so2, so_other)}
+    open_orders = {r["name"] for r in api.search("sale.order", [["partner_id", "=", customer], ["state", "=", "sale"], ["invoice_status", "=", "to invoice"]], ["name"])}
+    check({so_names[so1], so_names[so2]} <= open_orders and so_names[so_other] not in open_orders, "daftar SO satu pelanggan tidak memuat SO pelanggan lain")
+
+    def invoice_orders(order_ids):
+        def invoices():
+            return {i for o in api.call("sale.order", "read", ids=order_ids, fields=["invoice_ids"]) for i in o["invoice_ids"]}
+
+        before = invoices()
+        context = {"active_model": "sale.order", "active_ids": order_ids, "active_id": order_ids[0]}
+        [wizard] = api.call("sale.advance.payment.inv", "create", vals_list=[{"advance_payment_method": "delivered"}], context=context)
+        api.call("sale.advance.payment.inv", "create_invoices", ids=[wizard], context=context)
+        return sorted(invoices() - before)
+
+    made = invoice_orders([so1, so2])
+    check(len(made) == 1, f"dua SO satu pelanggan menjadi satu faktur: {made}")
+    sale_line_ids = {i for ln in move_lines(made[0]) for i in ln["sale_line_ids"]}
+    check(len(move_lines(made[0])) == 2 and sale_line_ids == {api.search("sale.order.line", [["order_id", "=", so]], ["id"])[0]["id"] for so in (so1, so2)}, "baris faktur tertaut ke baris kedua SO")
+    check(abs(untaxed(made[0]) - (4 * 150000.0 + 2 * 100000.0 * 0.9)) < 0.01, f"total faktur gabungan: {untaxed(made[0])}")
+    check(all(api.read("sale.order", so, ["invoice_status"])["invoice_status"] == "invoiced" for so in (so1, so2)), "kedua SO berstatus Sudah Difakturkan")
+    so_mix = make_so(customer, [{"product_id": service, "product_uom_qty": 1.0, "price_unit": 1.0, "tax_ids": no_tax}])
+    mixed = invoice_orders([so_mix, so_other])
+    check(len(mixed) == 2, "temuan: Odoo membuat faktur terpisah untuk pelanggan berbeda, sebab itu UI memilih mitra lebih dulu")
+    for extra in mixed:
+        api.call("account.move", "button_cancel", ids=[extra])
+    # tambah SO ke draf faktur (sale_line_ids), hapus barisnya mengembalikan status
+    so3 = make_so(customer, [{"product_id": service, "product_uom_qty": 3.0, "price_unit": 10000.0, "tax_ids": no_tax}])
+    sl3 = api.search("sale.order.line", [["order_id", "=", so3]], ["id", "name", "product_id", "product_uom_id", "qty_to_invoice", "price_unit", "discount", "tax_ids"])[0]
+    api.call("account.move", "write", ids=[made[0]], vals={"invoice_line_ids": [[0, 0, {
+        "display_type": "product", "name": sl3["name"], "product_id": sl3["product_id"][0], "product_uom_id": sl3["product_uom_id"][0], "quantity": sl3["qty_to_invoice"],
+        "discount": 0, "price_unit": sl3["price_unit"], "tax_ids": [[6, 0, sl3["tax_ids"]]], "sale_line_ids": [[4, sl3["id"]]]}]]})
+    check(abs(untaxed(made[0]) - 810000.0) < 0.01 and api.read("sale.order", so3, ["invoice_ids"])["invoice_ids"] == [made[0]], "SO ketiga ditambahkan ke draf faktur yang sama dan tertaut")
+    added = [ln for ln in move_lines(made[0]) if sl3["id"] in ln["sale_line_ids"]]
+    api.call("account.move", "write", ids=[made[0]], vals={"invoice_line_ids": [[2, added[0]["id"], 0]]})
+    check(api.read("sale.order", so3, ["invoice_status"])["invoice_status"] == "to invoice", "menghapus baris dari draf mengembalikan SO ke Perlu Difakturkan")
+    api.call("account.move", "action_post", ids=made)
+    receivable = api.search("account.move.line", [["move_id", "=", made[0]], ["account_id.account_type", "=", "asset_receivable"]], ["debit"])
+    check(journal_balanced(made[0]) and len(receivable) == 1 and abs(receivable[0]["debit"] - 780000.0) < 0.01, "faktur gabungan diposting, jurnal seimbang, piutang sama dengan total")
+    # faktur berdiri sendiri
+    [standalone] = api.call("account.move", "create", vals_list=[{
+        "move_type": "out_invoice", "partner_id": customer, "invoice_date": today, "invoice_payment_term_id": api.search("account.payment.term", [], ["id"], limit=1)[0]["id"],
+        "invoice_line_ids": [[0, 0, {"product_id": service, "name": "Jasa faktur", "quantity": 2.0, "price_unit": 250000.0, "tax_ids": no_tax}], [0, 0, {"name": "Biaya bebas", "quantity": 1.0, "price_unit": 5000.0, "tax_ids": no_tax}]]}])
+    api.call("account.move", "action_post", ids=[standalone])
+    check(api.read("account.move", standalone, ["state"])["state"] == "posted" and abs(untaxed(standalone) - 505000.0) < 0.01 and journal_balanced(standalone), "faktur berdiri sendiri diposting dengan jurnal seimbang")
+    # bersihkan: batalkan PO dan SO uji yang belum ditagih
+    for po in (po_other, po_usd, po3, po_native):
+        api.call("purchase.order", "button_cancel", ids=[po])
+    for so in (so_other, so3, so_mix):
+        api.call("sale.order", "action_cancel", ids=[so])
 
 
 def bill_total(api, bill_id):
