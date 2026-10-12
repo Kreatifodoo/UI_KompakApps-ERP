@@ -81,8 +81,8 @@ function rowHtml(r, support) {
   return `<tr class="align-top">
     <td class="py-3 px-4 text-sm font-medium text-indigo-700">${esc(r.product_id[1])}${warning ? `<div class="mt-1 text-xs font-normal text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 max-w-xs" data-warning="${r.id}">${esc(warning)}</div>` : ""}</td>
     ${cell(r.location_id[1])}
-    <td class="py-2 px-4 min-w-[15rem]"><select data-route="${r.id}" class="${INPUT}" aria-label="Rute ${esc(r.product_id[1])}"><option value="">${esc(`Otomatis: ${effective}`)}</option>${options}</select></td>
-    <td class="py-2 px-4 min-w-[8.5rem]"><select data-trigger="${r.id}" class="${INPUT}" aria-label="Pemicu ${esc(r.product_id[1])}">${Object.entries(TRIGGERS).map(([k, label]) => `<option value="${k}" ${k === r.trigger ? "selected" : ""}>${label}</option>`).join("")}</select></td>
+    <td class="py-2 px-4 min-w-[13rem]"><select data-route="${r.id}" class="${INPUT}" aria-label="Rute ${esc(r.product_id[1])}"><option value="">${esc(`Otomatis: ${effective}`)}</option>${options}</select></td>
+    <td class="py-2 px-4 min-w-[7.5rem]"><select data-trigger="${r.id}" class="${INPUT}" aria-label="Pemicu ${esc(r.product_id[1])}">${Object.entries(TRIGGERS).map(([k, label]) => `<option value="${k}" ${k === r.trigger ? "selected" : ""}>${label}</option>`).join("")}</select></td>
     ${cell(nf.format(r.qty_on_hand), { right: true })}${cell(nf.format(r.qty_forecast), { right: true })}
     ${cell(unruled ? "Tanpa aturan" : `${nf.format(r.product_min_qty)} / ${nf.format(r.product_max_qty)}`, { right: true })}
     <td class="py-2 px-4 w-36"><input type="number" min="0" step="any" data-order="${r.id}" data-suggested="${r.qty_to_order}" value="${esc(value)}" ${auto ? 'readonly title="Jumlah aturan otomatis dihitung Odoo"' : ""} class="${INPUT} text-right ${auto ? "bg-gray-50 text-gray-500" : ""}" aria-label="Jumlah pesan ${esc(r.product_id[1])}"></td>
