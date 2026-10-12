@@ -33,6 +33,9 @@ export const DELIVERY = {
     `Barang sudah keluar dari gudang dan nilainya tercatat pada pergerakan stok. Odoo tidak membuat jurnal saat pengiriman; harga pokok (Dr HPP, Cr Persediaan) tercipta saat faktur pelanggan diposting${pk.sale_id ? ` (<a href="#/sale/${pk.sale_id[0]}" class="underline">${esc(pk.sale_id[1])}</a>)` : ""}.`,
 };
 
+/** Halaman tempat dokumen dibuka menurut jenis tipe operasinya (rute suplai antar gudang dan multi-langkah mencampur jenis). */
+const ROUTE_OF = { incoming: "receipt", outgoing: "delivery", internal: "transfer" };
+
 export function createPickingPage(config) {
   const BUTTONS = [
     { action: "todo", label: "Tandai To-Do", method: "action_confirm", kind: "primary", show: (p) => p.state === "draft" },
@@ -73,36 +76,62 @@ export function createPickingPage(config) {
     const ids = (query.get("ids") ?? "").split(",").map(Number).filter(Boolean);
     const source = config.source ? Number(query.get(config.source.param)) || null : null;
     const returnsOnly = query.get("returns") === "1";
-    const domain = [["picking_type_code", "=", config.code]];
+    const transit = config.code === "internal" && query.get("scope") === "transit";
+    const mixed = ids.length > 0 || transit; // tautan dari PO, SO, dan Replenishment bisa memuat beberapa jenis dokumen
+    const domain = mixed ? [["picking_type_code", "in", Object.keys(ROUTE_OF)]] : [["picking_type_code", "=", config.code]];
+    if (transit) domain.push("|", ["location_id.usage", "=", "transit"], ["location_dest_id.usage", "=", "transit"]);
     if (returnsOnly) domain.push(["return_id", "!=", false]);
     if (filter) domain.push(["state", "=", filter]);
     if (ids.length) domain.push(["id", "in", ids]);
     if (source) domain.push([config.source.field, "=", source]);
-    const rows = await searchRead("stock.picking", domain, ["name", "partner_id", "scheduled_date", "origin", "state"], { order: "id desc", limit: 80 });
+    const rows = await searchRead("stock.picking", domain, ["name", "partner_id", "scheduled_date", "origin", "state", "picking_type_id", "picking_type_code", "location_id", "location_dest_id"], { order: "id desc", limit: 80 });
     const options = [["", "Semua status"], ...Object.entries(STATES).map(([k, v]) => [k, v[0]])];
+    const wide = config.code === "internal" || mixed; // gudang asal dan tujuan terlihat dari nama lokasi (kode gudang di depan)
     const body = rows
       .map((r) =>
-        rowLink(`#/${config.route}/${r.id}`, [
+        rowLink(`#/${ROUTE_OF[r.picking_type_code] ?? config.route}/${r.id}`, [
           cell(r.name, { strong: true }),
           cell(r.partner_id?.[1] ?? ""),
+          ...(wide ? [cell(r.picking_type_id?.[1] ?? ""), cell(r.location_id?.[1] ?? ""), cell(r.location_dest_id?.[1] ?? "")] : []),
           cell(dateTimeText(r.scheduled_date)),
           cell(r.origin || "-"),
           cell(badge(STATES, r.state), { raw: true }),
         ]),
       )
       .join("");
+    const scopeLink = config.code === "internal"
+      ? `<a href="#/${config.route}${transit ? "" : "?scope=transit"}" class="px-4 py-2 border rounded-lg text-sm ${transit ? "bg-indigo-50 border-indigo-300 text-indigo-700" : "bg-white border-gray-300 hover:bg-gray-50"}"><i class="fas fa-truck-ramp-box mr-2"></i>Antar Gudang</a>`
+      : "";
     app.innerHTML =
       pageHeader(
-        returnsOnly ? `Retur ${config.code === "outgoing" ? "Penerimaan (keluar)" : "Pengiriman (masuk)"}` : config.title,
-        `${filterSelect(options, filter)}
+        returnsOnly ? `Retur ${config.code === "outgoing" ? "Penerimaan (keluar)" : "Pengiriman (masuk)"}` : transit ? "Transfer Antar Gudang" : config.title,
+        `${filterSelect(options, filter)}${scopeLink}
          <button data-action="refresh" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50" aria-label="Muat ulang"><i class="fas fa-rotate"></i></button>
          ${config.newHref ? `<a href="${config.newHref}" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>${config.newLabel}</a>` : ""}`,
       ) +
+      (transit ? '<p class="text-sm text-gray-600 mb-3">Dokumen yang keluar dari atau masuk ke lokasi transit antar gudang: pengiriman keluar dari gudang pemasok, lalu penerimaan di gudang tujuan (dari rute suplai di Reorder Level).</p>' : "") +
       table(
-        [{ label: "Referensi" }, { label: config.partner }, { label: "Tanggal Terjadwal" }, { label: "Dokumen Sumber" }, { label: "Status" }],
+        [{ label: "Referensi" }, { label: config.partner }, ...(wide ? [{ label: "Tipe Operasi" }, { label: "Dari" }, { label: "Ke" }] : []), { label: "Tanggal Terjadwal" }, { label: "Dokumen Sumber" }, { label: "Status" }],
         body,
-        config.empty,
+        transit ? "Belum ada transfer antar gudang." : config.empty,
       );
+  }
+
+  /** Langkah sebelum dan sesudah dokumen ini (multi-langkah dan antar gudang: keluar, transit, terima, simpan). */
+  async function chainSteps(id, list) {
+    const linked = [...new Set(list.flatMap((m) => [...m.move_orig_ids, ...m.move_dest_ids]))];
+    if (!linked.length) return "";
+    const rows = await searchRead("stock.move", [["id", "in", linked], ["picking_id", "!=", false]], ["picking_id", "state"]);
+    const before = new Set(list.flatMap((m) => m.move_orig_ids));
+    const items = new Map();
+    for (const r of rows) {
+      if (r.picking_id[0] === id) continue;
+      if (!items.has(r.picking_id[0])) items.set(r.picking_id[0], { id: r.picking_id[0], name: r.picking_id[1], after: !before.has(r.id) });
+    }
+    if (!items.size) return "";
+    const pickings = await searchRead("stock.picking", [["id", "in", [...items.keys()]]], ["name", "state", "picking_type_code", "picking_type_id"], { order: "id" });
+    const li = (p) => `<li>${items.get(p.id).after ? "Langkah berikutnya" : "Langkah sebelumnya"}: <a href="#/${ROUTE_OF[p.picking_type_code] ?? config.route}/${p.id}" class="text-indigo-700 hover:underline">${esc(p.name)}</a> <span class="text-gray-500">(${esc(p.picking_type_id?.[1] ?? "")})</span> ${badge(STATES, p.state)}</li>`;
+    return `<section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 p-4"><div class="text-sm font-semibold mb-2">Rangkaian operasi</div><ul class="text-sm space-y-1">${pickings.map(li).join("")}</ul></section>`;
   }
 
   async function renderForm(id) {
@@ -111,6 +140,10 @@ export function createPickingPage(config) {
       "name", "state", "partner_id", "picking_type_id", "picking_type_code", "location_id", "location_dest_id", "scheduled_date", "date_deadline", "date_done",
       "origin", "backorder_id", ...(config.source ? [config.source.field] : []), "show_check_availability", "return_count", "return_id", "return_ids",
     ]);
+    if (pk && pk.picking_type_code !== config.code && ROUTE_OF[pk.picking_type_code]) {
+      location.replace(`#/${ROUTE_OF[pk.picking_type_code]}/${id}`); // mis. Storage atau Pick dari PO atau SO multi-langkah
+      return;
+    }
     if (!pk || pk.picking_type_code !== config.code) {
       app.innerHTML = `<p class="text-sm text-rose-600">${config.noun} tidak ditemukan.</p>`;
       return;
@@ -118,9 +151,10 @@ export function createPickingPage(config) {
     moves = await searchRead(
       "stock.move",
       [["picking_id", "=", id]],
-      ["product_id", "description_picking", "product_uom_qty", "quantity", "product_uom", "picked", "state", "value", "has_tracking", "location_id", "location_dest_id"],
+      ["product_id", "description_picking", "product_uom_qty", "quantity", "product_uom", "picked", "state", "value", "has_tracking", "location_id", "location_dest_id", "move_orig_ids", "move_dest_ids"],
       { order: "id" },
     );
+    const chain = await chainSteps(id, moves);
     edits = new Map();
     await loadLots(pk);
     last.state = pk.state;
@@ -182,6 +216,7 @@ export function createPickingPage(config) {
           .map((h, i) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${i === 2 || i === 3 || i === 5 ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
           <tbody class="divide-y divide-gray-100">${rows}</tbody></table>
       </section>
+      ${chain}
       ${valued && config.valuedNote ? `<p class="mt-3 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3">${config.valuedNote(pk)}</p>` : ""}
       ${chatterHtml("stock.picking", pk.id)}`;
     loadMessages("stock.picking", pk.id);

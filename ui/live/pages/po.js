@@ -4,7 +4,7 @@
 // (diterima, ditagih, harga, pajak, jumlah) dan total.
 import {
   INPUT, actionBar, app, badge, call, cell, chatterHtml, closeLookup, ctx, dateText, esc, fieldBlock, filterSelect, fromInputDateTime,
-  guarded, loadMessages, money, pageHeader, readOne, readonlyValue, referenceUsers, registerLookup, rowLink, runLookup, searchRead,
+  guarded, loadMessages, money, pageHeader, readOne, readonlyValue, referenceUsers, referenceWarehouses, registerLookup, rowLink, runLookup, searchRead,
   selectOptions, statTiles, statusbar, table, toInputDateTime, toast, dateTimeText,
 } from "../common.js";
 import { loadTaxNames, productDefaultTaxes, registerTaxes, taxCell, taxChange, taxList } from "../taxpick.js";
@@ -241,7 +241,7 @@ function readonlyLinesTable(lines, currency, showReceived) {
 async function renderForm(id) {
   closeLookup();
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
-  const users = await referenceUsers();
+  const [users, warehouses] = await Promise.all([referenceUsers(), referenceWarehouses()]);
   await preloadAnalytic();
   terms ??= await searchRead("account.payment.term", [], ["display_name"], { limit: 50 });
   let po = null;
@@ -250,7 +250,7 @@ async function renderForm(id) {
     po = await readOne("purchase.order", id, [
       "name", "state", "partner_id", "partner_ref", "date_order", "date_approve", "date_planned", "user_id", "origin", "payment_term_id",
       "currency_id", "incoming_picking_count", "picking_ids", "invoice_count", "invoice_ids", "invoice_status", "receipt_status", "is_shipped",
-      "locked", "lock_confirmed_po", "amount_untaxed", "amount_tax", "amount_total",
+      "locked", "lock_confirmed_po", "amount_untaxed", "amount_tax", "amount_total", "picking_type_id",
     ]);
     if (!po) {
       app.innerHTML = '<p class="text-sm text-rose-600">Dokumen tidak ditemukan.</p>';
@@ -278,9 +278,9 @@ async function renderForm(id) {
           partner: po.partner_id ? { id: po.partner_id[0], display_name: po.partner_id[1] } : null,
           partner_ref: po.partner_ref || "", date_order: toInputDateTime(po.date_order),
           date_planned: toInputDateTime(po.date_planned), date_planned0: toInputDateTime(po.date_planned),
-          user_id: po.user_id?.[0] ?? null, origin: po.origin || "", payment_term_id: po.payment_term_id?.[0] ?? null,
+          user_id: po.user_id?.[0] ?? null, origin: po.origin || "", payment_term_id: po.payment_term_id?.[0] ?? null, picking_type_id: po.picking_type_id?.[0] ?? null,
           initial: {
-            partner_id: po.partner_id?.[0] ?? null, partner_ref: po.partner_ref || "", date_order: toInputDateTime(po.date_order),
+            picking_type_id: po.picking_type_id?.[0] ?? null, partner_id: po.partner_id?.[0] ?? null, partner_ref: po.partner_ref || "", date_order: toInputDateTime(po.date_order),
             user_id: po.user_id?.[0] ?? null, origin: po.origin || "", payment_term_id: po.payment_term_id?.[0] ?? null,
           },
           lines: lines.map((l) => ({
@@ -295,13 +295,17 @@ async function renderForm(id) {
         }
       : {
           id: null, partner: null, partner_ref: "", date_order: "", date_planned: "", date_planned0: "", user_id: ctx.user.id,
-          origin: "", payment_term_id: null, lines: [emptyLine()], removed: [],
+          origin: "", payment_term_id: null, picking_type_id: null, lines: [emptyLine()], removed: [],
         };
   }
 
   const title = po ? esc(po.name) : "Baru";
   const kind = isRfq ? "Request for Quotation" : "Purchase Order";
   const f = form;
+  // pemilih gudang hanya muncul bila ada lebih dari satu gudang aktif; nilainya tipe operasi penerimaan gudang itu (D42)
+  const receiptTypes = warehouses.map((w) => ({ id: w.in_type_id[0], display_name: w.display_name }));
+  if (po?.picking_type_id && !receiptTypes.some((t) => t.id === po.picking_type_id[0])) receiptTypes.push({ id: po.picking_type_id[0], display_name: po.picking_type_id[1] });
+  const multiWarehouse = warehouses.length > 1;
   const fields = editable
     ? `${fieldBlock("Pemasok", `<input data-lookup="po-vendor" autocomplete="off" role="combobox" aria-autocomplete="list" value="${esc(f.partner?.display_name ?? "")}" placeholder="Cari atau pilih pemasok..." class="${INPUT}">`)}
        ${fieldBlock("Referensi Pemasok", `<input data-value="partner_ref" value="${esc(f.partner_ref)}" class="${INPUT}">`)}
@@ -310,6 +314,7 @@ async function renderForm(id) {
        ${fieldBlock("Pembeli", `<select data-value="user_id" class="${INPUT}">${selectOptions(users, f.user_id, "-")}</select>`)}
        ${fieldBlock("Dokumen Sumber", `<input data-value="origin" value="${esc(f.origin)}" class="${INPUT}">`)}
        ${fieldBlock("Syarat Pembayaran", `<select data-value="payment_term_id" class="${INPUT}">${selectOptions(terms, f.payment_term_id, "-")}</select>`)}
+       ${multiWarehouse ? fieldBlock("Terima di Gudang", `<select data-value="picking_type_id" class="${INPUT}">${selectOptions(receiptTypes, f.picking_type_id, "Otomatis (gudang utama)")}</select>`) : ""}
        ${fieldBlock("Mata Uang", readonlyValue(currency))}`
     : `${fieldBlock("Pemasok", readonlyValue(po.partner_id?.[1]))}
        ${fieldBlock("Referensi Pemasok", readonlyValue(po.partner_ref))}
@@ -318,6 +323,7 @@ async function renderForm(id) {
        ${fieldBlock("Pembeli", readonlyValue(po.user_id?.[1]))}
        ${fieldBlock("Dokumen Sumber", readonlyValue(po.origin))}
        ${fieldBlock("Syarat Pembayaran", readonlyValue(po.payment_term_id?.[1]))}
+       ${multiWarehouse ? fieldBlock("Terima di Gudang", readonlyValue(receiptTypes.find((t) => t.id === po.picking_type_id?.[0])?.display_name ?? po.picking_type_id?.[1])) : ""}
        ${fieldBlock("Mata Uang", readonlyValue(currency))}`;
 
   const totals = po
@@ -404,7 +410,7 @@ function changedHeader() {
   const f = form;
   const current = {
     partner_id: f.partner?.id ?? null, partner_ref: f.partner_ref, date_order: f.date_order, user_id: Number(f.user_id) || null,
-    origin: f.origin, payment_term_id: Number(f.payment_term_id) || null,
+    origin: f.origin, payment_term_id: Number(f.payment_term_id) || null, picking_type_id: Number(f.picking_type_id) || null,
   };
   const initial = f.initial ?? {};
   const header = {};
@@ -413,6 +419,7 @@ function changedHeader() {
   if (!f.id || current.origin !== initial.origin) header.origin = current.origin || false;
   if (!f.id || current.user_id !== initial.user_id) header.user_id = current.user_id || false;
   if (!f.id || current.payment_term_id !== initial.payment_term_id) header.payment_term_id = current.payment_term_id || false;
+  if (f.id ? current.picking_type_id !== initial.picking_type_id : current.picking_type_id) header.picking_type_id = current.picking_type_id || false;
   if (current.date_order && (!f.id || current.date_order !== initial.date_order)) header.date_order = fromInputDateTime(current.date_order);
   if (f.date_planned && f.date_planned !== f.date_planned0) header.date_planned = fromInputDateTime(f.date_planned);
   return header;

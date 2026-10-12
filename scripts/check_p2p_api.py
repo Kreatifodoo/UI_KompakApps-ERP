@@ -193,6 +193,7 @@ def main():
     check_bank_reconciliation(api)
     check_inventory(api, product)
     check_warehouse_master(api, product)
+    check_multi_warehouse(api)
     check_lots(api, vendor)
     check_manufacturing(api)
     check_crm(api)
@@ -438,6 +439,195 @@ def check_warehouse_master(api, product):
     check(api.call("stock.picking", "button_validate", ids=[picking]) is True, "transfer internal divalidasi tanpa dialog")
     after = api.search("stock.quant", [["product_id", "=", product["id"]], ["location_id", "=", rack]], ["quantity"])[0]["quantity"]
     check(after == start + 2.0, "stok berpindah ke lokasi tujuan")
+
+
+def check_multi_warehouse(api):
+    """Gudang kedua (penerimaan 2 langkah, pengiriman 2 langkah, disuplai gudang utama), PO ke gudang itu, suplai antar gudang lewat transit,
+    stok per gudang, SO dan MO dari gudang itu (halaman Warehouse Master, Reorder Level, Replenishment, Transfer, Stok per Gudang, PO, SO, MO; D42)."""
+    import random
+
+    step("Multi-gudang: gudang kedua, PO ke gudang itu, suplai antar gudang, stok per gudang, SO dan MO dari gudang itu")
+    tag = f"{random.randint(0, 99999):05d}"
+    code = f"M{tag[:4]}"  # kode gudang unik per jalan agar gudang uji yang diarsipkan tidak bentrok
+    api.call("res.config.settings", "execute", ids=api.call("res.config.settings", "create", vals_list=[{"group_stock_multi_locations": True, "group_stock_adv_location": True}]))
+    uid = api.call("res.users", "context_get")["uid"]
+    has = lambda group: bool(api.call("res.users", "has_group", ids=[uid], group_ext_id=group))  # noqa: E731
+    check(has("stock.group_adv_location"), "fitur Multi-Step Routes aktif lewat pengaturan (sakelar di Warehouse Master)")
+    wh1 = api.search("stock.warehouse", [], ["id", "lot_stock_id", "in_type_id", "out_type_id", "int_type_id"], order="id", limit=1)[0]
+    goods = api.search("product.category", [["name", "=", "Goods"]], ["id"], limit=1)
+    base = {"type": "consu", "is_storable": True, "categ_id": goods[0]["id"] if goods else False}
+
+    def new_product(name, cost=5_000.0, price=10_000.0):
+        [tmpl] = api.call("product.template", "create", vals_list=[{**base, "name": f"{name} {tag}", "standard_price": cost, "list_price": price}])
+        info = api.read("product.template", tmpl, ["product_variant_id", "uom_id"])
+        return {"tmpl": tmpl, "id": info["product_variant_id"][0], "uom": info["uom_id"][0]}
+
+    item = new_product("Barang Multi Gudang")
+    mode = {"inventory_mode": True}
+
+    def set_stock(product, location, quantity):
+        found = api.search("stock.quant", [["product_id", "=", product], ["location_id", "=", location]], ["id"])
+        if found:
+            quant = found[0]["id"]
+            api.call("stock.quant", "write", ids=[quant], vals={"inventory_quantity": quantity}, context=mode)
+        else:
+            [quant] = api.call("stock.quant", "create", vals_list=[{"product_id": product, "location_id": location, "inventory_quantity": quantity}], context=mode)
+        api.call("stock.quant", "action_apply_inventory", ids=[quant], context=mode)
+
+    def amounts(product, warehouse=None):
+        row = api.call("product.product", "read", ids=[product], fields=["qty_available", "incoming_qty", "outgoing_qty", "virtual_available"], context={"warehouse_id": warehouse} if warehouse else {})[0]
+        return row["qty_available"], row["incoming_qty"], row["outgoing_qty"], row["virtual_available"]
+
+    def finish(picking, label):
+        """Cek ketersediaan, isi jumlah sesuai permintaan, lalu validasi."""
+        api.call("stock.picking", "action_assign", ids=[picking])
+        for move in api.search("stock.move", [["picking_id", "=", picking]], ["id", "product_uom_qty"]):
+            api.call("stock.move", "write", ids=[move["id"]], vals={"quantity": move["product_uom_qty"], "picked": True})
+        check(api.call("stock.picking", "button_validate", ids=[picking]) is True, f"{label} divalidasi tanpa dialog")
+
+    def open_pickings():
+        return api.search("stock.picking", [["state", "not in", ["done", "cancel"]]], ["id", "name", "picking_type_id", "picking_type_code", "location_id", "location_dest_id", "state", "origin"], order="id")
+
+    # 1. gudang kedua dengan langkah dan "disuplai dari"
+    active_before = api.call("stock.warehouse", "search_count", domain=[])
+    [wh2_id] = api.call("stock.warehouse", "create", vals_list=[{
+        "name": f"Gudang Uji {tag}", "code": code, "reception_steps": "two_steps", "delivery_steps": "pick_ship", "resupply_wh_ids": [[6, 0, [wh1["id"]]]],
+    }])
+    wh2 = api.read("stock.warehouse", wh2_id, ["lot_stock_id", "view_location_id", "wh_input_stock_loc_id", "wh_output_stock_loc_id", "in_type_id", "out_type_id", "store_type_id", "pick_type_id", "manu_type_id",
+                                                  "reception_route_id", "delivery_route_id", "resupply_route_ids", "resupply_wh_ids"])
+    check(api.call("stock.warehouse", "search_count", domain=[]) == active_before + 1, "gudang kedua tercipta")
+    check(has("stock.group_stock_multi_warehouses"), "mode multi-gudang aktif otomatis setelah gudang kedua")
+    try:
+        api.call("stock.warehouse", "create", vals_list=[{"name": f"Kembar {tag}", "code": code}])
+        check(False, "kode gudang kembar seharusnya ditolak")
+    except RuntimeError:
+        check(True, "kode gudang harus unik (kode kembar ditolak Odoo)")
+    types = {t["id"]: t for t in api.search("stock.picking.type", [["warehouse_id", "=", wh2_id]], ["name", "code", "active", "default_location_src_id", "default_location_dest_id"], context={"active_test": False})}
+    check(bool(wh2["reception_route_id"]) and bool(wh2["delivery_route_id"]), "rute penerimaan 2 langkah dan pengiriman 2 langkah terbentuk")
+    check(types[wh2["store_type_id"][0]]["active"] and types[wh2["pick_type_id"][0]]["active"], "tipe operasi Storage dan Pick aktif (picking tambahan)")
+    check(types[wh2["in_type_id"][0]]["default_location_dest_id"][0] == wh2["wh_input_stock_loc_id"][0], "penerimaan masuk ke lokasi Input, bukan langsung ke Stock")
+    [route] = api.search("stock.route", [["id", "in", wh2["resupply_route_ids"]]], ["supplied_wh_id", "supplier_wh_id", "product_selectable"])
+    check(route["supplied_wh_id"][0] == wh2_id and route["supplier_wh_id"][0] == wh1["id"] and route["product_selectable"], "rute suplai antar gudang terbentuk (gudang utama -> gudang kedua) dan bisa dipilih di aturan reorder")
+    transit = api.search("stock.rule", [["route_id", "=", route["id"]]], ["location_src_id", "location_dest_id", "picking_type_id"], order="id")
+    check(len(transit) == 2 and transit[0]["location_dest_id"] == transit[1]["location_src_id"], "rute suplai lewat satu lokasi transit (keluar, lalu terima)")
+
+    # 2. stok awal di gudang utama, PO ke gudang kedua
+    set_stock(item["id"], wh1["lot_stock_id"][0], 20.0)
+    check(amounts(item["id"], wh1["id"])[0] == 20.0 and amounts(item["id"], wh2_id)[0] == 0.0, "stok awal 20 hanya di gudang utama")
+    vendor = api.search("res.partner", [["name", "=", "PT Pemasok Nusantara"]], ["id"], limit=1)[0]["id"]
+    [po] = api.call("purchase.order", "create", vals_list=[{
+        "partner_id": vendor, "picking_type_id": wh2["in_type_id"][0],
+        "order_line": [[0, 0, {"product_id": item["id"], "name": "Uji gudang", "product_qty": 6.0, "product_uom_id": item["uom"], "price_unit": 5_000.0}]],
+    }])
+    check(api.read("purchase.order", po, ["picking_type_id"])["picking_type_id"][0] == wh2["in_type_id"][0], "PO memilih tipe penerimaan gudang kedua")
+    api.call("purchase.order", "button_confirm", ids=[po])
+    [receipt] = api.search("stock.picking", [["purchase_id", "=", po]], ["id", "picking_type_id", "location_dest_id"])
+    check(receipt["picking_type_id"][0] == wh2["in_type_id"][0] and receipt["location_dest_id"][0] == wh2["wh_input_stock_loc_id"][0], "penerimaan PO berada di gudang kedua (lokasi Input)")
+    finish(receipt["id"], "penerimaan PO gudang kedua")
+    [storage] = [p for p in open_pickings() if p["picking_type_id"][0] == wh2["store_type_id"][0] and p["origin"] == api.read("purchase.order", po, ["name"])["name"]]
+    check(storage["picking_type_code"] == "internal", "langkah kedua (Storage) terbentuk sebagai transfer internal")
+    check(amounts(item["id"], wh2_id)[0] == 6.0 and amounts(item["id"], wh1["id"])[0] == 20.0, "stok per gudang: 6 di gudang kedua (masih di Input), gudang utama tetap 20")
+    finish(storage["id"], "Storage ke lokasi Stock")
+    quants = api.search("stock.quant", [["product_id", "=", item["id"]], ["location_id.usage", "=", "internal"]], ["location_id", "quantity", "warehouse_id"])
+    by_wh = {}
+    for q in quants:
+        by_wh[q["warehouse_id"][0] if q["warehouse_id"] else 0] = by_wh.get(q["warehouse_id"][0] if q["warehouse_id"] else 0, 0.0) + q["quantity"]
+    check(by_wh == {wh1["id"]: 20.0, wh2_id: 6.0}, f"kelompok quant per gudang: {by_wh}")
+    check(any(q["location_id"][0] == wh2["lot_stock_id"][0] and q["quantity"] == 6.0 for q in quants), "6 unit tersimpan di Stock gudang kedua")
+
+    # 3. PR dengan tipe penerimaan gudang kedua terbawa ke RFQ
+    [pr] = api.call("purchase.request", "create", vals_list=[{
+        "description": "Uji gudang kedua", "picking_type_id": wh2["in_type_id"][0],
+        "line_ids": [[0, 0, {"product_id": item["id"], "product_uom_id": item["uom"], "product_qty": 1.0, "name": "Uji gudang"}]],
+    }])
+    api.call("purchase.request", "button_to_approve", ids=[pr])
+    api.call("purchase.request", "button_approved", ids=[pr])
+    pr_lines = [r["id"] for r in api.search("purchase.request.line", [["request_id", "=", pr]], ["id"])]
+    pr_ctx = {"active_model": "purchase.request.line", "active_ids": pr_lines, "active_id": pr_lines[0]}
+    wizard = api.call("purchase.request.line.make.purchase.order", "create", vals_list=[{"supplier_id": vendor}], context=pr_ctx)
+    api.call("purchase.request.line.make.purchase.order", "make_purchase_order", ids=wizard, context=pr_ctx)
+    rfq = api.search("purchase.order", [["order_line.purchase_request_lines.request_id", "=", pr]], ["id", "picking_type_id", "state"])[0]
+    check(rfq["picking_type_id"][0] == wh2["in_type_id"][0], "tipe penerimaan PR (gudang kedua) terbawa ke RFQ")
+    api.call("purchase.order", "button_cancel", ids=[rfq["id"]])
+
+    # 4. suplai gudang utama -> gudang kedua lewat aturan reorder dan transit
+    before_all = amounts(item["id"])[0]
+    [rule] = api.call("stock.warehouse.orderpoint", "create", vals_list=[{
+        "product_id": item["id"], "warehouse_id": wh2_id, "location_id": wh2["lot_stock_id"][0], "product_min_qty": 10.0, "product_max_qty": 10.0, "trigger": "manual", "route_id": route["id"],
+    }])
+    check(api.read("stock.warehouse.orderpoint", rule, ["qty_to_order"])["qty_to_order"] == 4.0, "aturan reorder gudang kedua (min 10, ada 6) meminta 4 unit")
+    last_picking = api.search("stock.picking", [], ["id"], order="id desc", limit=1)[0]["id"]
+    notice = api.call("stock.warehouse.orderpoint", "action_replenish", ids=[rule])
+    rule_name = api.read("stock.warehouse.orderpoint", rule, ["name"])["name"]
+    made = api.search("stock.picking", [["id", ">", last_picking], ["origin", "=", rule_name]], ["id", "name", "picking_type_id", "picking_type_code", "location_id", "location_dest_id"], order="id")
+    check(len(made) == 2, f"suplai antar gudang membuat 2 dokumen (keluar, lalu terima): {[p['name'] for p in made]}")
+    out, incoming = made[0], made[1]
+    check(out["picking_type_code"] == "outgoing" and out["location_id"][0] == wh1["lot_stock_id"][0], "langkah 1: keluar dari Stock gudang utama")
+    check(incoming["picking_type_code"] == "incoming" and incoming["location_id"] == out["location_dest_id"], "langkah 2: diterima dari lokasi transit yang sama di gudang kedua")
+    check(incoming["name"] in [link["label"] for link in notice["params"]["links"]], "pemberitahuan pengisian ulang menyebut dokumen penerimaan di gudang kedua")
+    interwh = api.search("stock.picking", [["picking_type_code", "in", ["incoming", "outgoing", "internal"]], "|", ["location_id.usage", "=", "transit"], ["location_dest_id.usage", "=", "transit"], ["id", ">", last_picking]], ["id"])
+    check({p["id"] for p in interwh} == {out["id"], incoming["id"]}, "filter Antar Gudang (lokasi transit) menemukan kedua dokumen")
+    mv_in = api.search("stock.move", [["picking_id", "=", incoming["id"]]], ["move_orig_ids"])[0]
+    check(bool(mv_in["move_orig_ids"]), "penerimaan terkait ke pengiriman asal (rangkaian operasi)")
+    finish(out["id"], "pengiriman keluar gudang utama")
+    check(amounts(item["id"], wh1["id"])[0] == 16.0 and amounts(item["id"])[0] == before_all - 4.0, "setelah keluar: gudang utama 16, 4 unit sedang di transit (tidak masuk gudang mana pun)")
+    transit_qty = sum(q["quantity"] for q in api.search("stock.quant", [["product_id", "=", item["id"]], ["location_id.usage", "=", "transit"]], ["quantity"]))
+    check(transit_qty == 4.0, "4 unit tercatat di lokasi transit")
+    finish(incoming["id"], "penerimaan di gudang kedua")
+    [store2] = [p for p in open_pickings() if p["picking_type_id"][0] == wh2["store_type_id"][0]]
+    finish(store2["id"], "Storage suplai antar gudang")
+    check((amounts(item["id"], wh1["id"])[0], amounts(item["id"], wh2_id)[0], amounts(item["id"])[0]) == (16.0, 10.0, before_all), "suplai selesai: gudang utama 16, gudang kedua 10, total tidak berubah")
+    api.call("stock.warehouse.orderpoint", "unlink", ids=[rule])
+
+    # 5. transfer langsung antar gudang (satu dokumen, tanpa transit)
+    [direct] = api.call("stock.picking", "create", vals_list=[{
+        "picking_type_id": wh1["int_type_id"][0], "location_id": wh1["lot_stock_id"][0], "location_dest_id": wh2["lot_stock_id"][0],
+        "move_ids": [[0, 0, {"product_id": item["id"], "product_uom_qty": 1.0, "location_id": wh1["lot_stock_id"][0], "location_dest_id": wh2["lot_stock_id"][0]}]],
+    }])
+    api.call("stock.picking", "action_confirm", ids=[direct])
+    finish(direct, "transfer langsung antar gudang")
+    check((amounts(item["id"], wh1["id"])[0], amounts(item["id"], wh2_id)[0]) == (15.0, 11.0), "transfer langsung memindahkan 1 unit: gudang utama 15, gudang kedua 11")
+
+    # 6. SO dari gudang kedua mengurangi stok gudang itu saja
+    customer = api.search("res.partner", [["name", "=", "PT Pelanggan Nusantara"]], ["id"], limit=1)[0]["id"]
+    [so] = api.call("sale.order", "create", vals_list=[{"partner_id": customer, "warehouse_id": wh2_id, "order_line": [[0, 0, {"product_id": item["id"], "product_uom_qty": 3.0}]]}])
+    check(api.read("sale.order", so, ["warehouse_id"])["warehouse_id"][0] == wh2_id, "SO memilih gudang pengiriman kedua")
+    api.call("sale.order", "action_confirm", ids=[so])
+    [pick] = api.search("stock.picking", [["sale_id", "=", so]], ["id", "picking_type_id", "picking_type_code", "location_id"])
+    check(pick["picking_type_code"] == "internal" and pick["picking_type_id"][0] == wh2["pick_type_id"][0] and pick["location_id"][0] == wh2["lot_stock_id"][0], "pengiriman 2 langkah: Pick dari Stock gudang kedua lebih dulu")
+    finish(pick["id"], "Pick gudang kedua")
+    [delivery] = api.search("stock.picking", [["sale_id", "=", so], ["picking_type_code", "=", "outgoing"]], ["id", "picking_type_id"])
+    check(delivery["picking_type_id"][0] == wh2["out_type_id"][0], "setelah Pick selesai, Delivery gudang kedua terbentuk")
+    finish(delivery["id"], "Delivery gudang kedua")
+    check((amounts(item["id"], wh1["id"])[0], amounts(item["id"], wh2_id)[0], amounts(item["id"])[0]) == (15.0, 8.0, 23.0), "SO dari gudang kedua: gudang kedua 11 -> 8, gudang utama tetap 15, total 23")
+    both = amounts(item["id"], wh1["id"])[0] + amounts(item["id"], wh2_id)[0]
+    check(both == amounts(item["id"])[0], "jumlah per gudang sama dengan stok keseluruhan")
+
+    # 7. MO dari gudang kedua memakai lokasi gudang itu
+    comp = new_product("Komponen Multi Gudang")
+    set_stock(comp["id"], wh2["lot_stock_id"][0], 10.0)
+    [bom] = api.call("mrp.bom", "create", vals_list=[{
+        "product_tmpl_id": item["tmpl"], "product_qty": 1.0, "product_uom_id": item["uom"], "code": f"BOM-MW-{tag}",
+        "bom_line_ids": [[0, 0, {"product_id": comp["id"], "product_qty": 2.0, "product_uom_id": comp["uom"]}]],
+    }])
+    [mo] = api.call("mrp.production", "create", vals_list=[{"product_id": item["id"], "bom_id": bom, "product_qty": 2.0, "picking_type_id": wh2["manu_type_id"][0]}])
+    info = api.read("mrp.production", mo, ["picking_type_id", "location_src_id", "location_dest_id"])
+    check(info["picking_type_id"][0] == wh2["manu_type_id"][0] and info["location_src_id"][0] == wh2["lot_stock_id"][0] and info["location_dest_id"][0] == wh2["lot_stock_id"][0], "MO memakai tipe produksi dan lokasi gudang kedua")
+    api.call("mrp.production", "action_confirm", ids=[mo])
+    raw = api.search("stock.move", [["raw_material_production_id", "=", mo]], ["location_id", "state"])[0]
+    check(raw["location_id"][0] == wh2["lot_stock_id"][0] and raw["state"] == "assigned", "komponen MO dicadangkan dari Stock gudang kedua")
+    api.call("mrp.production", "action_cancel", ids=[mo])
+
+    # 8. arsip aman: kosongkan stok gudang kedua, lalu arsipkan (gudang uji tidak menumpuk sebagai aktif)
+    for q in api.search("stock.quant", [["location_id.warehouse_id", "=", wh2_id], ["location_id.usage", "=", "internal"], ["quantity", "!=", 0]], ["id", "product_id", "location_id"]):
+        set_stock(q["product_id"][0], q["location_id"][0], 0.0)
+    left = api.search("stock.quant", [["location_id.warehouse_id", "=", wh2_id], ["location_id.usage", "=", "internal"], ["quantity", "!=", 0]], ["id"])
+    check(not left, "stok gudang kedua dikosongkan sebelum diarsipkan")
+    stray = [p["name"] for p in open_pickings() if p["picking_type_id"][0] in types]
+    check(not stray, f"tidak ada operasi berjalan di gudang kedua: {stray}")
+    api.call("stock.warehouse", "write", ids=[wh2_id], vals={"active": False})
+    check(api.call("stock.warehouse", "search_count", domain=[]) == active_before, "gudang uji diarsipkan: jumlah gudang aktif kembali")
+    check(not api.search("stock.warehouse", [["id", "=", wh2_id]], ["id"]) and bool(api.search("stock.warehouse", [["id", "=", wh2_id]], ["id"], context={"active_test": False})), "gudang uji hanya tampak pada filter diarsipkan")
 
 
 def check_lots(api, vendor):

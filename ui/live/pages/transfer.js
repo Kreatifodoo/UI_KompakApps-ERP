@@ -32,7 +32,7 @@ registerLookup("transfer-product", {
 async function references() {
   refs ??= {
     types: await searchRead("stock.picking.type", [["code", "=", "internal"]], ["display_name", "default_location_src_id", "default_location_dest_id"], { order: "sequence, id" }),
-    locations: await searchRead("stock.location", [["usage", "=", "internal"]], ["display_name"], { order: "complete_name" }),
+    locations: await searchRead("stock.location", [["usage", "=", "internal"]], ["display_name", "warehouse_id"], { order: "complete_name" }),
   };
   return refs;
 }
@@ -68,6 +68,7 @@ async function renderNew() {
       ${fieldBlock("Dari Lokasi", `<select data-transfer="src" class="${INPUT}">${selectOptions(r.locations, form.src)}</select>`)}
       ${fieldBlock("Ke Lokasi", `<select data-transfer="dest" class="${INPUT}">${selectOptions(r.locations, form.dest, "-")}</select>`)}
     </section>
+    ${warehouseHint(r)}
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 p-4 overflow-x-auto">
       <div class="text-sm font-semibold mb-3">Barang</div>
       <table class="w-full text-left"><thead><tr>${["Produk", "Jumlah", ""].map((h, i) => `<th class="pb-2 px-2 text-xs font-semibold text-gray-600 uppercase ${i === 1 ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>
@@ -75,6 +76,16 @@ async function renderNew() {
     </section>
     <div class="flex gap-2 mt-4"><button data-action="save-transfer" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan dan Tandai To-Do</button>
       <a href="#/transfer" data-action="discard-transfer" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a></div>`;
+}
+
+/** Bila lokasi asal dan tujuan berada di gudang berbeda, jelaskan bahwa ini transfer langsung (D42). */
+function warehouseHint(r) {
+  const of = (id) => r.locations.find((l) => l.id === id)?.warehouse_id?.[1] ?? null;
+  const from = of(form.src);
+  const to = of(form.dest);
+  if (!from || !to || from === to) return "";
+  return `<p id="transfer-hint" class="mt-3 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3">Transfer antar gudang: dari <b>${esc(from)}</b> ke <b>${esc(to)}</b>. Barang berpindah langsung dalam satu dokumen (tanpa transit).
+    Untuk pengiriman berlapis lewat transit (keluar dari gudang pemasok, lalu diterima di gudang tujuan), atur <a href="#/warehouse" class="underline">Disuplai dari</a> di gudang tujuan dan pakai Reorder Level atau Replenishment.</p>`;
 }
 
 async function save() {
@@ -113,8 +124,22 @@ export async function onClick(event, el) {
   } else await base.onClick(event, el);
 }
 
-export function onInput(event, el) {
-  if (form && el.dataset.transfer) form[el.dataset.transfer] = Number(el.value) || null;
+export async function onInput(event, el) {
+  if (form && el.dataset.transfer) {
+    form[el.dataset.transfer] = Number(el.value) || null;
+    if (el.dataset.transfer === "type") {
+      // tipe operasi gudang lain membawa lokasi bawaannya; tujuan yang sama dengan asal digeser ke lokasi lain
+      const r = await references();
+      const type = r.types.find((t) => t.id === form.type);
+      form.src = type?.default_location_src_id?.[0] ?? form.src;
+      form.dest = type?.default_location_dest_id?.[0] === form.src ? r.locations.find((l) => l.id !== form.src)?.id ?? null : type?.default_location_dest_id?.[0] ?? form.dest;
+      await renderNew();
+    } else if (el.dataset.transfer === "src" || el.dataset.transfer === "dest") {
+      const r = await references();
+      document.querySelector("#transfer-hint")?.remove();
+      document.querySelector("#app section")?.insertAdjacentHTML("afterend", warehouseHint(r));
+    }
+  }
   else if (form && el.dataset.transferLine !== undefined) form.lines[Number(el.dataset.transferLine)].qty = el.value;
   else if (form && el.dataset.lookup === "transfer-product") {
     form.lines[Number(el.dataset.line)].product = null;
