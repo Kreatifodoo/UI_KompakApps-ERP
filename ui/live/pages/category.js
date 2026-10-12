@@ -3,7 +3,7 @@
 // dan selisih harga. Nilai ini yang menentukan akun yang didebit saat tagihan vendor diposting.
 import {
   ACCOUNT_TYPE_LABELS, INPUT, app, call, cell, changedValues, closeLookup, esc, fieldBlock, fieldValue, guarded, pageHeader, readOne,
-  referenceCategories, referenceJournals, registerLookup, resetReferences, rowLink, runLookup, searchAccounts, searchBox, searchRead, selectOptions, statTiles,
+  REMOVAL_HELP, referenceCategories, referenceJournals, referenceRemovals, removalNote, removalSelect, registerLookup, resetReferences, rowLink, runLookup, searchAccounts, searchBox, searchRead, selectOptions, statTiles,
   table, toast, button,
 } from "../common.js";
 
@@ -16,9 +16,11 @@ const ACCOUNT_FIELDS = {
   property_price_difference_account_id: { label: "Akun Selisih Harga", types: ["expense", "expense_direct_cost", "expense_other", "income_other"] },
 };
 const READ_FIELDS = [
-  "name", "parent_id", "property_cost_method", "property_valuation", "property_stock_journal", "product_count", ...Object.keys(ACCOUNT_FIELDS),
+  "name", "parent_id", "property_cost_method", "property_valuation", "property_stock_journal", "removal_strategy_id", "product_count", ...Object.keys(ACCOUNT_FIELDS),
 ];
 
+const REMOVAL_NONE = "Tanpa pilihan, strategi mengikuti pengaturan lokasi gudang, dan bila kosong memakai FIFO. Pilihan di kategori mengalahkan pengaturan lokasi.";
+let removalsCache = [];
 let form = null; // { id, values, initial, pending: Set }
 let last = { sub: "", query: new URLSearchParams() };
 
@@ -34,6 +36,7 @@ const normalize = (record) => ({
   property_cost_method: record.property_cost_method || "standard",
   property_valuation: record.property_valuation || "periodic",
   property_stock_journal: record.property_stock_journal?.[0] ?? null,
+  removal_strategy_id: record.removal_strategy_id?.[0] ?? null,
   ...Object.fromEntries(Object.keys(ACCOUNT_FIELDS).map((key) => [key, asRef(record[key])])),
 });
 const flat = (values) => ({ ...values, ...Object.fromEntries(Object.keys(ACCOUNT_FIELDS).map((key) => [key, values[key]?.id ?? null])) });
@@ -102,7 +105,7 @@ function journalNote(v) {
 async function renderForm(id) {
   closeLookup();
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
-  const [categories, journals] = await Promise.all([referenceCategories(), referenceJournals("general")]);
+  const [categories, journals, removals] = await Promise.all([referenceCategories(), referenceJournals("general"), referenceRemovals()]);
   let category = null;
   if (id) {
     category = await readOne("product.category", id, READ_FIELDS);
@@ -115,6 +118,7 @@ async function renderForm(id) {
     const values = category ? normalize(category) : normalize({});
     form = { id: category?.id ?? null, values, initial: category ? flat(values) : null, pending: new Set() };
   }
+  removalsCache = removals;
   const v = form.values;
   const accountInput = (key) =>
     fieldBlock(
@@ -136,6 +140,9 @@ async function renderForm(id) {
       ${fieldBlock("Metode Biaya", select("property_cost_method", COSTING))}
       ${fieldBlock("Valuasi Persediaan", select("property_valuation", VALUATION))}
       <p class="md:col-span-2 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3" id="journal-note">${journalNote(v)}</p>
+      <div class="md:col-span-2 border-t border-gray-100 pt-4 text-sm font-semibold text-gray-700">Pengeluaran Stok</div>
+      ${fieldBlock("Strategi Pengeluaran", removalSelect(removals, v.removal_strategy_id, 'data-value="removal_strategy_id"', "Ikuti lokasi (bawaan: FIFO)"))}
+      ${removalNote(removals, v.removal_strategy_id, "Tanpa pilihan, strategi mengikuti pengaturan lokasi gudang, dan bila kosong memakai FIFO. Pilihan di kategori mengalahkan pengaturan lokasi.")}
       <div class="md:col-span-2 border-t border-gray-100 pt-4 text-sm font-semibold text-gray-700">Akun</div>
       ${accountInput("property_account_income_categ_id")}
       ${accountInput("property_account_expense_categ_id")}
@@ -214,4 +221,8 @@ export function onChange(event, el) {
   form.values[el.dataset.value] = fieldValue(el);
   const note = document.querySelector("#journal-note");
   if (note) note.innerHTML = journalNote(form.values);
+  if (el.dataset.value === "removal_strategy_id") {
+    const hit = removalsCache.find((r) => r.id === form.values.removal_strategy_id);
+    document.querySelector("#removal-note").textContent = hit ? REMOVAL_HELP[hit.method] ?? "" : REMOVAL_NONE;
+  }
 }

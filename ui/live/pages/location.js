@@ -1,13 +1,18 @@
 // Lokasi gudang (stock.location): hierarki lokasi internal di dalam gudang (rak, zona), dengan tipe, induk, dan arsip.
 import {
-  INPUT, app, call, cell, esc, fieldBlock, filterSelect, guarded, pageHeader, readOne, registerLookup, rowLink, runLookup, searchBox, searchRead, table,
+  INPUT, REMOVAL_HELP, app, call, cell, esc, fieldBlock, filterSelect, guarded, pageHeader, readOne, registerLookup, referenceRemovals, removalSelect, rowLink, runLookup, searchBox, searchRead, table,
   toast, button,
 } from "../common.js";
 
 const USAGE = { internal: "Internal", view: "Virtual (induk)", supplier: "Pemasok", customer: "Pelanggan", inventory: "Inventory Loss", production: "Produksi", transit: "Transit" };
 const FILTERS = [["internal", "Lokasi internal"], ["all", "Semua tipe"], ["archived", "Diarsipkan"]];
 
+let removals = [];
 let form = null; // { id, values, initial }
+const removalHelp = (id) => {
+  const hit = removals.find((r) => r.id === id);
+  return hit ? REMOVAL_HELP[hit.method] ?? "" : "Kosong: mengikuti lokasi induk, dan bila tidak ada memakai FIFO. Strategi pada kategori produk mengalahkan pengaturan lokasi.";
+};
 let last = { sub: "", query: new URLSearchParams() };
 export const leave = () => {
   form = null;
@@ -52,9 +57,10 @@ async function renderList(query) {
 
 async function renderForm(id) {
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
+  removals = await referenceRemovals();
   let loc = null;
   if (id) {
-    loc = await readOne("stock.location", id, ["name", "complete_name", "usage", "location_id", "warehouse_id", "active"]);
+    loc = await readOne("stock.location", id, ["name", "complete_name", "usage", "location_id", "warehouse_id", "active", "removal_strategy_id"]);
     if (!loc) {
       app.innerHTML = '<p class="text-sm text-rose-600">Lokasi tidak ditemukan.</p>';
       return;
@@ -62,9 +68,9 @@ async function renderForm(id) {
   }
   if (!form || form.id !== (loc?.id ?? null)) {
     const values = loc
-      ? { name: loc.name, usage: loc.usage, parent: loc.location_id ? { id: loc.location_id[0], display_name: loc.location_id[1] } : null }
-      : { name: "", usage: "internal", parent: null };
-    form = { id: loc?.id ?? null, values, initial: loc ? { name: values.name, usage: values.usage, parent: values.parent?.id ?? null } : null };
+      ? { name: loc.name, usage: loc.usage, removal: loc.removal_strategy_id?.[0] ?? null, parent: loc.location_id ? { id: loc.location_id[0], display_name: loc.location_id[1] } : null }
+      : { name: "", usage: "internal", removal: null, parent: null };
+    form = { id: loc?.id ?? null, values, initial: loc ? { name: values.name, usage: values.usage, removal: values.removal, parent: values.parent?.id ?? null } : null };
   }
   const v = form.values;
   app.innerHTML = `
@@ -76,6 +82,8 @@ async function renderForm(id) {
       ${fieldBlock("Lokasi Induk", `<input data-lookup="location-parent" autocomplete="off" role="combobox" aria-autocomplete="list" value="${esc(v.parent?.display_name ?? "")}" placeholder="mis. WH/Stock" class="${INPUT}">`)}
       ${fieldBlock("Tipe", `<select data-loc="usage" class="${INPUT}">${Object.entries(USAGE).map(([k, label]) => `<option value="${k}" ${k === v.usage ? "selected" : ""}>${esc(label)}</option>`).join("")}</select>`)}
       ${fieldBlock("Gudang", `<div class="py-2 text-sm font-medium text-gray-900">${esc(loc?.warehouse_id?.[1] ?? "Mengikuti lokasi induk")}</div>`)}
+      ${fieldBlock("Strategi Pengeluaran", removalSelect(removals, v.removal, 'data-loc="removal"', "Mengikuti lokasi induk (bawaan: FIFO)"))}
+      <p class="text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3 self-end" id="removal-note">${esc(removalHelp(v.removal))}</p>
     </section>
     <div class="flex gap-2 mt-4"><button data-action="save" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
       <a href="#/location" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a></div>`;
@@ -85,14 +93,16 @@ async function persist() {
   const v = form.values;
   if (!v.name.trim()) throw new Error("Nama lokasi wajib diisi.");
   const vals = { name: v.name.trim(), usage: v.usage, location_id: v.parent?.id ?? false };
+  const removal = v.removal ?? null;
   if (!form.id) {
-    const [id] = await call("stock.location", "create", { vals_list: [{ ...vals, location_id: v.parent?.id ?? undefined }] });
+    const [id] = await call("stock.location", "create", { vals_list: [{ ...vals, location_id: v.parent?.id ?? undefined, ...(removal ? { removal_strategy_id: removal } : {}) }] });
     return id;
   }
   const changed = {};
   if (vals.name !== form.initial.name) changed.name = vals.name;
   if (vals.usage !== form.initial.usage) changed.usage = vals.usage;
   if ((v.parent?.id ?? null) !== form.initial.parent) changed.location_id = v.parent?.id ?? false;
+  if (removal !== form.initial.removal) changed.removal_strategy_id = removal ?? false;
   if (Object.keys(changed).length) await call("stock.location", "write", { ids: [form.id], vals: changed });
   return form.id;
 }
@@ -123,7 +133,10 @@ export async function onClick(event, el) {
 
 export function onInput(event, el) {
   if (!form) return;
-  if (el.dataset.loc) form.values[el.dataset.loc] = el.value;
+  if (el.dataset.loc === "removal") {
+    form.values.removal = el.value ? Number(el.value) : null;
+    document.querySelector("#removal-note").textContent = removalHelp(form.values.removal);
+  } else if (el.dataset.loc) form.values[el.dataset.loc] = el.value;
   else if (el.dataset.lookup === "location-parent") {
     form.values.parent = null;
     runLookup(el, 250);
