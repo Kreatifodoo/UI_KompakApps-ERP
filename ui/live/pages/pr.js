@@ -6,6 +6,7 @@ import {
   money, pageHeader, readOne, readonlyValue, registerLookup, rowLink, runLookup, searchRead, selectOptions, statTiles, statusbar, table,
   toast, today, referenceUsers,
 } from "../common.js";
+import { analyticCell, distributionChange, preloadAnalytic, readDistribution, registerAnalytic } from "../analyticpick.js";
 import { printButton } from "../print.js";
 
 const STATES = {
@@ -138,9 +139,18 @@ async function renderList(query) {
     );
 }
 
+registerAnalytic("pr", {
+  get: (i) => form?.lines[Number(i)]?.analytic ?? {},
+  set: (i, dist) => {
+    form.lines[Number(i)].analytic = dist;
+    document.querySelector("#lines-box").innerHTML = linesTable();
+  },
+  label: (i) => form?.lines[Number(i)]?.text ?? "",
+});
+
 const emptyLine = () => ({
   id: null, text: "", product_id: null, productText: "", name: "", product_qty: 1,
-  product_uom_id: null, uom_label: "", date_required: today(), estimated_cost: 0,
+  product_uom_id: null, uom_label: "", date_required: today(), estimated_cost: 0, analytic: undefined, // undefined = tidak disentuh
 });
 
 function linesTable() {
@@ -153,12 +163,13 @@ function linesTable() {
         <td class="py-2 px-2 w-24 text-sm text-gray-600">${esc(l.uom_label || "-")}</td>
         <td class="py-2 px-2 w-40"><input type="date" data-line="${i}" data-field="date_required" value="${esc(l.date_required)}" class="${INPUT}"></td>
         <td class="py-2 px-2 w-36"><input type="number" min="0" step="any" data-line="${i}" data-field="estimated_cost" value="${esc(l.estimated_cost)}" class="${INPUT} text-right"></td>
+        <td class="py-2 px-2 w-48">${analyticCell("pr", i, l.analytic)}</td>
         <td class="py-2 pl-2 w-10 text-center"><button type="button" data-action="remove-line" data-line="${i}" class="text-gray-400 hover:text-rose-600 mt-2" aria-label="Hapus baris"><i class="fas fa-trash-alt"></i></button></td>
       </tr>`,
     )
     .join("");
   return `<table class="w-full text-left">
-      <thead><tr>${["Produk", "Deskripsi", "Jumlah", "Satuan", "Tanggal Diminta", "Estimasi Biaya", ""]
+      <thead><tr>${["Produk", "Deskripsi", "Jumlah", "Satuan", "Tanggal Diminta", "Estimasi Biaya", "Analitik", ""]
         .map((h, i) => `<th class="pb-2 px-2 text-xs font-semibold text-gray-600 uppercase ${i === 2 || i === 5 ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
       <tbody>${rows}</tbody></table>
     <button type="button" data-action="add-line" class="mt-2 text-sm text-indigo-600 font-medium hover:text-indigo-800"><i class="fas fa-plus mr-1"></i>Tambah baris</button>`;
@@ -174,14 +185,15 @@ function readonlyLinesTable(lines, currency) {
         <td class="py-2 px-4 text-sm">${esc(l.product_uom_id?.[1])}</td>
         <td class="py-2 px-4 text-sm">${dateText(l.date_required)}</td>
         <td class="py-2 px-4 text-sm text-right">${money(l.estimated_cost, currency)}</td>
+        <td class="py-2 px-4 text-sm">${analyticCell("pr", l.id, l.analytic_distribution, false)}</td>
         <td class="py-2 px-4 text-sm text-right">${esc(l.purchased_qty)}</td>
         <td class="py-2 px-4 text-sm">${l.purchase_state ? badge(PURCHASE_STATES, l.purchase_state) : ""}</td>
       </tr>`,
     )
     .join("");
   return `<table class="w-full text-left">
-      <thead class="bg-gray-50"><tr>${["Produk", "Deskripsi", "Jumlah", "Satuan", "Tanggal Diminta", "Estimasi Biaya", "Dipesan", "Status Pembelian"]
-        .map((h, i) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${[2, 5, 6].includes(i) ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
+      <thead class="bg-gray-50"><tr>${["Produk", "Deskripsi", "Jumlah", "Satuan", "Tanggal Diminta", "Estimasi Biaya", "Analitik", "Dipesan", "Status Pembelian"]
+        .map((h, i) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${[2, 5, 7].includes(i) ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
       <tbody class="divide-y divide-gray-100">${rows}</tbody></table>`;
 }
 
@@ -190,6 +202,7 @@ async function renderForm(id) {
   closeLookup();
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
   const users = await referenceUsers();
+  await preloadAnalytic();
   pickingTypes ??= await searchRead("stock.picking.type", [["code", "=", "incoming"]], ["display_name"], { limit: 50 });
   let pr = null;
   let lines = [];
@@ -205,7 +218,7 @@ async function renderForm(id) {
     }
     [lines, rfqs] = await Promise.all([
       searchRead("purchase.request.line", [["request_id", "=", id]],
-        ["product_id", "name", "product_qty", "product_uom_id", "date_required", "estimated_cost", "purchased_qty", "purchase_state", "cancelled"], { order: "id" }),
+        ["product_id", "name", "product_qty", "product_uom_id", "date_required", "estimated_cost", "purchased_qty", "purchase_state", "cancelled", "analytic_distribution"], { order: "id" }),
       searchRead("purchase.order", [["order_line.purchase_request_lines.request_id", "=", id]],
         ["name", "partner_id", "state", "amount_untaxed", "amount_tax", "amount_total", "currency_id"]),
     ]);
@@ -225,6 +238,7 @@ async function renderForm(id) {
             id: l.id, text: l.product_id?.[1] ?? "", productText: l.product_id?.[1] ?? "", product_id: l.product_id?.[0] ?? null,
             name: l.name || "", product_qty: l.product_qty, product_uom_id: l.product_uom_id?.[0] ?? null,
             uom_label: l.product_uom_id?.[1] ?? "", date_required: l.date_required || "", estimated_cost: l.estimated_cost,
+            analytic: readDistribution(l.analytic_distribution), analytic0: readDistribution(l.analytic_distribution),
           })),
           removed: [],
         }
@@ -324,9 +338,11 @@ function resolveLine(l) {
 function lineValues(l) {
   const qty = Number(l.product_qty);
   if (!(qty > 0)) throw new Error(`Jumlah untuk "${l.text}" harus lebih dari 0.`);
+  const analytic = distributionChange(l.analytic, l.analytic0);
   return {
     product_id: l.product_id, name: l.name, product_qty: qty, product_uom_id: l.product_uom_id,
     ...(l.date_required ? { date_required: l.date_required } : {}), estimated_cost: Number(l.estimated_cost || 0),
+    ...(analytic !== undefined ? { analytic_distribution: analytic } : {}),
   };
 }
 

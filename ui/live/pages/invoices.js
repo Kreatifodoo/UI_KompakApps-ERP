@@ -7,6 +7,7 @@ import {
   journalHtml, loadJournalItems, loadMessages, money, openModal, pageHeader, readOne, readonlyValue, referenceAssetProfiles, referenceSelection,
   registerLookup, rowLink, runLookup, searchAccounts, searchRead, selectOptions, statTiles, statusbar, table, toast, today,
 } from "../common.js";
+import { analyticCell, distributionChange, preloadAnalytic, readDistribution, registerAnalytic } from "../analyticpick.js";
 import { printButton } from "../print.js";
 
 const STATES = {
@@ -90,6 +91,19 @@ export function createInvoicePage(config) {
     },
   });
 
+  // Distribusi analitik baris: disimpan di status form, lalu hanya sel yang bersangkutan digambar ulang.
+  registerAnalytic(config.route, {
+    get: (lineId) => form?.lines?.get(Number(lineId))?.analytic ?? {},
+    set: (lineId, dist) => {
+      const edit = form?.lines?.get(Number(lineId));
+      if (!edit) return;
+      edit.analytic = dist;
+      const button = document.querySelector(`[data-an-open="${config.route}"][data-an-key="${lineId}"]`);
+      if (button) button.outerHTML = analyticCell(config.route, lineId, dist);
+    },
+    label: (lineId) => form?.lines?.get(Number(lineId))?.name ?? "",
+  });
+
   async function render(sub, query) {
     last = { sub, query };
     if (sub === "") return renderList(query);
@@ -148,6 +162,7 @@ export function createInvoicePage(config) {
   async function renderForm(id) {
     closeLookup();
     app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
+    await preloadAnalytic();
     const profiles = config.assets ? await referenceAssetProfiles() : null; // null bila modul aset tidak terpasang
     const kodeOptions = config.kodeTransaksi ? await referenceSelection("account.move", "l10n_id_kode_transaksi") : [];
     const bill = await readOne("account.move", id, [
@@ -164,7 +179,7 @@ export function createInvoicePage(config) {
     const lines = await searchRead(
       "account.move.line",
       [["move_id", "=", id], ["display_type", "=", "product"]],
-      ["product_id", "name", "account_id", "quantity", "product_uom_id", "price_unit", "discount", "tax_ids", "price_subtotal", ...(profiles ? ["asset_profile_id"] : [])],
+      ["product_id", "name", "account_id", "quantity", "product_uom_id", "price_unit", "discount", "tax_ids", "price_subtotal", "analytic_distribution", ...(profiles ? ["asset_profile_id"] : [])],
       { order: "sequence, id" },
     );
     const items = await loadJournalItems(id);
@@ -182,7 +197,7 @@ export function createInvoicePage(config) {
         kode: bill.l10n_id_kode_transaksi || "",
       };
       const edits = new Map(
-        lines.map((l) => [l.id, { account: l.account_id ? { id: l.account_id[0], display_name: l.account_id[1] } : null, profile: l.asset_profile_id?.[0] ?? null }]),
+        lines.map((l) => [l.id, { account: l.account_id ? { id: l.account_id[0], display_name: l.account_id[1] } : null, profile: l.asset_profile_id?.[0] ?? null, analytic: readDistribution(l.analytic_distribution) }]),
       );
       form = { id, ...values, initial: { ...values }, lines: edits, initialLines: new Map([...edits].map(([k, v]) => [k, { ...v }])) };
     }
@@ -226,6 +241,7 @@ export function createInvoicePage(config) {
           <td class="py-2 px-4 text-sm">${esc(l.name)}</td>
           <td class="py-2 px-4 text-sm min-w-56">${accountCell(l)}</td>
           ${profiles ? `<td class="py-2 px-4 text-sm min-w-40">${profileCell(l)}</td>` : ""}
+          <td class="py-2 px-4 text-sm min-w-48">${analyticCell(config.route, l.id, editable ? form.lines.get(l.id)?.analytic : l.analytic_distribution, editable)}</td>
           <td class="py-2 px-4 text-sm text-right">${esc(l.quantity)}</td>
           <td class="py-2 px-4 text-sm">${esc(l.product_uom_id?.[1])}</td>
           <td class="py-2 px-4 text-sm text-right">${money(l.price_unit, currency)}</td>
@@ -235,7 +251,7 @@ export function createInvoicePage(config) {
         </tr>`,
       )
       .join("");
-    const columns = ["Produk", "Label", "Akun", ...(profiles ? ["Profil Aset"] : []), "Jumlah", "Satuan", "Harga", ...(showDiscount ? ["Diskon"] : []), "Pajak", "Subtotal"];
+    const columns = ["Produk", "Label", "Akun", ...(profiles ? ["Profil Aset"] : []), "Analitik", "Jumlah", "Satuan", "Harga", ...(showDiscount ? ["Diskon"] : []), "Pajak", "Subtotal"];
     const rightAligned = columns.filter((c) => ["Jumlah", "Harga", "Diskon", "Subtotal"].includes(c));
     const saveBar = editable
       ? `<div class="flex gap-2 mt-4">
@@ -391,6 +407,8 @@ export function createInvoicePage(config) {
       if (edit.account.id !== before.account?.id) await call("account.move.line", "write", { ids: [lineId], vals: { account_id: edit.account.id } });
       // Profil aset dihitung dari akun; tulis hanya bila pengguna memilih profil yang berbeda dari isian awal.
       if (edit.profile !== before.profile) await call("account.move.line", "write", { ids: [lineId], vals: { asset_profile_id: edit.profile || false } });
+      const analytic = distributionChange(edit.analytic, before.analytic);
+      if (analytic !== undefined) await call("account.move.line", "write", { ids: [lineId], vals: { analytic_distribution: analytic } });
     }
   }
 

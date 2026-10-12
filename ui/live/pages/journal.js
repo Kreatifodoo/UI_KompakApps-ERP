@@ -5,6 +5,7 @@ import {
   app, badge, cell, dateText, esc, fieldBlock, filterSelect, journalHtml, loadJournalItems, money, pageHeader, readOne, readonlyValue, rowLink,
   searchBox, searchRead, statTiles, table,
 } from "../common.js";
+import { analyticSummary, preloadAnalytic } from "../analyticpick.js";
 
 const STATES = {
   draft: ["Draft", "muted"],
@@ -83,7 +84,7 @@ async function renderForm(id) {
     app.innerHTML = '<p class="text-sm text-rose-600">Jurnal tidak ditemukan.</p>';
     return;
   }
-  const [items, links] = await Promise.all([loadJournalItems(id), sourceLinks(move)]);
+  const [items, links, analytic] = await Promise.all([loadJournalItems(id), sourceLinks(move), analyticItems(id)]);
   const currency = move.currency_id?.[1];
   app.innerHTML = `
     <div class="text-sm text-gray-500 mb-2"><a href="#/journal" class="hover:text-indigo-600">Jurnal Entry</a> / ${esc(move.name || "Draft")}</div>
@@ -97,7 +98,30 @@ async function renderForm(id) {
       ${fieldBlock("Mitra", readonlyValue(move.partner_id?.[1]))}
       ${fieldBlock("Total", readonlyValue(money(move.amount_total, currency)))}
     </section>
-    ${journalHtml(items, currency, { journal: move.journal_id?.[1], state: move.state })}`;
+    ${journalHtml(items, currency, { journal: move.journal_id?.[1], state: move.state })}${analyticSection(analytic, currency)}`;
+}
+
+/** Item jurnal yang membawa distribusi analitik (dibaca saja di sini; diubah pada baris dokumen sumbernya). */
+async function analyticItems(moveId) {
+  await preloadAnalytic();
+  const items = await searchRead("account.move.line", [["move_id", "=", moveId]], ["account_id", "name", "debit", "credit", "analytic_distribution"], { order: "id" });
+  return items.filter((l) => l.analytic_distribution && Object.keys(l.analytic_distribution).length);
+}
+
+function analyticSection(items, currency) {
+  if (!items.length) return "";
+  const rows = items
+    .map(
+      (l) => `<tr><td class="py-2 px-4 text-sm">${esc(l.account_id?.[1])}</td><td class="py-2 px-4 text-sm">${esc(l.name || "")}</td>
+        <td class="py-2 px-4 text-sm">${esc(analyticSummary(l.analytic_distribution))}</td>
+        <td class="py-2 px-4 text-sm text-right">${money(l.debit - l.credit, currency)}</td></tr>`,
+    )
+    .join("");
+  return `<section id="analytic-items" class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 overflow-x-auto">
+    <div class="px-4 py-3 border-b border-gray-200 text-sm font-semibold">Distribusi Analitik</div>
+    <table class="w-full text-left"><thead class="bg-gray-50"><tr>${["Akun", "Label", "Analitik", "Debit - Kredit"]
+      .map((h, i) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${i === 3 ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
+      <tbody class="divide-y divide-gray-100">${rows}</tbody></table></section>`;
 }
 
 export function onClick(event, el) {

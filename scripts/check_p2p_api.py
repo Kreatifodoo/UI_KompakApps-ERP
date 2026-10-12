@@ -208,6 +208,7 @@ def main():
     check_print_documents(api)
     check_auditlog(api)
     check_budget(api)
+    check_analytic_lines(api, product, vendor)
     check_loyalty(api, product)
     check_analysis_drill(api)
 
@@ -1634,6 +1635,123 @@ def check_budget(api):
     template = api.search("ir.model.data", [["module", "=", "nusara_base"], ["name", "=", "mis_anggaran"]], ["res_id"])
     kpis = api.search("mis.report.kpi", [["report_id", "=", template[0]["res_id"]]], ["description", "auto_expand_accounts"], order="sequence")
     check([k["description"] for k in kpis] == ["Pendapatan", "Harga Pokok", "Beban", "LABA (RUGI) BERSIH"] and [k["auto_expand_accounts"] for k in kpis] == [True, True, True, False], "template Anggaran per Akun: 4 baris, tiga diperluas per akun (label dipakai UI)")
+
+
+def canonical_distribution(dist):
+    """Bentuk baku distribusi analitik: urutan kunci dan urutan id dalam kunci tidak berarti."""
+    return sorted((",".join(sorted(key.split(","), key=int)), float(value)) for key, value in (dist or {}).items())
+
+
+def check_analytic_lines(api, product, vendor):
+    """Akun analitik pada baris transaksi (D39): PO, tagihan, SO, faktur, PR, jurnal manual, dan anggaran terkonfirmasi."""
+    step("Analitik pada baris: PO -> tagihan -> jurnal, SO -> faktur, PR, round trip, dan anggaran")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    today = datetime.date.today().isoformat()
+    uom = product["uom_id"][0]
+    plan_a = (api.search("account.analytic.plan", [["parent_id", "=", False]], ["id"], limit=1) or [{"id": api.call("account.analytic.plan", "create", vals_list=[{"name": "Proyek Regresi"}])[0]}])[0]["id"]
+    [plan_d] = api.call("account.analytic.plan", "create", vals_list=[{"name": f"Departemen {tag}"}])
+    [acc_a, acc_b] = api.call("account.analytic.account", "create", vals_list=[
+        {"name": f"Proyek A {tag}", "plan_id": plan_a}, {"name": f"Proyek B {tag}", "plan_id": plan_a},
+    ])
+    [acc_d] = api.call("account.analytic.account", "create", vals_list=[{"name": f"Dept Produksi {tag}", "plan_id": plan_d}])
+    roots = {row["id"]: row["root_plan_id"][0] for row in api.search("account.analytic.account", [["id", "in", [acc_a, acc_b, acc_d]]], ["root_plan_id"])}
+    check(roots[acc_a] == plan_a and roots[acc_b] == plan_a and roots[acc_d] == plan_d, "akun analitik terkelompok menurut rencana akar (dua rencana)")
+    # Dua baris distribusi: baris pertama menggabungkan akun dari dua rencana (kunci dengan koma), baris kedua satu akun.
+    dist = {f"{acc_a},{acc_d}": 60.0, str(acc_b): 40.0}
+
+    def deliver(domain, model_field):
+        for picking in api.search("stock.picking", [[model_field, "=", domain], ["state", "not in", ["done", "cancel"]]], ["id"]):
+            for move in api.search("stock.move", [["picking_id", "=", picking["id"]]], ["id", "product_uom_qty"]):
+                api.call("stock.move", "write", ids=[move["id"]], vals={"quantity": move["product_uom_qty"], "picked": True})
+            api.call("stock.picking", "button_validate", ids=[picking["id"]])
+
+    [po_id] = api.call("purchase.order", "create", vals_list=[{
+        "partner_id": vendor["id"],
+        "order_line": [[0, 0, {"product_id": product["id"], "product_qty": 5.0, "product_uom_id": uom, "name": "Uji analitik", "analytic_distribution": dist}]],
+    }])
+    line = api.search("purchase.order.line", [["order_id", "=", po_id]], ["id", "analytic_distribution", "price_subtotal"])[0]
+    check(canonical_distribution(line["analytic_distribution"]) == canonical_distribution(dist), "baris RFQ menyimpan distribusi dua rencana dan dua baris persen")
+    api.call("purchase.order.line", "write", ids=[line["id"]], vals={"analytic_distribution": line["analytic_distribution"]})
+    again = api.read("purchase.order.line", line["id"], ["analytic_distribution"])["analytic_distribution"]
+    check(canonical_distribution(again) == canonical_distribution(dist), "baca ulang lalu tulis ulang distribusi tidak merusaknya")
+    api.call("purchase.order", "button_confirm", ids=[po_id])
+    deliver(po_id, "purchase_id")
+    api.call("purchase.order", "action_create_invoice", ids=[po_id])
+    bill_id = api.read("purchase.order", po_id, ["invoice_ids"])["invoice_ids"][-1]
+    bill_line = api.search("account.move.line", [["move_id", "=", bill_id], ["display_type", "=", "product"]], ["id", "analytic_distribution", "price_subtotal"])[0]
+    check(canonical_distribution(bill_line["analytic_distribution"]) == canonical_distribution(dist), "distribusi baris PO terbawa ke baris tagihan")
+    # Distribusi diubah pada baris tagihan draft (seperti UI), lalu diposting.
+    api.call("account.move.line", "write", ids=[bill_line["id"]], vals={"analytic_distribution": {str(acc_a): 50.0, str(acc_b): 50.0}})
+    api.call("account.move", "write", ids=[bill_id], vals={"invoice_date": today, "ref": f"ANL-{tag}"})
+    api.call("account.move", "action_post", ids=[bill_id])
+    total = bill_line["price_subtotal"]
+    rows = api.search("account.analytic.line", [["move_line_id.move_id", "=", bill_id]], ["account_id", "amount"])
+    by_account = {r["account_id"][0]: r["amount"] for r in rows}
+    check(by_account == {acc_a: -total / 2, acc_b: -total / 2}, f"tagihan terposting membuat baris analitik per akun (2 x {total / 2:,.0f}, biaya bertanda negatif)")
+
+    # Distribusi kosong (false, seperti dikosongkan di UI) tersimpan sebagai kosong.
+    [po2] = api.call("purchase.order", "create", vals_list=[{
+        "partner_id": vendor["id"], "order_line": [[0, 0, {"product_id": product["id"], "product_qty": 1.0, "product_uom_id": uom, "name": "Tanpa analitik", "analytic_distribution": False}]],
+    }])
+    check(not api.search("purchase.order.line", [["order_id", "=", po2]], ["analytic_distribution"])[0]["analytic_distribution"], "distribusi kosong (false) disimpan sebagai kosong")
+
+    # Sales Order -> faktur: pendapatan terbawa ke akun analitik.
+    [customer] = api.call("res.partner", "create", vals_list=[{"name": f"Pelanggan Analitik {tag}", "customer_rank": 1}])
+    [so_id] = api.call("sale.order", "create", vals_list=[{
+        "partner_id": customer, "order_line": [[0, 0, {"product_id": product["id"], "product_uom_qty": 1.0, "analytic_distribution": {str(acc_a): 100.0}}]],
+    }])
+    so_line = api.search("sale.order.line", [["order_id", "=", so_id]], ["analytic_distribution"])[0]
+    check(canonical_distribution(so_line["analytic_distribution"]) == [(str(acc_a), 100.0)], "baris SO menyimpan distribusi")
+    api.call("sale.order", "action_confirm", ids=[so_id])
+    deliver(so_id, "sale_id")
+    context = {"active_model": "sale.order", "active_ids": [so_id], "active_id": so_id}
+    wizard = api.call("sale.advance.payment.inv", "create", vals_list=[{}], context=context)
+    invoice_id = api.call("sale.advance.payment.inv", "create_invoices", ids=wizard, context=context)["res_id"]
+    inv_line = api.search("account.move.line", [["move_id", "=", invoice_id], ["display_type", "=", "product"]], ["analytic_distribution", "price_subtotal"])[0]
+    check(canonical_distribution(inv_line["analytic_distribution"]) == [(str(acc_a), 100.0)], "distribusi baris SO terbawa ke baris faktur")
+    api.call("account.move", "action_post", ids=[invoice_id])
+    income = api.search("account.analytic.line", [["move_line_id.move_id", "=", invoice_id], ["general_account_id.account_type", "in", ["income", "income_other"]]], ["account_id", "amount"])
+    check([(r["account_id"][0], r["amount"]) for r in income] == [(acc_a, inv_line["price_subtotal"])], f"faktur terposting: pendapatan {inv_line['price_subtotal']:,.0f} masuk baris analitik akun A (bertanda positif)")
+
+    # Purchase Request: distribusi disimpan pada baris dan dapat diubah.
+    [pr_id] = api.call("purchase.request", "create", vals_list=[{
+        "description": f"PR analitik {tag}",
+        "line_ids": [[0, 0, {"product_id": product["id"], "product_uom_id": uom, "product_qty": 2.0, "name": "Baris PR", "analytic_distribution": {str(acc_b): 100.0}}]],
+    }])
+    pr_line = api.search("purchase.request.line", [["request_id", "=", pr_id]], ["id", "analytic_distribution"])[0]
+    check(canonical_distribution(pr_line["analytic_distribution"]) == [(str(acc_b), 100.0)], "baris Purchase Request menyimpan distribusi")
+    api.call("purchase.request.line", "write", ids=[pr_line["id"]], vals={"analytic_distribution": dist})
+    check(canonical_distribution(api.read("purchase.request.line", pr_line["id"], ["analytic_distribution"])["analytic_distribution"]) == canonical_distribution(dist), "distribusi baris PR dapat diubah ke dua rencana")
+
+    # Jurnal manual dan anggaran terkonfirmasi: realisasi dari baris analitik, sama dengan yang ditampilkan dialog UI.
+    year = datetime.date.today().year
+    codes = {row["code"]: row["id"] for row in api.search("account.account", [["code", "in", ["63110080", "11120001"]]], ["code"])}
+    journal = api.search("account.journal", [["type", "=", "general"]], ["id"], limit=1)[0]["id"]
+    [move_id] = api.call("account.move", "create", vals_list=[{
+        "move_type": "entry", "journal_id": journal, "date": today,
+        "line_ids": [
+            [0, 0, {"account_id": codes["63110080"], "name": "Beban uji analitik", "debit": 250_000.0, "analytic_distribution": {f"{acc_a},{acc_d}": 100.0}}],
+            [0, 0, {"account_id": codes["11120001"], "name": "Kas uji analitik", "credit": 250_000.0}],
+        ],
+    }])
+    api.call("account.move", "action_post", ids=[move_id])
+    manual = api.search("account.analytic.line", [["move_line_id.move_id", "=", move_id]], ["account_id", "amount"])
+    check([(r["account_id"][0], r["amount"]) for r in manual] == [(acc_a, -250_000.0)], "jurnal manual: kunci gabungan dua rencana menjadi satu baris analitik (akun rencana utama)")
+    [plan] = api.call("mis.budget.by.account", "create", vals_list=[{"name": f"Anggaran Analitik {tag}", "date_from": f"{year}-01-01", "date_to": f"{year}-12-31"}])
+    company = api.read("mis.budget.by.account", plan, ["company_id"])["company_id"][0]
+    base = {"budget_id": plan, "company_id": company, "account_id": codes["63110080"]}
+    api.call("mis.budget.by.account.item", "create", vals_list=[
+        {**base, "date_from": f"{year}-01-01", "date_to": f"{year}-06-30", "debit": 1_000_000.0, "analytic_distribution": {str(acc_a): 100.0}},
+        {**base, "date_from": f"{year}-07-01", "date_to": f"{year}-12-31", "debit": 400_000.0, "analytic_distribution": {f"{acc_a},{acc_d}": 100.0}},
+    ])
+    confirmed = [["budget_id.state", "=", "confirmed"], ["budget_id", "=", plan]]
+    check(not api.search("mis.budget.by.account.item", [["analytic_distribution", "in", [acc_a]], *confirmed], ["id"]), "rencana draft tidak dihitung sebagai anggaran terkonfirmasi")
+    api.call("mis.budget.by.account", "action_confirm", ids=[plan])
+    hit_a = api.search("mis.budget.by.account.item", [["analytic_distribution", "in", [acc_a]], *confirmed], ["debit"])
+    hit_d = api.search("mis.budget.by.account.item", [["analytic_distribution", "in", [acc_d]], *confirmed], ["debit"])
+    check(sum(r["debit"] for r in hit_a) == 1_400_000.0 and sum(r["debit"] for r in hit_d) == 400_000.0, "anggaran terkonfirmasi ditemukan per akun, termasuk kunci gabungan (A: 1.400.000, D: 400.000)")
+    actual = api.call("account.analytic.line", "formatted_read_group", domain=[["account_id", "=", acc_a], ["general_account_id", "in", [codes["63110080"]]], ["date", ">=", f"{year}-01-01"], ["date", "<=", f"{year}-12-31"]], groupby=[], aggregates=["amount:sum"])[0]
+    check(-actual["amount:sum"] == 250_000.0, "realisasi dari baris analitik akun A pada akun anggaran = 250.000 (sisa 1.150.000)")
 
 
 def fails_with(call, *needles):

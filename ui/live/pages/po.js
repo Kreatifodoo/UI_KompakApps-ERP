@@ -7,6 +7,7 @@ import {
   guarded, loadMessages, money, pageHeader, readOne, readonlyValue, referenceUsers, registerLookup, rowLink, runLookup, searchRead,
   selectOptions, statTiles, statusbar, table, toInputDateTime, toast, dateTimeText,
 } from "../common.js";
+import { analyticCell, distributionChange, preloadAnalytic, readDistribution, registerAnalytic } from "../analyticpick.js";
 import { printButton } from "../print.js";
 
 const STATES = {
@@ -95,6 +96,15 @@ registerLookup("po-product", {
   },
 });
 
+registerAnalytic("po", {
+  get: (i) => form?.lines[Number(i)]?.analytic ?? {},
+  set: (i, dist) => {
+    form.lines[Number(i)].analytic = dist;
+    document.querySelector("#lines-box").innerHTML = linesTable();
+  },
+  label: (i) => form?.lines[Number(i)]?.text ?? "",
+});
+
 /* ---------- Render ---------- */
 
 export async function render(sub, query) {
@@ -154,7 +164,7 @@ async function renderList(query) {
 
 const emptyLine = () => ({
   id: null, text: "", product_id: null, productText: "", name: "", product_qty: 1, product_uom_id: null, uom_label: "",
-  price_unit: "", taxLabel: "", subtotal: null,
+  price_unit: "", taxLabel: "", subtotal: null, analytic: undefined, // undefined = tidak disentuh: Odoo memakai distribusi bawaan
 });
 
 function linesTable() {
@@ -167,22 +177,23 @@ function linesTable() {
         <td class="py-2 px-2 w-20 text-sm text-gray-600">${esc(l.uom_label || "-")}</td>
         <td class="py-2 px-2 w-36"><input type="number" min="0" step="any" data-line="${i}" data-field="price_unit" value="${esc(l.price_unit)}" placeholder="otomatis" class="${INPUT} text-right"></td>
         <td class="py-2 px-2 w-32 text-sm text-gray-600">${esc(l.taxLabel || "-")}</td>
+        <td class="py-2 px-2 w-48">${analyticCell("po", i, l.analytic)}</td>
         <td class="py-2 px-2 w-32 text-sm text-right text-gray-700">${l.subtotal === null ? "-" : money(l.subtotal)}</td>
         <td class="py-2 pl-2 w-10 text-center"><button type="button" data-action="remove-line" data-line="${i}" class="text-gray-400 hover:text-rose-600 mt-2" aria-label="Hapus baris"><i class="fas fa-trash-alt"></i></button></td>
       </tr>`,
     )
     .join("");
   return `<table class="w-full text-left">
-      <thead><tr>${["Produk", "Deskripsi", "Jumlah", "Satuan", "Harga Satuan", "Pajak", "Jumlah Harga", ""]
-        .map((h, i) => `<th class="pb-2 px-2 text-xs font-semibold text-gray-600 uppercase ${[2, 4, 6].includes(i) ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
+      <thead><tr>${["Produk", "Deskripsi", "Jumlah", "Satuan", "Harga Satuan", "Pajak", "Analitik", "Jumlah Harga", ""]
+        .map((h, i) => `<th class="pb-2 px-2 text-xs font-semibold text-gray-600 uppercase ${[2, 4, 7].includes(i) ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
       <tbody>${rows}</tbody></table>
     <p class="text-xs text-gray-500 mt-2">Kosongkan harga satuan untuk memakai harga dari daftar harga pemasok.</p>
     <button type="button" data-action="add-line" class="mt-1 text-sm text-indigo-600 font-medium hover:text-indigo-800"><i class="fas fa-plus mr-1"></i>Tambah baris</button>`;
 }
 
 function readonlyLinesTable(lines, currency, showReceived) {
-  const heads = ["Produk", "Deskripsi", "Jumlah", ...(showReceived ? ["Diterima", "Ditagih"] : []), "Satuan", "Harga Satuan", "Pajak", "Jumlah Harga"];
-  const right = new Set([2, ...(showReceived ? [3, 4, 6] : [4]), showReceived ? 8 : 6]);
+  const heads = ["Produk", "Deskripsi", "Jumlah", ...(showReceived ? ["Diterima", "Ditagih"] : []), "Satuan", "Harga Satuan", "Pajak", "Analitik", "Jumlah Harga"];
+  const right = new Set([2, ...(showReceived ? [3, 4, 6] : [4]), showReceived ? 9 : 7]);
   const rows = lines
     .map(
       (l) => `<tr>
@@ -193,6 +204,7 @@ function readonlyLinesTable(lines, currency, showReceived) {
         <td class="py-2 px-4 text-sm">${esc(l.product_uom_id?.[1])}</td>
         <td class="py-2 px-4 text-sm text-right">${money(l.price_unit, currency)}</td>
         <td class="py-2 px-4 text-sm">${esc(l.taxLabel || "-")}</td>
+        <td class="py-2 px-4 text-sm">${analyticCell("po", l.id, l.analytic_distribution, false)}</td>
         <td class="py-2 px-4 text-sm text-right">${money(l.price_subtotal, currency)}</td>
       </tr>`,
     )
@@ -206,6 +218,7 @@ async function renderForm(id) {
   closeLookup();
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
   const users = await referenceUsers();
+  await preloadAnalytic();
   terms ??= await searchRead("account.payment.term", [], ["display_name"], { limit: 50 });
   let po = null;
   let lines = [];
@@ -222,7 +235,7 @@ async function renderForm(id) {
     lines = await searchRead(
       "purchase.order.line",
       [["order_id", "=", id], ["display_type", "=", false]],
-      ["product_id", "name", "product_qty", "qty_received", "qty_invoiced", "product_uom_id", "price_unit", "tax_ids", "price_subtotal"],
+      ["product_id", "name", "product_qty", "qty_received", "qty_invoiced", "product_uom_id", "price_unit", "tax_ids", "price_subtotal", "analytic_distribution"],
       { order: "sequence, id" },
     );
     const taxIds = [...new Set(lines.flatMap((l) => l.tax_ids))];
@@ -254,6 +267,7 @@ async function renderForm(id) {
             uom_label: l.product_uom_id?.[1] ?? "", price_unit: l.price_unit, price_unit0: l.price_unit,
             initial: { product_id: l.product_id?.[0] ?? null, name: l.name || "", product_qty: l.product_qty },
             taxLabel: l.taxLabel, subtotal: l.price_subtotal,
+            analytic: readDistribution(l.analytic_distribution), analytic0: readDistribution(l.analytic_distribution),
           })),
           removed: [],
         }
@@ -336,7 +350,10 @@ function resolveLine(l) {
 function lineValues(l) {
   const qty = Number(l.product_qty);
   if (!(qty > 0)) throw new Error(`Jumlah untuk "${l.text}" harus lebih dari 0.`);
-  return { product_id: l.product_id, name: l.name, product_qty: qty, product_uom_id: l.product_uom_id };
+  const vals = { product_id: l.product_id, name: l.name, product_qty: qty, product_uom_id: l.product_uom_id };
+  const analytic = distributionChange(l.analytic, l.analytic0);
+  if (analytic !== undefined) vals.analytic_distribution = analytic;
+  return vals;
 }
 
 /* Harga manual: Odoo menghitung ulang harga baris yang dibuat dengan harga eksplisit setiap kali header
@@ -400,6 +417,7 @@ async function persist() {
     const before = l.initial ?? {};
     const changed = Object.fromEntries(Object.entries({ product_id: vals.product_id, name: vals.name, product_qty: vals.product_qty })
       .filter(([k, v]) => v !== before[k]));
+    if ("analytic_distribution" in vals) changed.analytic_distribution = vals.analytic_distribution;
     if (Object.keys(changed).length) commands.push([1, l.id, changed]);
   }
   commands.push(...form.removed.map((lineId) => [2, lineId, 0]));

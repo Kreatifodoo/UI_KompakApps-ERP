@@ -7,6 +7,7 @@ import {
   guarded, loadMessages, money, openModal, pageHeader, readOne, readonlyValue, referencePricelists, referenceTerms, referenceUsers, registerLookup,
   rowLink, runLookup, searchBox, searchRead, selectOptions, statTiles, statusbar, table, toInputDateTime, toast, dateTimeText,
 } from "../common.js";
+import { analyticCell, distributionChange, preloadAnalytic, readDistribution, registerAnalytic } from "../analyticpick.js";
 import { printButton } from "../print.js";
 
 const STATES = {
@@ -99,6 +100,15 @@ registerLookup("sale-product", {
   },
 });
 
+registerAnalytic("sale", {
+  get: (i) => form?.lines[Number(i)]?.analytic ?? {},
+  set: (i, dist) => {
+    form.lines[Number(i)].analytic = dist;
+    document.querySelector("#lines-box").innerHTML = linesTable();
+  },
+  label: (i) => form?.lines[Number(i)]?.text ?? "",
+});
+
 /* ---------- Render ---------- */
 
 export async function render(sub, query) {
@@ -159,7 +169,7 @@ async function renderList(query) {
 
 const emptyLine = () => ({
   id: null, text: "", product_id: null, productText: "", name: "", product_uom_qty: 1, product_uom_id: null, uom_label: "",
-  price_unit: "", price_unit0: "", discount: "", discount0: "", taxLabel: "", subtotal: null,
+  price_unit: "", price_unit0: "", discount: "", discount0: "", taxLabel: "", subtotal: null, analytic: undefined, // undefined = tidak disentuh
 });
 
 function linesTable() {
@@ -173,21 +183,22 @@ function linesTable() {
         <td class="py-2 px-2 w-36"><input type="number" min="0" step="any" data-line="${i}" data-field="price_unit" value="${esc(l.price_unit)}" placeholder="otomatis" class="${INPUT} text-right"></td>
         <td class="py-2 px-2 w-24"><input type="number" min="0" max="100" step="any" data-line="${i}" data-field="discount" value="${esc(l.discount)}" placeholder="0" class="${INPUT} text-right"></td>
         <td class="py-2 px-2 w-32 text-sm text-gray-600">${esc(l.taxLabel || "-")}</td>
+        <td class="py-2 px-2 w-48">${analyticCell("sale", i, l.analytic)}</td>
         <td class="py-2 px-2 w-32 text-sm text-right text-gray-700">${l.subtotal === null ? "-" : money(l.subtotal)}</td>
         <td class="py-2 pl-2 w-10 text-center"><button type="button" data-action="remove-line" data-line="${i}" class="text-gray-400 hover:text-rose-600 mt-2" aria-label="Hapus baris"><i class="fas fa-trash-alt"></i></button></td>
       </tr>`,
     )
     .join("");
   return `<table class="w-full text-left">
-      <thead><tr>${["Produk", "Deskripsi", "Jumlah", "Satuan", "Harga Satuan", "Diskon %", "Pajak", "Jumlah Harga", ""]
-        .map((h, i) => `<th class="pb-2 px-2 text-xs font-semibold text-gray-600 uppercase ${[2, 4, 5, 7].includes(i) ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
+      <thead><tr>${["Produk", "Deskripsi", "Jumlah", "Satuan", "Harga Satuan", "Diskon %", "Pajak", "Analitik", "Jumlah Harga", ""]
+        .map((h, i) => `<th class="pb-2 px-2 text-xs font-semibold text-gray-600 uppercase ${[2, 4, 5, 8].includes(i) ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
       <tbody>${rows}</tbody></table>
     <p class="text-xs text-gray-500 mt-2">Kosongkan harga satuan untuk memakai harga dari daftar harga.</p>
     <button type="button" data-action="add-line" class="mt-1 text-sm text-indigo-600 font-medium hover:text-indigo-800"><i class="fas fa-plus mr-1"></i>Tambah baris</button>`;
 }
 
 function readonlyLinesTable(lines, currency, showFlow) {
-  const heads = ["Produk", "Deskripsi", "Jumlah", ...(showFlow ? ["Dikirim", "Difakturkan"] : []), "Satuan", "Harga Satuan", "Diskon", "Pajak", "Jumlah Harga"];
+  const heads = ["Produk", "Deskripsi", "Jumlah", ...(showFlow ? ["Dikirim", "Difakturkan"] : []), "Satuan", "Harga Satuan", "Diskon", "Pajak", "Analitik", "Jumlah Harga"];
   const right = new Set(heads.map((h, i) => (["Jumlah", "Dikirim", "Difakturkan", "Harga Satuan", "Diskon", "Jumlah Harga"].includes(h) ? i : -1)).filter((i) => i >= 0));
   const rows = lines
     .map(
@@ -200,6 +211,7 @@ function readonlyLinesTable(lines, currency, showFlow) {
         <td class="py-2 px-4 text-sm text-right">${money(l.price_unit, currency)}</td>
         <td class="py-2 px-4 text-sm text-right">${l.discount ? `${esc(l.discount)}%` : "-"}</td>
         <td class="py-2 px-4 text-sm">${esc(l.taxLabel || "-")}</td>
+        <td class="py-2 px-4 text-sm">${analyticCell("sale", l.id, l.analytic_distribution, false)}</td>
         <td class="py-2 px-4 text-sm text-right">${money(l.price_subtotal, currency)}</td>
       </tr>`,
     )
@@ -212,7 +224,7 @@ function readonlyLinesTable(lines, currency, showFlow) {
 async function renderForm(id) {
   closeLookup();
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
-  const [users, terms, pricelists] = await Promise.all([referenceUsers(), referenceTerms(), referencePricelists()]);
+  const [users, terms, pricelists] = await Promise.all([referenceUsers(), referenceTerms(), referencePricelists(), preloadAnalytic()]);
   let so = null;
   let lines = [];
   let rewardLines = [];
@@ -229,7 +241,7 @@ async function renderForm(id) {
     lines = await searchRead(
       "sale.order.line",
       [["order_id", "=", id], ["display_type", "=", false]],
-      ["product_id", "name", "product_uom_qty", "qty_delivered", "qty_invoiced", "product_uom_id", "price_unit", "discount", "tax_ids", "price_subtotal", "reward_id", "coupon_id", "points_cost"],
+      ["product_id", "name", "product_uom_qty", "qty_delivered", "qty_invoiced", "product_uom_id", "price_unit", "discount", "tax_ids", "price_subtotal", "reward_id", "coupon_id", "points_cost", "analytic_distribution"],
       { order: "sequence, id" },
     );
     const taxIds = [...new Set(lines.flatMap((l) => l.tax_ids))];
@@ -264,6 +276,7 @@ async function renderForm(id) {
             uom_label: l.product_uom_id?.[1] ?? "", price_unit: l.price_unit, price_unit0: l.price_unit, discount: l.discount || "", discount0: l.discount || "",
             initial: { product_id: l.product_id?.[0] ?? null, name: l.name || "", product_uom_qty: l.product_uom_qty },
             taxLabel: l.taxLabel, subtotal: l.price_subtotal,
+            analytic: readDistribution(l.analytic_distribution), analytic0: readDistribution(l.analytic_distribution),
           })),
           removed: [],
         }
@@ -347,7 +360,10 @@ function resolveLine(l) {
 function lineValues(l) {
   const qty = Number(l.product_uom_qty);
   if (!(qty > 0)) throw new Error(`Jumlah untuk "${l.text}" harus lebih dari 0.`);
-  return { product_id: l.product_id, name: l.name, product_uom_qty: qty, product_uom_id: l.product_uom_id };
+  const vals = { product_id: l.product_id, name: l.name, product_uom_qty: qty, product_uom_id: l.product_uom_id };
+  const analytic = distributionChange(l.analytic, l.analytic0);
+  if (analytic !== undefined) vals.analytic_distribution = analytic;
+  return vals;
 }
 
 /* Harga dan diskon manual: baris yang dibuat dengan harga eksplisit dikembalikan ke harga daftar saat jumlahnya
@@ -416,6 +432,7 @@ async function persist() {
     const before = l.initial ?? {};
     const changed = Object.fromEntries(Object.entries({ product_id: vals.product_id, name: vals.name, product_uom_qty: vals.product_uom_qty })
       .filter(([k, v]) => v !== before[k]));
+    if ("analytic_distribution" in vals) changed.analytic_distribution = vals.analytic_distribution;
     if (Object.keys(changed).length) commands.push([1, l.id, changed]);
   }
   commands.push(...form.removed.map((lineId) => [2, lineId, 0]));
