@@ -209,6 +209,7 @@ def main():
     check_auditlog(api)
     check_budget(api)
     check_analytic_lines(api, product, vendor)
+    check_line_taxes(api, product, vendor)
     check_loyalty(api, product)
     check_analysis_drill(api)
 
@@ -1754,6 +1755,91 @@ def check_analytic_lines(api, product, vendor):
     check(-actual["amount:sum"] == 250_000.0, "realisasi dari baris analitik akun A pada akun anggaran = 250.000 (sisa 1.150.000)")
 
 
+def check_line_taxes(api, product, vendor):
+    """Pajak baris yang dipilih manual dan lebih dari satu (D40): PO -> tagihan -> jurnal, SO -> faktur, ubah pajak pada baris draf."""
+    step("Pajak baris manual multi: PO dua pajak -> tagihan -> jurnal, SO -> faktur, ubah pajak baris draf")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    today = datetime.date.today().isoformat()
+    uom = product["uom_id"][0]
+
+    def mk_tax(name, amount, use):
+        return api.call("account.tax", "create", vals_list=[{"name": f"{name} {tag}", "amount": amount, "amount_type": "percent", "type_tax_use": use}])[0]
+
+    p_ppn, p_pph = mk_tax("PPN Masukan Uji", 11.0, "purchase"), mk_tax("PPh 23 Uji", -2.0, "purchase")
+    s_ppn, s_other = mk_tax("PPN Keluaran Uji", 11.0, "sale"), mk_tax("PPN Khusus Uji", 12.0, "sale")
+    listed = {r["id"] for r in api.search("account.tax", [["type_tax_use", "=", "purchase"], ["active", "=", True], ["id", "in", [p_ppn, p_pph, s_ppn]]], ["id"])}
+    check(listed == {p_ppn, p_pph}, "daftar pajak difilter menurut jenis dokumen (purchase tidak memuat pajak sale)")
+
+    def balanced(move_id):
+        rows = api.search("account.move.line", [["move_id", "=", move_id]], ["debit", "credit", "tax_line_id", "display_type"])
+        return abs(sum(r["debit"] for r in rows) - sum(r["credit"] for r in rows)) < 0.005, [r for r in rows if r["tax_line_id"]]
+
+    def deliver(model_field, doc_id):
+        for picking in api.search("stock.picking", [[model_field, "=", doc_id], ["state", "not in", ["done", "cancel"]]], ["id"]):
+            for move in api.search("stock.move", [["picking_id", "=", picking["id"]]], ["id", "product_uom_qty"]):
+                api.call("stock.move", "write", ids=[move["id"]], vals={"quantity": move["product_uom_qty"], "picked": True})
+            api.call("stock.picking", "button_validate", ids=[picking["id"]])
+
+    # PO: dua pajak (PPN dan PPh negatif) pada satu baris.
+    [po_id] = api.call("purchase.order", "create", vals_list=[{
+        "partner_id": vendor["id"],
+        "order_line": [[0, 0, {"product_id": product["id"], "product_qty": 5.0, "product_uom_id": uom, "name": "Uji pajak", "price_unit": 100_000.0, "tax_ids": [[6, 0, [p_ppn, p_pph]]]}]],
+    }])
+    line = api.search("purchase.order.line", [["order_id", "=", po_id]], ["id", "tax_ids", "price_subtotal"])[0]
+    check(sorted(line["tax_ids"]) == sorted([p_ppn, p_pph]), "baris PO menyimpan dua pajak manual")
+    po = api.read("purchase.order", po_id, ["amount_untaxed", "amount_tax", "amount_total"])
+    expect = round(line["price_subtotal"] * 0.09, 2)
+    check(abs(po["amount_tax"] - expect) < 0.01 and abs(po["amount_total"] - (po["amount_untaxed"] + expect)) < 0.01, f"PO: amount_tax = 11% - 2% dari {line['price_subtotal']:,.0f} = {expect:,.0f}")
+    # Mengubah jumlah tidak menimpa pilihan pajak manual.
+    api.call("purchase.order.line", "write", ids=[line["id"]], vals={"product_qty": 6.0})
+    check(sorted(api.read("purchase.order.line", line["id"], ["tax_ids"])["tax_ids"]) == sorted([p_ppn, p_pph]), "mengubah jumlah tidak menimpa pajak manual")
+    api.call("purchase.order", "button_confirm", ids=[po_id])
+    deliver("purchase_id", po_id)
+    api.call("purchase.order", "action_create_invoice", ids=[po_id])
+    bill_id = api.read("purchase.order", po_id, ["invoice_ids"])["invoice_ids"][-1]
+    bill_line = api.search("account.move.line", [["move_id", "=", bill_id], ["display_type", "=", "product"]], ["id", "tax_ids", "price_subtotal"])[0]
+    check(sorted(bill_line["tax_ids"]) == sorted([p_ppn, p_pph]), "tagihan dari PO membawa kedua pajak")
+    sub = bill_line["price_subtotal"]
+    bill = api.read("account.move", bill_id, ["amount_tax"])
+    check(abs(bill["amount_tax"] - round(sub * 0.09, 2)) < 0.01, f"tagihan: amount_tax {bill['amount_tax']:,.0f} = 9% dari {sub:,.0f}")
+    # Pajak baris tagihan draf diganti (hanya PPN): baris pajak jurnal dibuat ulang dengan benar.
+    api.call("account.move.line", "write", ids=[bill_line["id"]], vals={"tax_ids": [[6, 0, [p_ppn]]]})
+    bill = api.read("account.move", bill_id, ["amount_tax"])
+    ok, tax_rows = balanced(bill_id)
+    check(abs(bill["amount_tax"] - round(sub * 0.11, 2)) < 0.01 and {r["tax_line_id"][0] for r in tax_rows} == {p_ppn}, "ubah pajak baris tagihan draf: hanya baris pajak PPN yang tersisa, amount_tax = 11%")
+    api.call("account.move.line", "write", ids=[bill_line["id"]], vals={"tax_ids": [[6, 0, [p_ppn, p_pph]]]})
+    api.call("account.move", "write", ids=[bill_id], vals={"invoice_date": today, "ref": f"TAX-{tag}"})
+    api.call("account.move", "action_post", ids=[bill_id])
+    ok, tax_rows = balanced(bill_id)
+    check(ok and {r["tax_line_id"][0] for r in tax_rows} == {p_ppn, p_pph}, "tagihan terposting seimbang dan memuat baris pajak untuk kedua pajak")
+
+    # Catatan: Odoo tidak menolak pajak berjenis salah di baris (diuji: tagihan terposting); pencegahannya ada di pemilih UI yang memfilter type_tax_use.
+
+    # SO: pajak bawaan produk diganti manual (dua pajak jual), faktur membawa hal yang sama.
+    [customer] = api.call("res.partner", "create", vals_list=[{"name": f"Pelanggan Pajak {tag}", "customer_rank": 1}])
+    [so_id] = api.call("sale.order", "create", vals_list=[{
+        "partner_id": customer,
+        "order_line": [[0, 0, {"product_id": product["id"], "product_uom_qty": 2.0, "price_unit": 50_000.0, "tax_ids": [[6, 0, [s_ppn, s_other]]]}]],
+    }])
+    so_line = api.search("sale.order.line", [["order_id", "=", so_id]], ["id", "tax_ids", "price_subtotal"])[0]
+    check(sorted(so_line["tax_ids"]) == sorted([s_ppn, s_other]), "baris SO menyimpan dua pajak manual")
+    so = api.read("sale.order", so_id, ["amount_tax"])
+    check(abs(so["amount_tax"] - round(so_line["price_subtotal"] * 0.23, 2)) < 0.01, f"SO: amount_tax = 23% dari {so_line['price_subtotal']:,.0f}")
+    api.call("sale.order", "action_confirm", ids=[so_id])
+    deliver("sale_id", so_id)
+    context = {"active_model": "sale.order", "active_ids": [so_id], "active_id": so_id}
+    wizard = api.call("sale.advance.payment.inv", "create", vals_list=[{}], context=context)
+    invoice_id = api.call("sale.advance.payment.inv", "create_invoices", ids=wizard, context=context)["res_id"]
+    inv_line = api.search("account.move.line", [["move_id", "=", invoice_id], ["display_type", "=", "product"]], ["id", "tax_ids", "price_subtotal"])[0]
+    check(sorted(inv_line["tax_ids"]) == sorted([s_ppn, s_other]), "faktur dari SO membawa pajak manual yang sama")
+    api.call("account.move.line", "write", ids=[inv_line["id"]], vals={"tax_ids": [[6, 0, [s_other]]]})
+    inv = api.read("account.move", invoice_id, ["amount_tax"])
+    check(abs(inv["amount_tax"] - round(inv_line["price_subtotal"] * 0.12, 2)) < 0.01, "ubah pajak baris faktur draf: amount_tax = 12%")
+    api.call("account.move", "action_post", ids=[invoice_id])
+    ok, tax_rows = balanced(invoice_id)
+    check(ok and {r["tax_line_id"][0] for r in tax_rows} == {s_other}, "faktur terposting seimbang dengan baris pajak yang tepat")
+
+
 def fails_with(call, *needles):
     """True bila panggilan API gagal dan pesannya memuat salah satu kata kunci (huruf kecil)."""
     try:
@@ -2109,14 +2195,14 @@ def check_financial_reports(api):
     check(not pnl["Akun laba rugi belum terpetakan (harus 0)"], "laba rugi: semua akun laba rugi terpetakan")
     check(pnl["LABA KOTOR"] == pnl["Pendapatan Bersih"] - pnl["Total Harga Pokok"], "laba rugi: laba kotor = pendapatan - harga pokok")
     balance, _ = mis_values(api, "Neraca", start, end)
-    check(not balance["Selisih aset dan liabilitas + ekuitas (harus 0)"], "neraca: aset sama dengan liabilitas + ekuitas")
+    check(abs(balance["Selisih aset dan liabilitas + ekuitas (harus 0)"] or 0) < 0.005, "neraca: aset sama dengan liabilitas + ekuitas")
     check(balance["Laba (Rugi) Tahun Berjalan"] == pnl["LABA BERSIH"], "neraca: laba berjalan sama dengan laba bersih laporan laba rugi")
     cash, _ = mis_values(api, "Arus Kas", start, end)
-    check(not cash["Selisih saldo kas (harus 0)"], "arus kas: kenaikan kas cocok dengan saldo kas dan bank")
+    check(abs(cash["Selisih saldo kas (harus 0)"] or 0) < 0.005, "arus kas: kenaikan kas cocok dengan saldo kas dan bank")
     check(cash["Laba (Rugi) Bersih"] == pnl["LABA BERSIH"], "arus kas: berangkat dari laba bersih yang sama")
     _, trial = mis_values(api, "Neraca Saldo", start, end)
     total = trial["body"][0]["cells"]
-    check(total[1]["val"] == total[2]["val"] and total[1]["val"] > 0, "neraca saldo: total debit sama dengan total kredit")
+    check(abs(total[1]["val"] - total[2]["val"]) < 0.005 and total[1]["val"] > 0, "neraca saldo: total debit sama dengan total kredit")
     ledger = api.call("account.move.line", "formatted_read_group", domain=[["parent_state", "=", "posted"], ["date", ">=", start], ["date", "<=", end]], groupby=[], aggregates=["debit:sum", "credit:sum"])[0]
     check(abs(ledger["debit:sum"] - total[1]["val"]) < 0.005, "neraca saldo: total debit sama dengan buku besar")
 

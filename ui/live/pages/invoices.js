@@ -7,6 +7,7 @@ import {
   journalHtml, loadJournalItems, loadMessages, money, openModal, pageHeader, readOne, readonlyValue, referenceAssetProfiles, referenceSelection,
   registerLookup, rowLink, runLookup, searchAccounts, searchRead, selectOptions, statTiles, statusbar, table, toast, today,
 } from "../common.js";
+import { loadTaxNames, registerTaxes, taxCell, taxChange, taxList } from "../taxpick.js";
 import { analyticCell, distributionChange, preloadAnalytic, readDistribution, registerAnalytic } from "../analyticpick.js";
 import { printButton } from "../print.js";
 
@@ -104,6 +105,20 @@ export function createInvoicePage(config) {
     label: (lineId) => form?.lines?.get(Number(lineId))?.name ?? "",
   });
 
+  // Pajak baris: daftar tag per baris di status form; hanya sel yang bersangkutan digambar ulang.
+  registerTaxes(config.route, {
+    use: config.moveType.startsWith("in_") ? "purchase" : "sale",
+    get: (lineId) => form?.lines?.get(Number(lineId))?.taxes ?? [],
+    set: (lineId, taxes) => {
+      const edit = form?.lines?.get(Number(lineId));
+      if (!edit) return;
+      edit.taxes = taxes;
+      edit.taxTouched = true;
+      const cell = document.querySelector(`[data-tx-cell="${lineId}"]`);
+      if (cell) cell.innerHTML = taxCell(config.route, lineId, taxes);
+    },
+  });
+
   async function render(sub, query) {
     last = { sub, query };
     if (sub === "") return renderList(query);
@@ -183,10 +198,8 @@ export function createInvoicePage(config) {
       { order: "sequence, id" },
     );
     const items = await loadJournalItems(id);
-    const taxIds = [...new Set(lines.flatMap((l) => l.tax_ids))];
-    const taxes = taxIds.length ? await searchRead("account.tax", [["id", "in", taxIds]], ["display_name"]) : [];
-    const taxName = new Map(taxes.map((t) => [t.id, t.display_name]));
-    const origins = (bill.invoice_origin ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    const taxName = await loadTaxNames(lines.flatMap((l) => l.tax_ids));
+    const origins = (bill.invoice_origin || "").split(",").map((s) => s.trim()).filter(Boolean);
     const orders = origins.length ? await searchRead(config.origin.model, [["name", "in", origins]], ["id"]) : [];
 
     const editable = bill.state === "draft";
@@ -197,7 +210,7 @@ export function createInvoicePage(config) {
         kode: bill.l10n_id_kode_transaksi || "",
       };
       const edits = new Map(
-        lines.map((l) => [l.id, { account: l.account_id ? { id: l.account_id[0], display_name: l.account_id[1] } : null, profile: l.asset_profile_id?.[0] ?? null, analytic: readDistribution(l.analytic_distribution) }]),
+        lines.map((l) => [l.id, { account: l.account_id ? { id: l.account_id[0], display_name: l.account_id[1] } : null, profile: l.asset_profile_id?.[0] ?? null, analytic: readDistribution(l.analytic_distribution), taxes: taxList(l.tax_ids, taxName), taxes0: l.tax_ids, taxTouched: false }]),
       );
       form = { id, ...values, initial: { ...values }, lines: edits, initialLines: new Map([...edits].map(([k, v]) => [k, { ...v }])) };
     }
@@ -246,7 +259,7 @@ export function createInvoicePage(config) {
           <td class="py-2 px-4 text-sm">${esc(l.product_uom_id?.[1])}</td>
           <td class="py-2 px-4 text-sm text-right">${money(l.price_unit, currency)}</td>
           ${showDiscount ? `<td class="py-2 px-4 text-sm text-right">${l.discount ? `${esc(l.discount)}%` : "-"}</td>` : ""}
-          <td class="py-2 px-4 text-sm">${esc(l.tax_ids.map((t) => taxName.get(t)).filter(Boolean).join(", ") || "-")}</td>
+          <td class="py-2 px-4 text-sm min-w-48" data-tx-cell="${l.id}">${taxCell(config.route, l.id, editable ? form.lines.get(l.id)?.taxes : taxList(l.tax_ids, taxName), editable)}</td>
           <td class="py-2 px-4 text-sm text-right">${money(l.price_subtotal, currency)}</td>
         </tr>`,
       )
@@ -409,6 +422,8 @@ export function createInvoicePage(config) {
       if (edit.profile !== before.profile) await call("account.move.line", "write", { ids: [lineId], vals: { asset_profile_id: edit.profile || false } });
       const analytic = distributionChange(edit.analytic, before.analytic);
       if (analytic !== undefined) await call("account.move.line", "write", { ids: [lineId], vals: { analytic_distribution: analytic } });
+      const tax = taxChange(edit.taxes, before.taxes0, edit.taxTouched);
+      if (tax !== undefined) await call("account.move.line", "write", { ids: [lineId], vals: { tax_ids: tax } });
     }
   }
 
