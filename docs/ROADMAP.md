@@ -39,6 +39,6 @@ Setiap menu pada sidebar prototipe sudah punya halaman kecuali tiga kelompok pad
 
 - Satu pekerjaan satu branch dan satu PR; branch dari `main` terbaru dan di-squash saat digabung.
 - Pekerjaan yang berjalan bersamaan memakai worktree dan stack Docker sendiri (lihat DEV_GUIDE), agar tidak saling menimpa data uji.
-- Berkas yang sering disentuh bersamaan (`main.js`, `menu.js`, `README.md`, `DECISIONS.md`, `check_p2p_api.py`) hanya ditambah di akhir; konflik saat rebase diselesaikan dengan mempertahankan kedua sisi. Nomor keputusan baru dicadangkan di tabel di atas: Agen A memakai D30, Agen B memakai D31, Agen C memakai D32, Agen E memakai D37, Agen I memakai D42.
+- Berkas yang sering disentuh bersamaan (`main.js`, `menu.js`, `README.md`, `DECISIONS.md`, `check_p2p_api.py`) hanya ditambah di akhir; konflik saat rebase diselesaikan dengan mempertahankan kedua sisi. Nomor keputusan baru dicadangkan di tabel di atas: Agen A memakai D30, Agen B memakai D31, Agen C memakai D32, Agen E memakai D37, Agen I memakai D42, Q21 memakai D43.
 - Setelah sebuah PR digabung, database `nusara` milik pemilik di-upgrade (dengan backup) oleh orang yang menggabungkannya, bukan oleh pekerja paralel.
 - Bukan bagian antrian pekerjaan teknis, tetapi menunggu pemilik: proteksi branch `main` (ruleset) dan pencabutan token GitHub lama.
