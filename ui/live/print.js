@@ -352,7 +352,7 @@ function documentHtml(doc, company) {
   const notes = doc.notes.filter(([, v]) => v).map(([k, v]) => `<div class="notes"><div class="label">${esc(k)}</div><div class="body">${esc(v)}</div></div>`).join("");
   const sign = doc.signatures.length ? `<div class="sign">${doc.signatures.map((s) => `<div><div class="space"></div>${esc(s)}</div>`).join("")}</div>` : "";
   const footer = rich(company.report_footer);
-  return `<!doctype html><html lang="id"><head><meta charset="utf-8"><title>${esc(doc.number)}</title><style>${STYLE}</style></head><body>
+  return `<!doctype html><html lang="id"><head><meta charset="utf-8"><title>${esc(doc.number)}</title><style>${STYLE}${doc.landscape ? "@page { size: A4 landscape; margin: 10mm; }" : ""}</style></head><body>
     <div class="head">${companyHtml(company)}<div class="doc"><div class="title">${esc(doc.title)}</div><div class="no">${esc(doc.number)}</div>${doc.draft ? '<div class="draft">Belum final</div>' : ""}</div></div>
     <div class="info"><div>${blocks}</div><div><table class="meta">${meta}</table></div></div>
     ${tableHtml(doc.columns, doc.rows)}
@@ -419,6 +419,19 @@ export async function printDocument(model, id, trigger = null) {
     return { doc, company };
   });
   if (!loaded) return true;
+  openPreview(loaded);
+  return true;
+}
+
+/** Cetak laporan berbentuk tabel (bukan dokumen): `doc` berisi title, number (subjudul), meta [[label, nilai]], columns [[label, "r"|""]],
+ *  rows { cells } atau { section, note }, notes [[label, teks]], dan landscape. Kop surat dari Company Setting (dipakai Inventory Valuation, D46). */
+export async function printReport(doc, trigger = null) {
+  const company = await guarded(trigger, loadCompany);
+  if (!company) return;
+  openPreview({ doc: { parties: [], totals: [], notes: [], signatures: [], draft: false, ...doc }, company });
+}
+
+function openPreview(loaded) {
   const { doc } = loaded;
   session = { ...loaded, variant: doc.receipt ? "receipt" : "a4" };
   const picker = doc.receipt ? `<div id="print-variants" class="flex items-center gap-2">${variantPicker(session.variant)}</div>` : "";
@@ -433,7 +446,6 @@ export async function printDocument(model, id, trigger = null) {
     },
     { wide: true },
   );
-  return true;
 }
 
 /** Ganti ukuran kertas pada pratinjau yang terbuka (A4 atau struk 80 mm). */

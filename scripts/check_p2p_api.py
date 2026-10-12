@@ -216,6 +216,7 @@ def main():
     check_line_taxes(api, product, vendor)
     check_loyalty(api, product)
     check_analysis_drill(api)
+    check_inventory_valuation(api, vendor)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -2539,6 +2540,220 @@ def check_financial_reports(api):
     check(abs(total[1]["val"] - total[2]["val"]) < 0.005 and total[1]["val"] > 0, "neraca saldo: total debit sama dengan total kredit")
     ledger = api.call("account.move.line", "formatted_read_group", domain=[["parent_state", "=", "posted"], ["date", ">=", start], ["date", "<=", end]], groupby=[], aggregates=["debit:sum", "credit:sum"])[0]
     check(abs(ledger["debit:sum"] - total[1]["val"]) < 0.005, "neraca saldo: total debit sama dengan buku besar")
+
+
+def check_inventory_valuation(api, vendor):
+    """Inventory Valuation (ui/live/pages/valuation.js, D46): nilai per tanggal lampau (konteks to_date), mutasi periode, rincian pergerakan bernilai, dan
+    per akun persediaan terhadap buku besar. Pergerakan diberi tanggal berbeda (hari ke -20 sampai -1) lewat `date` pada stock.move dan baris pergerakan."""
+    import random
+
+    step("Inventory Valuation: per tanggal, mutasi periode, rincian pergerakan, per akun persediaan")
+    tag = f"{random.randint(0, 99999):05d}"
+    today = datetime.date.today()
+    day = lambda n: (today - datetime.timedelta(days=n)).isoformat()  # noqa: E731
+    api.call("res.config.settings", "execute", ids=api.call("res.config.settings", "create", vals_list=[{"group_stock_multi_locations": True}]))
+    goods = api.search("product.category", [["name", "=", "Goods"]], ["property_stock_journal"], limit=1)[0]
+    warehouse = api.search("stock.warehouse", [], ["id", "lot_stock_id"], order="id", limit=1)[0]
+    stock_location = warehouse["lot_stock_id"][0]
+
+    # akun dan kategori sendiri (anak Goods, biaya rata-rata, perpetual) agar saldo buku besarnya bisa diuji per akun
+    [account] = api.call("account.account", "create", vals_list=[{"code": f"1139{tag}", "name": f"Persediaan Uji {tag}", "account_type": "asset_current"}])
+    [categ] = api.call("product.category", "create", vals_list=[{
+        "name": f"Valuasi Uji {tag}", "parent_id": goods["id"], "property_valuation": "real_time", "property_cost_method": "average",
+        "property_stock_valuation_account_id": account, "property_stock_journal": goods["property_stock_journal"][0],
+    }])
+
+    def new_product(name, category):
+        [tmpl] = api.call("product.template", "create", vals_list=[{"name": f"{name} {tag}", "type": "consu", "is_storable": True, "categ_id": category, "standard_price": 0.0, "list_price": 10_000.0}])
+        info = api.read("product.template", tmpl, ["product_variant_id", "uom_id"])
+        return {"tmpl": tmpl, "id": info["product_variant_id"][0], "uom": info["uom_id"][0], "name": f"{name} {tag}"}
+
+    item_a = new_product("Valuasi A", categ)
+    item_b = new_product("Valuasi B", goods["id"])
+
+    def backdate(move_ids, days):
+        stamp = f"{day(days)} 10:00:00"
+        api.call("stock.move", "write", ids=move_ids, vals={"date": stamp})
+        lines = [r["id"] for r in api.search("stock.move.line", [["move_id", "in", move_ids]], ["id"])]
+        if lines:
+            api.call("stock.move.line", "write", ids=lines, vals={"date": stamp})
+
+    def receive(item, qty, price, days):
+        [order] = api.call("purchase.order", "create", vals_list=[{"partner_id": vendor["id"], "order_line": [[0, 0, {"product_id": item["id"], "name": item["name"], "product_qty": qty, "product_uom_id": item["uom"]}]]}])
+        line = api.search("purchase.order.line", [["order_id", "=", order]], ["id"])[0]["id"]
+        api.call("purchase.order.line", "write", ids=[line], vals={"price_unit": price})
+        api.call("purchase.order", "button_confirm", ids=[order])
+        picking = api.search("stock.picking", [["purchase_id", "=", order]], ["id"])[0]["id"]
+        move = api.search("stock.move", [["picking_id", "=", picking]], ["id"])[0]["id"]
+        api.call("stock.move", "write", ids=[move], vals={"quantity": qty, "picked": True})
+        check(api.call("stock.picking", "button_validate", ids=[picking]) is True, f"penerimaan {item['name']} {qty:g} @ {price:,.0f} divalidasi")
+        backdate([move], days)
+        return {"order": order, "line": line, "move": move}
+
+    def bill(receipt, days):
+        api.call("purchase.order", "action_create_invoice", ids=[receipt["order"]])
+        bill_id = api.read("purchase.order", receipt["order"], ["invoice_ids"])["invoice_ids"][-1]
+        api.call("account.move", "write", ids=[bill_id], vals={"invoice_date": day(days), "date": day(days)})
+        api.call("account.move", "action_post", ids=[bill_id])
+        return bill_id
+
+    # riwayat: A masuk 10 @100.000 (hari -20, ditagih -19), A masuk 10 @120.000 (-10, ditagih -9), B masuk 4 @50.000 (-8), 1 B dipindah ke rak (-6),
+    # A keluar 5 lewat pengiriman (-5), penyesuaian A -2 (-2), scrap B 1 (-1)
+    receipt_a1 = receive(item_a, 10.0, 100_000.0, 20)
+    bill_a1 = bill(receipt_a1, 19)
+    receipt_a2 = receive(item_a, 10.0, 120_000.0, 10)
+    bill_a2 = bill(receipt_a2, 9)
+    receive(item_b, 4.0, 50_000.0, 8)
+
+    [rack] = api.call("stock.location", "create", vals_list=[{"name": f"Rak Valuasi {tag}", "location_id": stock_location, "usage": "internal"}])
+    internal = api.search("stock.picking.type", [["code", "=", "internal"], ["active", "=", True]], ["id"], limit=1)[0]["id"]
+    [transfer] = api.call("stock.picking", "create", vals_list=[{
+        "picking_type_id": internal, "location_id": stock_location, "location_dest_id": rack,
+        "move_ids": [[0, 0, {"product_id": item_b["id"], "product_uom_qty": 1.0, "location_id": stock_location, "location_dest_id": rack}]],
+    }])
+    api.call("stock.picking", "action_confirm", ids=[transfer])
+    move = api.search("stock.move", [["picking_id", "=", transfer]], ["id"])[0]["id"]
+    api.call("stock.move", "write", ids=[move], vals={"quantity": 1.0, "picked": True})
+    check(api.call("stock.picking", "button_validate", ids=[transfer]) is True, "1 unit B dipindah ke rak (transfer internal)")
+    backdate([move], 6)
+
+    outgoing = api.search("stock.picking.type", [["code", "=", "outgoing"]], ["id", "default_location_src_id", "default_location_dest_id"], limit=1)[0]
+    src, dst = outgoing["default_location_src_id"][0], outgoing["default_location_dest_id"][0]
+    [delivery] = api.call("stock.picking", "create", vals_list=[{
+        "picking_type_id": outgoing["id"], "location_id": src, "location_dest_id": dst,
+        "move_ids": [[0, 0, {"product_id": item_a["id"], "product_uom_qty": 5.0, "location_id": src, "location_dest_id": dst}]],
+    }])
+    api.call("stock.picking", "action_confirm", ids=[delivery])
+    api.call("stock.picking", "action_assign", ids=[delivery])
+    delivery_move = api.search("stock.move", [["picking_id", "=", delivery]], ["id"])[0]["id"]
+    api.call("stock.move", "write", ids=[delivery_move], vals={"quantity": 5.0, "picked": True})
+    check(api.call("stock.picking", "button_validate", ids=[delivery]) is True, "pengiriman 5 unit A divalidasi")
+    backdate([delivery_move], 5)
+
+    mode = {"inventory_mode": True}
+    quant = api.search("stock.quant", [["product_id", "=", item_a["id"]], ["location_id", "=", stock_location]], ["id"])[0]["id"]
+    api.call("stock.quant", "write", ids=[quant], vals={"inventory_quantity": 13.0}, context=mode)
+    api.call("stock.quant", "action_apply_inventory", ids=[quant], context=mode)
+    adjustment = [r["id"] for r in api.search("stock.move", [["product_id", "=", item_a["id"]], ["is_inventory", "=", True]], ["id"])]
+    check(len(adjustment) == 1, "penyesuaian stok A (15 menjadi 13) mencatat satu pergerakan")
+    backdate(adjustment, 2)
+
+    [scrap] = api.call("stock.scrap", "create", vals_list=[{"product_id": item_b["id"], "scrap_qty": 1.0, "location_id": stock_location, "product_uom_id": item_b["uom"]}])
+    check(api.call("stock.scrap", "action_validate", ids=[scrap]) is True, "scrap 1 unit B divalidasi")
+    scrap_move = [r["id"] for r in api.search("stock.move", [["scrap_id", "=", scrap]], ["id"])]
+    check(len(scrap_move) == 1, "scrap mencatat satu pergerakan")
+    backdate(scrap_move, 1)
+
+    ids = [item_a["id"], item_b["id"]]
+
+    def asof(days, scope=None, fields=("qty_available", "avg_cost", "total_value")):
+        """Persis panggilan UI: konteks to_date (akhir hari itu; hari ini tanpa to_date) dan lingkup lokasi atau gudang."""
+        context = {"active_test": False, **({"to_date": f"{day(days)} 23:59:59"} if days else {}), **(scope or {})}
+        return {r["id"]: r for r in api.search("product.product", [["id", "in", ids]], list(fields), context=context)}
+
+    # ---- 1. Per tanggal
+    expected = {  # hari: (qty A, nilai A, biaya A, qty B, nilai B)
+        25: (0, 0, None, 0, 0),
+        15: (10, 1_000_000, 100_000, 0, 0),
+        7: (20, 2_200_000, 110_000, 4, 200_000),
+        4: (15, 1_650_000, 110_000, 4, 200_000),
+        1: (13, 1_430_000, 110_000, 3, 150_000),
+        0: (13, 1_430_000, 110_000, 3, 150_000),
+    }
+    for days, (qa, va, ca, qb, vb) in expected.items():
+        rows = asof(days)
+        a, b = rows[item_a["id"]], rows[item_b["id"]]
+        ok = abs(a["qty_available"] - qa) < 1e-6 and abs(a["total_value"] - va) < 0.5 and (ca is None or abs(a["avg_cost"] - ca) < 0.5)
+        ok = ok and abs(b["qty_available"] - qb) < 1e-6 and abs(b["total_value"] - vb) < 0.5
+        check(ok, f"per tanggal hari -{days}: A {a['qty_available']:g} unit {a['total_value']:,.0f}, B {b['qty_available']:g} unit {b['total_value']:,.0f}")
+    pivot = asof(7)[item_a["id"]]
+    check(abs(pivot["avg_cost"] - 110_000) < 0.5, "biaya rata-rata A setelah dua penerimaan: 110.000")
+
+    # lingkup lokasi: rak berisi 1 B sejak hari -6; induk (Stock) ikut menghitung sublokasi; nilai = jumlah x biaya rata-rata
+    rack_scope = {"location": [rack]}
+    check(asof(7, rack_scope)[item_b["id"]]["qty_available"] == 0 and asof(4, rack_scope)[item_b["id"]]["qty_available"] == 1, "lokasi rak: 0 unit B sebelum pemindahan (hari -7), 1 unit sesudahnya (hari -4)")
+    check(asof(4, {"location": [stock_location]})[item_b["id"]]["qty_available"] == 4, "lokasi Stock mencakup sublokasi rak (4 unit B)")
+    check(abs(asof(4, rack_scope)[item_b["id"]]["qty_available"] * asof(4)[item_b["id"]]["avg_cost"] - 50_000) < 0.5, "nilai rak = 1 x biaya rata-rata B (50.000)")
+    check(asof(4, {"warehouse_id": warehouse["id"]})[item_b["id"]]["qty_available"] == 4, "lingkup gudang: 4 unit B")
+    valued = [r["id"] for r in api.search("stock.location", [["usage", "in", ["internal", "transit"]]], ["id"], context={"active_test": False})]
+    check(asof(4, {"location": valued, "strict": True})[item_b["id"]]["qty_available"] == 4, "lingkup semua lokasi bernilai (internal dan transit): 4 unit B")
+
+    # hari ini sama dengan Laporan Stok: total nilai semua produk berstok = jumlah nilai quant
+    storable = [r["id"] for r in api.search("product.product", [["is_storable", "=", True]], ["id"], context={"active_test": False})]
+    total_today = sum(r["total_value"] for r in api.search("product.product", [["id", "in", storable]], ["total_value"], context={"active_test": False}))
+    quants = api.search("stock.quant", [["location_id.usage", "in", ["internal", "transit"]]], ["value", "quantity", "location_id", "product_id"], limit=5000)
+    valued_quants = [q for q in quants if q["quantity"] != 0]
+    transit = api.search("stock.quant", [["location_id.usage", "=", "transit"], ["quantity", "!=", 0]], ["id"])
+    quant_value = sum(q["value"] for q in valued_quants)
+    check(abs(total_today - quant_value) < 0.5, f"hari ini: nilai persediaan {total_today:,.0f} sama dengan jumlah nilai quant (Laporan Stok){' termasuk transit' if transit else ''}")
+    for item in (item_a, item_b):
+        value = sum(q["value"] for q in valued_quants if q["product_id"][0] == item["id"])
+        check(abs(value - asof(0)[item["id"]]["total_value"]) < 0.5, f"hari ini: nilai {item['name']} sama dengan nilai quant-nya")
+
+    # ---- 2. Mutasi periode (hari -10 sampai -1)
+    def flows(start, end, product_ids=None):
+        base = [["state", "=", "done"], ["date", ">=", f"{day(start)} 00:00:00"], ["date", "<=", f"{day(end)} 23:59:59"], ["product_id", "in", product_ids or ids]]
+        sums = {}
+        for model, flag, aggregate in (("stock.move", "is_in", "value:sum"), ("stock.move", "is_out", "value:sum"), ("stock.move.line", "move_id.is_in", "quantity_product_uom:sum"), ("stock.move.line", "move_id.is_out", "quantity_product_uom:sum")):
+            groups = api.call(model, "formatted_read_group", domain=[*base, [flag, "=", True]], groupby=["product_id"], aggregates=[aggregate])
+            sums[(flag.split(".")[-1], aggregate.split(":")[0])] = {g["product_id"][0]: g[aggregate] for g in groups}
+        return sums
+
+    flow = flows(10, 1)
+    opening, closing = asof(11), asof(1)
+    for item, (in_qty, in_value, out_qty, out_value) in ((item_a, (10, 1_200_000, 7, 770_000)), (item_b, (4, 200_000, 1, 50_000))):
+        pid = item["id"]
+        got = (flow[("is_in", "quantity_product_uom")].get(pid, 0), flow[("is_in", "value")].get(pid, 0), flow[("is_out", "quantity_product_uom")].get(pid, 0), flow[("is_out", "value")].get(pid, 0))
+        check(all(abs(g - e) < 0.5 for g, e in zip(got, (in_qty, in_value, out_qty, out_value))), f"mutasi {item['name']}: masuk {got[0]:g} unit {got[1]:,.0f}, keluar {got[2]:g} unit {got[3]:,.0f}")
+        check(abs(opening[pid]["qty_available"] + got[0] - got[2] - closing[pid]["qty_available"]) < 1e-6, f"mutasi {item['name']}: jumlah akhir = awal + masuk - keluar")
+        check(abs(opening[pid]["total_value"] + got[1] - got[3] - closing[pid]["total_value"]) < 0.5, f"mutasi {item['name']}: nilai akhir = awal + masuk - keluar (tanpa koreksi nilai)")
+    check(abs(closing[item_a["id"]]["total_value"] - asof(1)[item_a["id"]]["total_value"]) < 0.5 and abs(closing[item_a["id"]]["total_value"] - 1_430_000) < 0.5, "saldo akhir A sama dengan per tanggal -1 (1.430.000)")
+    # periode sampai hari ini memakai jalur 'saat ini' (tanpa to_date) dan tetap cocok
+    flow_today = flows(10, 0)
+    today_a = asof(0)[item_a["id"]]
+    check(abs(opening[item_a["id"]]["total_value"] + flow_today[("is_in", "value")][item_a["id"]] - flow_today[("is_out", "value")][item_a["id"]] - today_a["total_value"]) < 0.5, "mutasi sampai hari ini: saldo akhir A sama dengan nilai saat ini")
+
+    # ---- 3. Rincian pergerakan bernilai
+    detail = api.search(
+        "stock.move", [["product_id", "in", ids], ["state", "=", "done"], "|", ["is_in", "=", True], ["is_out", "=", True]],
+        ["date", "reference", "picking_id", "picking_code", "scrap_id", "is_inventory", "product_id", "location_id", "location_dest_id", "quantity", "value", "is_in", "is_out", "account_move_id", "purchase_line_id"],
+        order="date desc, id desc",
+    )
+    by_product = {item["id"]: [m for m in detail if m["product_id"][0] == item["id"]] for item in (item_a, item_b)}
+    check(len(by_product[item_a["id"]]) == 4 and len(by_product[item_b["id"]]) == 2, "rincian: 4 pergerakan bernilai A (2 masuk, pengiriman, penyesuaian) dan 2 B (masuk, scrap); transfer internal tidak dihitung")
+    signed = lambda moves: sum(m["value"] * (1 if m["is_in"] else -1) for m in moves)  # noqa: E731
+    check(abs(signed(by_product[item_a["id"]]) - asof(0)[item_a["id"]]["total_value"]) < 0.5, "jumlah bertanda rincian A sama dengan nilai saat ini")
+    check(abs(signed(by_product[item_b["id"]]) - asof(0)[item_b["id"]]["total_value"]) < 0.5, "jumlah bertanda rincian B sama dengan nilai saat ini")
+    out_move = next(m for m in by_product[item_a["id"]] if m["picking_id"] and m["picking_code"] == "outgoing")
+    check(out_move["is_out"] and abs(out_move["value"] / out_move["quantity"] - 110_000) < 0.5 and out_move["date"].startswith(day(5)), "pengiriman A: keluar, biaya satuan 110.000, bertanggal hari -5")
+    check(any(m["is_inventory"] and m["is_out"] and abs(m["value"] - 220_000) < 0.5 for m in by_product[item_a["id"]]), "penyesuaian A: keluar 2 unit bernilai 220.000 (tanpa dokumen transfer)")
+    check(any(m["scrap_id"] and m["is_out"] and abs(m["value"] - 50_000) < 0.5 for m in by_product[item_b["id"]]), "scrap B: keluar bernilai 50.000 bertaut ke dokumen scrap")
+    receipts = [m for m in by_product[item_a["id"]] if m["is_in"]]
+    check(len(receipts) == 2 and all(m["picking_code"] == "incoming" and m["purchase_line_id"] for m in receipts), "penerimaan A bertaut ke dokumen penerimaan dan baris PO")
+    bills = {row["purchase_line_id"][0]: row["move_id"][0] for row in api.search("account.move.line", [["purchase_line_id", "in", [receipt_a1["line"], receipt_a2["line"]]], ["parent_state", "=", "posted"]], ["purchase_line_id", "move_id"])}
+    check(bills.get(receipt_a1["line"]) == bill_a1 and bills.get(receipt_a2["line"]) == bill_a2, "tautan jurnal penerimaan: tagihan vendor terposting dari baris PO-nya")
+    check(all(not m["account_move_id"] for m in by_product[item_a["id"]]), "pergerakan stok tanpa lokasi berakun valuasi tidak punya jurnal sendiri")
+    in_period = api.call("stock.move", "formatted_read_group", domain=[["product_id", "in", ids], ["state", "=", "done"], ["is_in", "=", True], ["date", ">=", f"{day(10)} 00:00:00"], ["date", "<=", f"{day(1)} 23:59:59"]], groupby=[], aggregates=["value:sum", "__count"])
+    check(in_period and abs(in_period[0]["value:sum"] - 1_400_000) < 0.5 and in_period[0]["__count"] == 2, "total masuk di rentang hari -10 sampai -1: 1.400.000 (A 1.200.000 dan B 200.000)")
+    # filter kategori (termasuk anak) dan template, seperti parameter categ dan product pada rute
+    check(api.call("stock.move", "search_count", domain=[["product_id", "in", ids], ["product_id.categ_id", "child_of", goods["id"]]]) == 7, "filter kategori Goods mencakup kategori anak (7 pergerakan A dan B)")
+    check(api.call("stock.move", "search_count", domain=[["product_id", "in", ids], ["product_id.categ_id", "child_of", categ]]) == 4, "filter kategori anak hanya mencakup A (4 pergerakan)")
+    check(api.call("stock.move", "search_count", domain=[["product_id.product_tmpl_id", "=", item_b["tmpl"]]]) == 3, "filter produk (template) hanya mencakup B (penerimaan, transfer rak, scrap)")
+
+    # ---- 4. Per akun persediaan terhadap buku besar
+    def gl(days):
+        rows = api.call("account.move.line", "formatted_read_group", domain=[["account_id", "=", account], ["parent_state", "=", "posted"], ["date", "<=", day(days)]], groupby=[], aggregates=["balance:sum"])
+        return rows[0]["balance:sum"] if rows else 0
+
+    stock_a = lambda days: asof(days)[item_a["id"]]["total_value"]  # noqa: E731
+    cat = api.read("product.category", categ, ["property_stock_valuation_account_id", "property_valuation"])
+    check(cat["property_stock_valuation_account_id"][0] == account and cat["property_valuation"] == "real_time", "kategori uji memakai akun persediaan sendiri (perpetual)")
+    check(abs(gl(25)) < 0.5 and abs(gl(15) - 1_000_000) < 0.5, "buku besar akun uji: 0 sebelum tagihan pertama, 1.000.000 sesudahnya (hari -15)")
+    check(abs(stock_a(15) - gl(15)) < 0.5, "hari -15: nilai stok kategori sama dengan saldo buku besar akunnya (selisih 0)")
+    check(abs(gl(11) - 1_000_000) < 0.5 and abs(stock_a(11) - 1_000_000) < 0.5, "hari -11: stok dan buku besar 1.000.000")
+    check(abs(stock_a(7) - 2_200_000) < 0.5 and abs(gl(7) - 2_200_000) < 0.5, "hari -7: stok dan buku besar 2.200.000 (kedua tagihan terposting)")
+    check(abs(stock_a(0) - gl(0) + 770_000) < 0.5, "hari ini: selisih stok terhadap buku besar = -770.000, yaitu pengiriman 550.000 dan penyesuaian 220.000 yang belum dijurnal")
+    check(abs(gl(0) - 2_200_000) < 0.5, "saldo buku besar akun uji hari ini 2.200.000 (dua tagihan)")
 
 
 def bill_total(api, bill_id):
