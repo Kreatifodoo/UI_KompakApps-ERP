@@ -124,6 +124,31 @@ const BUILDERS = {
     };
   },
 
+  /** Jurnal entry manual (D50): baris jurnal dengan akun, mitra, label, debit, dan kredit. */
+  async "journal.entry"(id) {
+    const [m] = await call("account.move", "read", { ids: [id], fields: ["name", "state", "date", "ref", "journal_id", "narration", "currency_id"] });
+    const lines = await call("account.move.line", "search_read", {
+      domain: [["move_id", "=", id]],
+      fields: ["account_id", "name", "partner_id", "debit", "credit"],
+      order: "sequence, id",
+    });
+    const cur = m.currency_id?.[1];
+    const number = m.name && m.name !== "/" ? m.name : "Draft";
+    const state = { draft: "Draft", posted: "Terposting", cancel: "Dibatalkan" }[m.state] ?? m.state;
+    return {
+      title: "Jurnal Entry",
+      number,
+      draft: m.state !== "posted",
+      parties: [],
+      meta: [["Nomor", number], ["Tanggal", dateText(m.date)], ["Jurnal", name2(m.journal_id)], ["Referensi", text(m.ref)], ["Status", state]],
+      columns: [["Akun", ""], ["Mitra", ""], ["Label", ""], ["Debit", "r"], ["Kredit", "r"]],
+      rows: lines.map((r) => ({ cells: [name2(r.account_id), name2(r.partner_id), text(r.name), r.debit ? num(r.debit) : "", r.credit ? num(r.credit) : ""] })),
+      totals: [["Total Debit", num(lines.reduce((s, r) => s + r.debit, 0), cur)], ["Total Kredit", num(lines.reduce((s, r) => s + r.credit, 0), cur), true]],
+      notes: [["Catatan", rich(m.narration)]],
+      signatures: ["Dibuat oleh", "Disetujui oleh"],
+    };
+  },
+
   async "stock.picking"(id) {
     const [p] = await call("stock.picking", "read", {
       ids: [id],

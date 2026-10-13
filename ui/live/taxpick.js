@@ -4,13 +4,13 @@
 import { call, esc, registerLookup, searchRead, toast } from "./common.js";
 
 const handlers = {};
-/** Penangan per halaman: use = "purchase" | "sale" (type_tax_use), get(key) -> daftar pajak baris, set(key, daftar) menyimpan dan menggambar ulang. */
+/** Penangan per halaman: use = "purchase" | "sale" (type_tax_use) atau daftar jenis (jurnal entry D50), get(key) -> daftar pajak baris, set(key, daftar) menyimpan dan menggambar ulang. */
 export function registerTaxes(scope, def) {
   handlers[scope] = def;
   registerLookup(`tax-${scope}`, {
     search: async (q, input) => {
       const chosen = def.get(input.dataset.txKey).map((t) => t.id);
-      const domain = [["type_tax_use", "=", def.use], ["active", "=", true], ...(chosen.length ? [["id", "not in", chosen]] : []), ...(q ? [["name", "ilike", q]] : [])];
+      const domain = [["type_tax_use", Array.isArray(def.use) ? "in" : "=", def.use], ["active", "=", true], ...(chosen.length ? [["id", "not in", chosen]] : []), ...(q ? [["name", "ilike", q]] : [])];
       const rows = await searchRead("account.tax", domain, ["name", "amount", "amount_type", "price_include"], { limit: 12, order: "sequence, name" });
       return rows.map((r) => ({ ...r, display_name: r.name }));
     },
