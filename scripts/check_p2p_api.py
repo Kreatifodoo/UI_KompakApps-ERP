@@ -219,6 +219,7 @@ def main():
     check_inventory_valuation(api, vendor)
     check_replenish_routes(api, vendor)
     check_bill_invoice_create(api, vendor)
+    check_payment_receipt_create(api, vendor)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -3145,6 +3146,197 @@ def check_bill_invoice_create(api, vendor):
         api.call("purchase.order", "button_cancel", ids=[po])
     for so in (so_other, so3, so_mix):
         api.call("sale.order", "action_cancel", ids=[so])
+
+
+def check_payment_receipt_create(api, vendor):
+    """Payment vendor dan Receipt pelanggan (ui/live/pages/payment.js, paydocs.js, D49): berdiri sendiri; beberapa tagihan vendor atau faktur pelanggan satu mitra
+    menjadi satu pembayaran (wizard account.payment.register dengan group_payment), pelunasan sebagian menurut urutan jatuh tempo; pembayaran berdiri sendiri
+    dialokasikan ke dokumen (rekonsiliasi baris hutang/piutang). Nilai yang dikirim sama dengan UI."""
+    import random
+
+    step("Payment vendor dan Receipt pelanggan: berdiri sendiri, dari beberapa tagihan/faktur satu mitra, sebagian, alokasi")
+    tag = f"{random.randint(0, 99999):05d}"
+    today = datetime.date.today()
+
+    def day(n):
+        return (today + datetime.timedelta(days=n)).isoformat()
+
+    [pay_vendor] = api.call("res.partner", "create", vals_list=[{"name": f"Vendor bayar {tag}", "supplier_rank": 1}])
+    [other_vendor] = api.call("res.partner", "create", vals_list=[{"name": f"Vendor bayar lain {tag}", "supplier_rank": 1}])
+    [customer] = api.call("res.partner", "create", vals_list=[{"name": f"Pelanggan terima {tag}", "customer_rank": 1}])
+    expense = api.search("account.account", [["account_type", "=", "expense"]], ["id"], limit=1)[0]["id"]
+    income = api.search("account.account", [["account_type", "=", "income"]], ["id"], limit=1)[0]["id"]
+    bank = api.search("account.journal", [["type", "=", "bank"]], ["id"], limit=1)[0]["id"]
+    usd = api.search("res.currency", [["name", "=", "USD"]], ["id"], context={"active_test": False})[0]["id"]
+
+    def make_doc(move_type, partner, amount, due, ref, currency=None):
+        [move] = api.call("account.move", "create", vals_list=[{
+            "move_type": move_type, "partner_id": partner, "invoice_date": today.isoformat(), "invoice_date_due": day(due), "ref": ref,
+            **({"currency_id": currency} if currency else {}),
+            "invoice_line_ids": [[0, 0, {"name": "Baris uji", "quantity": 1.0, "price_unit": amount, "tax_ids": [[6, 0, []]],
+                                         "account_id": expense if move_type == "in_invoice" else income}]]}])
+        api.call("account.move", "action_post", ids=[move])
+        return move
+
+    def docs(ids):
+        return {m["id"]: m for m in api.call("account.move", "read", ids=ids, fields=["amount_total", "amount_residual", "payment_state", "invoice_date_due", "matched_payment_ids"])}
+
+    def balanced(move_id):
+        items = api.search("account.move.line", [["move_id", "=", move_id]], ["debit", "credit"])
+        return len(items) >= 2 and abs(sum(i["debit"] for i in items) - sum(i["credit"] for i in items)) < 0.005
+
+    def method_line(journal, payment_type):
+        return api.search("account.payment.method.line", [["journal_id", "=", journal], ["payment_type", "=", payment_type]], ["id"], order="sequence, id")[0]["id"]
+
+    def plan(rows, amount, outbound):
+        """Padanan planAllocation di ui/live/paydocs.js: jatuh tempo, lalu jumlah (tagihan terbesar dulu, faktur terkecil dulu), lalu id."""
+        sign = -1 if outbound else 1
+        left, result = round(amount, 2), {}
+        for row in sorted(rows, key=lambda r: (r["invoice_date_due"], sign * r["amount_total"], r["id"])):
+            alloc = max(0.0, min(row["amount_residual"], left))
+            left = round(left - alloc, 2)
+            result[row["id"]] = alloc
+        return result
+
+    def pay_wizard(ids, **vals):
+        """Sama dengan pay() di paydocs.js: wizard dengan group_payment, dicek can_edit_wizard, lalu action_create_payments."""
+        context = {"active_model": "account.move", "active_ids": ids}
+        [wizard] = api.call("account.payment.register", "create", vals_list=[{"group_payment": True, **vals}], context=context)
+        editable = api.call("account.payment.register", "read", ids=[wizard], fields=["can_edit_wizard"], context=context)[0]["can_edit_wizard"]
+        return wizard, context, editable
+
+    def pay_docs(ids, amount, payment_type="outbound", memo=None):
+        wizard, context, editable = pay_wizard(
+            ids, journal_id=bank, payment_method_line_id=method_line(bank, payment_type), payment_date=today.isoformat(), amount=amount,
+            **({"communication": memo} if memo else {}))
+        check(editable, "wizard bisa diedit (satu kelompok mitra, rekening, dan mata uang)")
+        return api.call("account.payment.register", "action_create_payments", ids=[wizard], context=context)["res_id"]
+
+    def allocate(payment_line, doc_ids, rows, expected, outbound):
+        """Sama dengan allocate() di paydocs.js: rekonsiliasi baris pembayaran dengan baris tiap dokumen yang kebagian, menurut urutan jatuh tempo."""
+        sign = -1 if outbound else 1
+        for doc_id in sorted(doc_ids, key=lambda i: (rows[i]["invoice_date_due"], sign * rows[i]["amount_total"], i)):
+            if expected[doc_id] <= 0:
+                continue
+            lines = api.search("account.move.line", [["move_id", "=", doc_id], ["account_type", "in", ["asset_receivable", "liability_payable"]], ["reconciled", "=", False]], ["id"])
+            api.call("account.move.line", "reconcile", ids=[payment_line] + [x["id"] for x in lines])
+
+    def unallocated_line(move_id, account_type):
+        return api.search("account.move.line", [["move_id", "=", move_id], ["account_type", "=", account_type], ["reconciled", "=", False]], ["id", "amount_residual"])
+
+    # 1. Pembayaran vendor berdiri sendiri: draf lalu konfirmasi
+    vals = {"payment_type": "outbound", "partner_type": "supplier", "partner_id": pay_vendor, "amount": 400000.0, "date": today.isoformat(),
+            "journal_id": bank, "payment_method_line_id": method_line(bank, "outbound"), "memo": f"Uang muka {tag}"}
+    [standalone_out] = api.call("account.payment", "create", vals_list=[vals])
+    info = api.read("account.payment", standalone_out, ["state", "memo", "payment_type", "partner_type"])
+    check(info["state"] == "draft" and info["memo"] == f"Uang muka {tag}" and info["payment_type"] == "outbound", "pembayaran vendor berdiri sendiri tersimpan sebagai draf dengan memo")
+    api.call("account.payment", "action_post", ids=[standalone_out])
+    info = api.read("account.payment", standalone_out, ["state", "move_id", "name"])
+    check(info["state"] == "in_process" and bool(info["name"]), f"pembayaran vendor dikonfirmasi: {info['name']}")
+    check(balanced(info["move_id"][0]), "jurnal pembayaran vendor seimbang")
+    payable = api.search("account.move.line", [["move_id", "=", info["move_id"][0]], ["account_type", "=", "liability_payable"]], ["debit", "reconciled"])
+    check(len(payable) == 1 and payable[0]["debit"] == 400000.0 and not payable[0]["reconciled"], "pembayaran berdiri sendiri mendebit hutang usaha dan belum direkonsiliasi")
+
+    # 2. Receipt pelanggan berdiri sendiri
+    vals = {"payment_type": "inbound", "partner_type": "customer", "partner_id": customer, "amount": 300000.0, "date": today.isoformat(),
+            "journal_id": bank, "payment_method_line_id": method_line(bank, "inbound"), "memo": f"Uang muka pelanggan {tag}"}
+    [standalone_in] = api.call("account.payment", "create", vals_list=[vals])
+    api.call("account.payment", "action_post", ids=[standalone_in])
+    info = api.read("account.payment", standalone_in, ["state", "move_id"])
+    receivable = api.search("account.move.line", [["move_id", "=", info["move_id"][0]], ["account_type", "=", "asset_receivable"]], ["credit", "reconciled"])
+    check(info["state"] == "in_process" and balanced(info["move_id"][0]) and len(receivable) == 1 and receivable[0]["credit"] == 300000.0 and not receivable[0]["reconciled"],
+          "receipt pelanggan berdiri sendiri dikonfirmasi: jurnal seimbang, piutang dikredit dan belum direkonsiliasi")
+    outbound_methods = {m["id"] for m in api.search("account.payment.method.line", [["journal_id", "=", bank], ["payment_type", "=", "outbound"]], ["id"])}
+    inbound_methods = {m["id"] for m in api.search("account.payment.method.line", [["journal_id", "=", bank], ["payment_type", "=", "inbound"]], ["id"])}
+    check(bool(outbound_methods) and bool(inbound_methods) and not outbound_methods & inbound_methods, "metode pembayaran terfilter menurut jurnal dan arah (keluar atau masuk)")
+    [usd_payment] = api.call("account.payment", "create", vals_list=[{**vals, "currency_id": usd, "amount": 100.0, "memo": f"USD {tag}"}])
+    api.call("account.payment", "action_post", ids=[usd_payment])
+    usd_info = api.read("account.payment", usd_payment, ["state", "currency_id", "move_id"])
+    check(usd_info["state"] == "in_process" and usd_info["currency_id"][0] == usd and balanced(usd_info["move_id"][0]), "receipt dengan mata uang lain dari jurnal diposting dan seimbang")
+
+    # 3. Tiga tagihan satu vendor -> SATU pembayaran, semua lunas
+    bills = [make_doc("in_invoice", pay_vendor, amount, due, ref) for amount, due, ref in ((100000.0, 30, f"B1-{tag}"), (200000.0, 10, f"B2-{tag}"), (300000.0, 20, f"B3-{tag}"))]
+    check(all(b["payment_state"] == "not_paid" for b in docs(bills).values()), "tiga tagihan vendor terbuka")
+    pay_id = pay_docs(bills, 600000.0, memo=f"Pelunasan {tag}")
+    after = docs(bills)
+    payment = api.read("account.payment", pay_id, ["amount", "state", "memo", "partner_id", "reconciled_bill_ids", "reconciled_bills_count", "move_id", "payment_type"])
+    check(payment["amount"] == 600000.0 and payment["partner_id"][0] == pay_vendor and payment["payment_type"] == "outbound" and payment["memo"] == f"Pelunasan {tag}",
+          "satu pembayaran untuk total tiga tagihan, mitra dan memo sesuai")
+    check(sorted(payment["reconciled_bill_ids"]) == sorted(bills) and payment["reconciled_bills_count"] == 3, "pembayaran tertaut ke ketiga tagihan")
+    check(all(a["amount_residual"] == 0 and a["payment_state"] in ("paid", "in_payment") for a in after.values()), "ketiga tagihan lunas (sisa 0)")
+    check(balanced(payment["move_id"][0]), "jurnal pembayaran gabungan seimbang")
+
+    # 4. Pelunasan sebagian menurut urutan jatuh tempo (tagihan dibuat tak berurutan); dokumen yang tidak kebagian tidak ikut diproses
+    partial = [make_doc("in_invoice", pay_vendor, amount, due, ref) for amount, due, ref in ((100000.0, 30, f"P1-{tag}"), (200000.0, 10, f"P2-{tag}"), (300000.0, 20, f"P3-{tag}"))]
+    rows = docs(partial)
+    expected = plan(list(rows.values()), 250000.0, True)
+    used = [i for i in partial if expected[i] > 0]
+    check(used == partial[1:], "rencana alokasi: dua tagihan kebagian (jatuh tempo terawal), tagihan terakhir tidak ikut")
+    pay_id = pay_docs(used, 250000.0, memo=f"Sebagian {tag}")
+    after = docs(partial)
+    check(all(abs((rows[i]["amount_residual"] - after[i]["amount_residual"]) - expected[i]) < 0.005 for i in partial), "alokasi nyata sama dengan pratinjau: P2 lunas 200.000 dan P3 dibayar 50.000")
+    check(after[partial[1]]["payment_state"] in ("paid", "in_payment") and after[partial[2]]["payment_state"] == "partial" and after[partial[2]]["amount_residual"] == 250000.0,
+          "status Dibayar dan Dibayar Sebagian")
+    check(after[partial[0]]["payment_state"] == "not_paid" and after[partial[0]]["matched_payment_ids"] == [], "tagihan yang tidak kebagian tidak tertaut ke pembayaran")
+    check(api.read("account.payment", pay_id, ["amount"])["amount"] == 250000.0, "pembayaran sebesar jumlah yang diketik")
+
+    # 5. Satu tagihan dibayar sebagian lalu dilunasi dengan pembayaran kedua
+    single = make_doc("in_invoice", pay_vendor, 500000.0, 5, f"S1-{tag}")
+    pay_docs([single], 200000.0)
+    check(docs([single])[single]["amount_residual"] == 300000.0 and docs([single])[single]["payment_state"] == "partial", "satu tagihan dibayar sebagian: sisa 300.000")
+    pay_docs([single], 300000.0)
+    check(docs([single])[single]["amount_residual"] == 0, "pembayaran kedua melunasi sisa")
+
+    # 6. Penolakan: mitra berbeda atau mata uang berbeda tidak bisa digabung (UI menolak lebih dulu; server pun tidak mengizinkan edit)
+    mixed_partner = [make_doc("in_invoice", pay_vendor, 10000.0, 5, f"M1-{tag}"), make_doc("in_invoice", other_vendor, 20000.0, 5, f"M2-{tag}")]
+    editable = pay_wizard(mixed_partner, journal_id=bank, amount=30000.0)[2]
+    check(not editable, "dua vendor berbeda tidak bisa digabung menjadi satu pembayaran (wizard tidak bisa diedit)")
+    mixed_currency = [make_doc("in_invoice", pay_vendor, 10000.0, 5, f"MC1-{tag}"), make_doc("in_invoice", pay_vendor, 10.0, 5, f"MC2-{tag}", currency=usd)]
+    editable = pay_wizard(mixed_currency, journal_id=bank, amount=10000.0)[2]
+    check(not editable, "mata uang berbeda tidak bisa digabung menjadi satu pembayaran (wizard tidak bisa diedit)")
+
+    # 7. Faktur pelanggan: dua faktur satu pelanggan -> satu receipt; lalu sebagian
+    invoices = [make_doc("out_invoice", customer, amount, due, ref) for amount, due, ref in ((150000.0, 30, f"F1-{tag}"), (250000.0, 10, f"F2-{tag}"))]
+    receipt = pay_docs(invoices, 400000.0, payment_type="inbound")
+    info = api.read("account.payment", receipt, ["amount", "payment_type", "partner_type", "reconciled_invoice_ids", "state", "move_id"])
+    check(info["amount"] == 400000.0 and info["payment_type"] == "inbound" and info["partner_type"] == "customer" and sorted(info["reconciled_invoice_ids"]) == sorted(invoices),
+          "satu receipt untuk dua faktur, tertaut ke keduanya")
+    check(all(d["amount_residual"] == 0 for d in docs(invoices).values()) and balanced(info["move_id"][0]), "kedua faktur lunas dan jurnal receipt seimbang")
+    invoices2 = [make_doc("out_invoice", customer, amount, due, ref) for amount, due, ref in ((150000.0, 30, f"G1-{tag}"), (250000.0, 10, f"G2-{tag}"))]
+    rows = docs(invoices2)
+    expected = plan(list(rows.values()), 300000.0, False)
+    pay_docs([i for i in invoices2 if expected[i] > 0], 300000.0, payment_type="inbound")
+    after = docs(invoices2)
+    check(all(abs((rows[i]["amount_residual"] - after[i]["amount_residual"]) - expected[i]) < 0.005 for i in invoices2) and after[invoices2[0]]["amount_residual"] == 100000.0,
+          "receipt sebagian: faktur jatuh tempo terawal lunas, berikutnya dibayar 50.000 (sisa 100.000), sama dengan pratinjau")
+
+    # 8. Alokasi pembayaran berdiri sendiri (400.000) ke tagihan: rekonsiliasi baris hutang menurut urutan jatuh tempo, dokumen per dokumen
+    allocate_bills = [make_doc("in_invoice", pay_vendor, amount, due, ref) for amount, due, ref in ((150000.0, 30, f"A1-{tag}"), (100000.0, 10, f"A2-{tag}"), (300000.0, 20, f"A3-{tag}"))]
+    rows = docs(allocate_bills)
+    out_move = api.read("account.payment", standalone_out, ["move_id"])["move_id"][0]
+    [line] = unallocated_line(out_move, "liability_payable")
+    check(abs(line["amount_residual"]) == 400000.0, "baris hutang pembayaran berdiri sendiri punya sisa belum dialokasikan 400.000")
+    expected = plan(list(rows.values()), abs(line["amount_residual"]), True)
+    check(sorted(i for i in allocate_bills if expected[i] > 0) == sorted(allocate_bills[1:]), "rencana: A2 (100.000) dan A3 (300.000) kebagian, A1 tidak")
+    allocate(line["id"], allocate_bills, rows, expected, True)
+    after = docs(allocate_bills)
+    check(all(abs((rows[i]["amount_residual"] - after[i]["amount_residual"]) - expected[i]) < 0.005 for i in allocate_bills), "alokasi nyata sama dengan pratinjau")
+    check(all(after[i]["payment_state"] in ("paid", "in_payment") for i in allocate_bills[1:]) and after[allocate_bills[0]]["payment_state"] == "not_paid", "dua tagihan Dibayar, tagihan lain tetap terbuka")
+    pay = api.read("account.payment", standalone_out, ["reconciled_bill_ids", "is_reconciled"])
+    check(sorted(pay["reconciled_bill_ids"]) == sorted(allocate_bills[1:]) and pay["is_reconciled"], "pembayaran berdiri sendiri tertaut ke tagihan dan seluruhnya teralokasi")
+    check(not unallocated_line(out_move, "liability_payable"), "tidak ada lagi sisa belum dialokasikan pada pembayaran")
+
+    # 9. Alokasi receipt berdiri sendiri (300.000) ke faktur pelanggan: sebagian pada faktur terakhir
+    allocate_invoices = [make_doc("out_invoice", customer, amount, due, ref) for amount, due, ref in ((200000.0, 20, f"H1-{tag}"), (250000.0, 10, f"H2-{tag}"))]
+    rows = docs(allocate_invoices)
+    in_move = api.read("account.payment", standalone_in, ["move_id"])["move_id"][0]
+    [line] = unallocated_line(in_move, "asset_receivable")
+    expected = plan(list(rows.values()), abs(line["amount_residual"]), False)
+    allocate(line["id"], allocate_invoices, rows, expected, False)
+    after = docs(allocate_invoices)
+    check(after[allocate_invoices[1]]["amount_residual"] == 0 and after[allocate_invoices[0]]["amount_residual"] == 150000.0 and after[allocate_invoices[0]]["payment_state"] == "partial",
+          "receipt 300.000: faktur H2 (250.000) lunas dan H1 dibayar 50.000 (sebagian), sama dengan pratinjau")
+    check(api.read("account.payment", standalone_in, ["is_reconciled"])["is_reconciled"], "receipt berdiri sendiri seluruhnya teralokasi")
 
 
 def bill_total(api, bill_id):
