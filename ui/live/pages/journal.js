@@ -1,11 +1,13 @@
 // Jurnal Entry (account.move, semua jenis). Halaman baca-saja untuk memeriksa jurnal yang tercipta pada tiap
 // tahap transaksi: tagihan vendor (hutang usaha dan pajak masukan), pembayaran (akun pembayaran tertunda),
-// aset (penyusutan), dan valuasi persediaan. Setiap jurnal menunjuk ke dokumen sumbernya.
+// aset (penyusutan), dan valuasi persediaan. Setiap jurnal menunjuk ke dokumen sumbernya. Jurnal umum manual (tipe entry di jurnal umum, bukan hasil
+// dokumen lain) bisa dibuat, diedit saat draf, diposting, dibatalkan ke draf, diduplikat, dan dibalik lewat jentry.js (D50).
 import {
   app, badge, cell, dateText, esc, fieldBlock, filterSelect, journalHtml, loadJournalItems, money, pageHeader, readOne, readonlyValue, rowLink,
   searchBox, searchRead, statTiles, table,
 } from "../common.js";
 import { analyticSummary, preloadAnalytic } from "../analyticpick.js";
+import * as entry from "../jentry.js";
 
 const STATES = {
   draft: ["Draft", "muted"],
@@ -20,9 +22,15 @@ const FILTERS = [["", "Semua jurnal"], ["draft", "Draft"], ["posted", "Terpostin
 
 let last = { sub: "", query: new URLSearchParams() };
 
+export function leave() {
+  entry.leave();
+}
+
 export async function render(sub, query) {
   last = { sub, query };
+  entry.leave();
   if (sub === "") return renderList(query);
+  if (sub === "new") return entry.renderEntry(null);
   return renderForm(Number(sub));
 }
 
@@ -30,7 +38,9 @@ async function renderList(query) {
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
   const filter = query.get("state") ?? "";
   const text = query.get("q") ?? "";
+  const ids = (query.get("ids") ?? "").split(",").map(Number).filter(Boolean);
   const domain = [];
+  if (ids.length) domain.push(["id", "in", ids]);
   if (filter === "draft" || filter === "posted") domain.push(["state", "=", filter]);
   else if (filter === "bills") domain.push(["move_type", "=", "in_invoice"]);
   else if (filter === "entries") domain.push(["move_type", "=", "entry"]);
@@ -55,12 +65,13 @@ async function renderList(query) {
     pageHeader(
       "Jurnal Entry",
       `${searchBox(text, "Cari nomor, referensi, mitra")}${filterSelect(FILTERS, filter)}
-       <button data-action="refresh" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50" aria-label="Muat ulang"><i class="fas fa-rotate"></i></button>`,
+       <button data-action="refresh" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50" aria-label="Muat ulang"><i class="fas fa-rotate"></i></button>
+       <a href="#/journal/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-1"></i>Buat</a>`,
     ) +
     table(
       [{ label: "Nomor" }, { label: "Tanggal" }, { label: "Jurnal" }, { label: "Mitra / Referensi" }, { label: "Jenis" }, { label: "Total", right: true }, { label: "Status" }],
       body,
-      "Belum ada jurnal. Jurnal tercipta saat tagihan vendor diposting dan saat pembayaran dibuat.",
+      "Belum ada jurnal. Klik Buat untuk membuat jurnal entry manual; jurnal otomatis tercipta saat tagihan diposting dan saat pembayaran dibuat.",
     );
 }
 
@@ -84,7 +95,9 @@ async function renderForm(id) {
     app.innerHTML = '<p class="text-sm text-rose-600">Jurnal tidak ditemukan.</p>';
     return;
   }
-  const [items, links, analytic] = await Promise.all([loadJournalItems(id), sourceLinks(move), analyticItems(id)]);
+  const links = await sourceLinks(move);
+  if (await entry.isManual(move, links)) return entry.renderEntry(id);
+  const [items, analytic] = await Promise.all([loadJournalItems(id), analyticItems(id)]);
   const currency = move.currency_id?.[1];
   app.innerHTML = `
     <div class="text-sm text-gray-500 mb-2"><a href="#/journal" class="hover:text-indigo-600">Jurnal Entry</a> / ${esc(move.name || "Draft")}</div>
@@ -125,5 +138,18 @@ function analyticSection(items, currency) {
 }
 
 export function onClick(event, el) {
+  if (entry.onClick(event, el)) return;
   if (el.dataset.action === "refresh") render(last.sub, last.query);
+}
+
+export function onInput(event, el) {
+  entry.onInput(event, el);
+}
+
+export function onChange(event, el) {
+  entry.onChange(event, el);
+}
+
+export async function onSubmit(event, formEl, kind) {
+  await entry.onSubmit(event, formEl, kind);
 }

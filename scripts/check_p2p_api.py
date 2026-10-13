@@ -220,6 +220,7 @@ def main():
     check_replenish_routes(api, vendor)
     check_bill_invoice_create(api, vendor)
     check_payment_receipt_create(api, vendor)
+    check_journal_entry_create(api, vendor)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -3337,6 +3338,157 @@ def check_payment_receipt_create(api, vendor):
     check(after[allocate_invoices[1]]["amount_residual"] == 0 and after[allocate_invoices[0]]["amount_residual"] == 150000.0 and after[allocate_invoices[0]]["payment_state"] == "partial",
           "receipt 300.000: faktur H2 (250.000) lunas dan H1 dibayar 50.000 (sebagian), sama dengan pratinjau")
     check(api.read("account.payment", standalone_in, ["is_reconciled"])["is_reconciled"], "receipt berdiri sendiri seluruhnya teralokasi")
+
+
+def check_journal_entry_create(api, vendor):
+    """Jurnal Entry manual (ui/live/jentry.js, D50): draf (juga tak seimbang) disimpan dengan konteks check_move_validity=false, edit draf lewat perintah baris, posting
+    menolak jurnal tak seimbang, analitik tercatat saat posting, pajak menghasilkan baris otomatis, batalkan ke draf, duplikat, dan balik jurnal. Nilai yang dikirim sama dengan UI."""
+    import random
+
+    step("Jurnal Entry manual: buat, edit draf, posting, tak seimbang, analitik, pajak otomatis, batalkan ke draf, duplikat, balik jurnal")
+    tag = f"{random.randint(0, 99999):05d}"
+    today = datetime.date.today().isoformat()
+    no_check = {"check_move_validity": False}
+    journals = api.search("account.journal", [["type", "=", "general"]], ["display_name", "code"], order="sequence, code")
+    misc = journals[0]["id"]
+    check(bool(journals) and any(j["code"] == "MISC" for j in journals), "ada jurnal umum (Miscellaneous Operations) untuk jurnal manual")
+    expense = api.search("account.account", [["account_type", "=", "expense"]], ["id"], limit=1)[0]["id"]
+    cash = api.search("account.account", [["account_type", "=", "asset_cash"]], ["id"], limit=1)[0]["id"]
+    receivable = api.search("account.account", [["account_type", "=", "asset_receivable"]], ["id"], limit=1)[0]["id"]
+    income = api.search("account.account", [["account_type", "=", "income"]], ["id"], limit=1)[0]["id"]
+    plan = api.search("account.analytic.plan", [], ["id"], limit=1)
+    plan_id = plan[0]["id"] if plan else api.call("account.analytic.plan", "create", vals_list=[{"name": f"Plan uji {tag}"}])[0]
+    [analytic] = api.call("account.analytic.account", "create", vals_list=[{"name": f"Proyek jurnal {tag}", "plan_id": plan_id}])
+    tax = api.search("account.tax", [["type_tax_use", "=", "purchase"], ["amount_type", "=", "percent"], ["amount", ">", 0], ["price_include", "=", False]], ["id", "amount"], limit=1)[0]
+
+    def lines(move_id):
+        return api.search("account.move.line", [["move_id", "=", move_id]], [
+            "id", "name", "account_id", "partner_id", "debit", "credit", "display_type", "analytic_distribution", "tax_ids", "tax_line_id"], order="sequence, id")
+
+    def sums(move_id):
+        items = lines(move_id)
+        return round(sum(i["debit"] for i in items), 2), round(sum(i["credit"] for i in items), 2)
+
+    def move(move_id, *fields):
+        return api.read("account.move", move_id, list(fields))
+
+    # 1. Draf seimbang seperti yang dikirim form: mitra, label, analitik, referensi, catatan
+    [entry] = api.call("account.move", "create", context=no_check, vals_list=[{
+        "move_type": "entry", "date": today, "journal_id": misc, "ref": f"JE-{tag}", "narration": "<p>catatan jurnal uji</p>",
+        "line_ids": [
+            [0, 0, {"account_id": expense, "name": "Beban uji", "debit": 300000.0, "credit": 0.0, "partner_id": vendor["id"], "analytic_distribution": {str(analytic): 100.0}}],
+            [0, 0, {"account_id": cash, "name": "Kas uji", "debit": 0.0, "credit": 300000.0}]]}])
+    head = move(entry, "state", "move_type", "name", "ref", "journal_id", "date", "amount_total")
+    items = lines(entry)
+    check(head["state"] == "draft" and head["move_type"] == "entry" and not head["name"], "jurnal baru berstatus draf tanpa nomor (nomor diberi saat posting)")
+    check(head["ref"] == f"JE-{tag}" and head["journal_id"][0] == misc and head["date"] == today and head["amount_total"] == 300000.0, "referensi, jurnal, tanggal, dan total tersimpan")
+    check(len(items) == 2 and all(i["display_type"] == "product" for i in items), "dua baris jurnal bertipe product (yang dapat diedit di form)")
+    check(items[0]["partner_id"] and items[0]["partner_id"][0] == vendor["id"] and items[0]["analytic_distribution"] == {str(analytic): 100.0}, "mitra dan distribusi analitik tersimpan pada baris")
+    check(fails_with(lambda: api.call("account.move", "create", vals_list=[{
+        "move_type": "entry", "date": today, "journal_id": misc,
+        "line_ids": [[0, 0, {"account_id": expense, "debit": 100.0, "credit": 0.0}], [0, 0, {"account_id": cash, "debit": 0.0, "credit": 90.0}]]}]), "not balanced"),
+        "draf tak seimbang ditolak Odoo tanpa konteks check_move_validity=false")
+
+    # 2. Draf tak seimbang: boleh disimpan dengan konteks, posting ditolak, batalkan memerlukan konteks yang sama
+    [wip] = api.call("account.move", "create", context=no_check, vals_list=[{
+        "move_type": "entry", "date": today, "journal_id": misc,
+        "line_ids": [[0, 0, {"account_id": expense, "name": "x", "debit": 100000.0, "credit": 0.0}], [0, 0, {"account_id": cash, "name": "y", "debit": 0.0, "credit": 90000.0}]]}])
+    debit, credit = sums(wip)
+    check(move(wip, "state")["state"] == "draft" and round(debit - credit, 2) == 10000.0, "draf tak seimbang tersimpan (selisih 10.000 terbaca dari jumlah baris)")
+    check(fails_with(lambda: api.call("account.move", "action_post", ids=[wip]), "not balanced"), "posting jurnal tak seimbang ditolak")
+    check(fails_with(lambda: api.call("account.move", "button_cancel", ids=[wip]), "not balanced"), "membatalkan draf tak seimbang tanpa konteks ditolak (UI mengirim konteks)")
+    api.call("account.move", "button_cancel", ids=[wip], context=no_check)
+    check(move(wip, "state")["state"] == "cancel", "draf tak seimbang dibatalkan dengan konteks check_move_validity=false")
+    api.call("account.move", "button_draft", ids=[wip], context=no_check)
+    check(move(wip, "state")["state"] == "draft", "jurnal dibatalkan dikembalikan ke draf")
+
+    # 3. Edit draf lewat perintah baris (ubah, tambah, hapus) seperti persist() di UI
+    l1, l2 = [i["id"] for i in lines(entry)]
+    api.call("account.move", "write", ids=[entry], context=no_check, vals={
+        "line_ids": [[1, l1, {"debit": 350000.0, "credit": 0.0, "name": "Beban uji ubah"}], [1, l2, {"debit": 0.0, "credit": 300000.0}], [0, 0, {"account_id": income, "name": "Tambahan", "debit": 0.0, "credit": 50000.0}]]})
+    items = lines(entry)
+    check(len(items) == 3 and sums(entry) == (350000.0, 350000.0) and items[0]["name"] == "Beban uji ubah", "ubah jumlah dan label serta tambah baris pada draf, jurnal seimbang")
+    extra = items[2]["id"]
+    api.call("account.move", "write", ids=[entry], context=no_check, vals={"line_ids": [[2, extra, 0], [1, l2, {"debit": 0.0, "credit": 350000.0}]]})
+    check(len(lines(entry)) == 2 and sums(entry) == (350000.0, 350000.0), "hapus baris dan sesuaikan lawannya, jurnal tetap seimbang")
+    api.call("account.move", "write", ids=[entry], context=no_check, vals={"line_ids": [[1, l2, {"partner_id": vendor["id"], "analytic_distribution": {str(analytic): 40.0}}]], "ref": f"JE-{tag}-b"})
+    check(lines(entry)[1]["partner_id"][0] == vendor["id"] and move(entry, "ref")["ref"] == f"JE-{tag}-b", "mitra, analitik, dan referensi bisa diubah pada draf")
+    api.call("account.move", "write", ids=[entry], context=no_check, vals={"line_ids": [[1, l2, {"analytic_distribution": False}]]})
+
+    # 4. Posting: nomor, jurnal seimbang, analitik tercatat
+    api.call("account.move", "action_post", ids=[entry])
+    head = move(entry, "state", "name")
+    check(head["state"] == "posted" and str(head["name"]).startswith("MISC/"), f"jurnal diposting dan bernomor ({head['name']})")
+    check(balanced_move(api, entry) and sums(entry) == (350000.0, 350000.0), "jurnal terposting seimbang")
+    alines = api.search("account.analytic.line", [["move_line_id.move_id", "=", entry]], ["amount", "account_id"])
+    check(len(alines) == 1 and alines[0]["account_id"][0] == analytic and alines[0]["amount"] == -350000.0, "posting mencatat baris analitik (beban 350.000 pada proyek)")
+    check(fails_with(lambda: api.call("account.move", "write", ids=[entry], vals={"line_ids": [[1, l1, {"debit": 1.0}]]}), "posted", "cannot", "not allowed", "tidak"),
+          "baris jurnal terposting tidak bisa diubah sebelum dikembalikan ke draf")
+
+    # 5. Batalkan ke draf lalu posting ulang (analitik dihapus lalu dibuat lagi)
+    api.call("account.move", "button_draft", ids=[entry])
+    check(move(entry, "state")["state"] == "draft" and not api.search("account.analytic.line", [["move_line_id.move_id", "=", entry]], ["id"]), "batalkan ke draf mengembalikan status draf dan menghapus baris analitik")
+    api.call("account.move", "write", ids=[entry], context=no_check, vals={"line_ids": [[1, l1, {"debit": 360000.0}], [1, l2, {"credit": 360000.0}]]})
+    api.call("account.move", "action_post", ids=[entry])
+    alines = api.search("account.analytic.line", [["move_line_id.move_id", "=", entry]], ["amount"])
+    check(sums(entry) == (360000.0, 360000.0) and len(alines) == 1 and alines[0]["amount"] == -360000.0, "diubah saat draf lalu diposting ulang: jurnal seimbang 360.000 dan analitik ikut")
+
+    # 6. Duplikat: draf baru dengan baris yang sama; asal tidak berubah
+    [copy] = api.call("account.move", "copy", ids=[entry])
+    cl = lines(copy)
+    check(copy != entry and move(copy, "state")["state"] == "draft" and not move(copy, "name")["name"], "duplikat berupa draf baru tanpa nomor")
+    check(len(cl) == 2 and sums(copy) == (360000.0, 360000.0) and cl[0]["analytic_distribution"] == {str(analytic): 100.0}, "duplikat membawa baris, jumlah, dan analitik")
+    check(move(entry, "state")["state"] == "posted", "jurnal asal tetap terposting setelah diduplikat")
+    api.call("account.move", "button_cancel", ids=[copy])
+    check(move(copy, "state")["state"] == "cancel", "draf duplikat bisa dibatalkan")
+
+    # 7. Balik jurnal (account.move.reversal): jurnal pembalik terposting, debit-kredit tertukar, analitik berlawanan
+    context = {"active_model": "account.move", "active_ids": [entry]}
+    [wizard] = api.call("account.move.reversal", "create", context=context, vals_list=[{"move_ids": [[6, 0, [entry]]], "journal_id": misc, "date": today, "reason": f"koreksi {tag}"}])
+    result = api.call("account.move.reversal", "reverse_moves", ids=[wizard], context=context)
+    reversal = result.get("res_id")
+    check(bool(reversal) and reversal != entry, "reverse_moves mengembalikan aksi dengan res_id jurnal pembalik")
+    back = move(reversal, "state", "reversed_entry_id", "ref", "date")
+    check(back["state"] == "posted" and back["reversed_entry_id"][0] == entry and f"koreksi {tag}" in (back["ref"] or ""), "jurnal pembalik langsung terposting, menunjuk jurnal asal, dan memuat alasan")
+    original, reverse_items = lines(entry), lines(reversal)
+    check(sorted((i["account_id"][0], i["debit"], i["credit"]) for i in original) == sorted((i["account_id"][0], i["credit"], i["debit"]) for i in reverse_items),
+          "baris jurnal pembalik berupa debit dan kredit yang tertukar")
+    check(reversal in move(entry, "reversal_move_ids")["reversal_move_ids"], "jurnal asal menautkan jurnal pembaliknya (reversal_move_ids)")
+    balances = {}
+    for item in api.search("account.move.line", [["move_id", "in", [entry, reversal]]], ["account_id", "balance"]):
+        balances[item["account_id"][0]] = round(balances.get(item["account_id"][0], 0.0) + item["balance"], 2)
+    check(balances and all(v == 0.0 for v in balances.values()), "saldo tiap akun dari jurnal asal dan pembaliknya saling meniadakan")
+    nets = [a["amount"] for a in api.search("account.analytic.line", [["move_line_id.move_id", "in", [entry, reversal]]], ["amount"])]
+    check(len(nets) == 2 and round(sum(nets), 2) == 0.0, "baris analitik jurnal pembalik berlawanan sehingga total analitik nol")
+
+    # 8. Pajak otomatis: baris pajak dibuat Odoo; jurnal seimbang; menghapus pajak menghapus baris pajak
+    rate = tax["amount"] / 100.0
+    base, with_tax = 100000.0, round(100000.0 * (1 + rate), 2)
+    [taxed] = api.call("account.move", "create", context=no_check, vals_list=[{
+        "move_type": "entry", "date": today, "journal_id": misc,
+        "line_ids": [[0, 0, {"account_id": expense, "name": "Beban kena pajak", "debit": base, "credit": 0.0, "tax_ids": [[6, 0, [tax["id"]]]]}],
+                     [0, 0, {"account_id": cash, "name": "Kas", "debit": 0.0, "credit": with_tax}]]}])
+    tl = [i for i in lines(taxed) if i["display_type"] == "tax"]
+    check(len(tl) == 1 and tl[0]["tax_line_id"][0] == tax["id"] and tl[0]["debit"] == round(base * rate, 2), f"baris pajak otomatis ({tax['amount']}%) dibuat Odoo dengan display_type tax")
+    check(sums(taxed)[0] == sums(taxed)[1] == with_tax and len([i for i in lines(taxed) if i["display_type"] == "product"]) == 2, "jurnal dengan pajak seimbang; baris yang diedit tetap dua")
+    api.call("account.move", "action_post", ids=[taxed])
+    check(move(taxed, "state")["state"] == "posted" and balanced_move(api, taxed), "jurnal dengan baris pajak diposting seimbang")
+    api.call("account.move", "button_draft", ids=[taxed])
+    base_line = [i for i in lines(taxed) if i["tax_ids"]][0]["id"]
+    api.call("account.move", "write", ids=[taxed], context=no_check, vals={"line_ids": [[1, base_line, {"tax_ids": [[6, 0, []]]}]]})
+    after = lines(taxed)
+    check(not [i for i in after if i["display_type"] == "tax"], "melepas pajak dari baris menghapus baris pajak otomatis")
+    check(any(i["name"] == "Automatic Balancing Line" for i in after) or sums(taxed)[0] != sums(taxed)[1],
+          "setelah pajak dilepas jurnal tak seimbang atau Odoo menambah Automatic Balancing Line (UI memperingatkan)")
+
+    # 9. Tanpa mitra pada akun piutang tetap bisa diposting; jurnal manual tidak punya sumber pembayaran
+    [loose] = api.call("account.move", "create", vals_list=[{
+        "move_type": "entry", "date": today, "journal_id": misc,
+        "line_ids": [[0, 0, {"account_id": receivable, "name": "Piutang tanpa mitra", "debit": 5000.0, "credit": 0.0}], [0, 0, {"account_id": income, "name": "Pendapatan", "debit": 0.0, "credit": 5000.0}]]}])
+    api.call("account.move", "action_post", ids=[loose])
+    check(move(loose, "state")["state"] == "posted" and balanced_move(api, loose), "akun piutang tanpa mitra tetap bisa diposting (Odoo tidak mewajibkan mitra)")
+    check(not api.search("account.payment", [["move_id", "=", loose]], ["id"]) and not api.search("stock.move", [["account_move_id", "=", loose]], ["id"]),
+          "jurnal manual tidak punya pembayaran atau pergerakan stok sumber (dasar penentuan jurnal manual di UI)")
 
 
 def bill_total(api, bill_id):
