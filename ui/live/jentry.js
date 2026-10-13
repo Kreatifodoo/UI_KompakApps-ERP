@@ -339,7 +339,11 @@ function page(move, rows) {
          <a href="#/journal" data-action="je-discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a>
        </div>`
     : "";
-  const inner = editable ? `<div id="je-lines">${linesTable()}</div>${saveBar}` : readonlyLines(rows, move.currency_id?.[1]);
+  const autoBalance = form.lines.some((l) => l.name === "Automatic Balancing Line") || rows.some((l) => l.name === "Automatic Balancing Line");
+  const warning = autoBalance
+    ? '<p class="mb-3 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">Odoo menambahkan baris "Automatic Balancing Line" ke akun suspense karena baris pajak otomatis membuat jurnal tidak seimbang. Pindahkan ke akun yang benar atau hapus lalu seimbangkan sendiri sebelum posting.</p>'
+    : "";
+  const inner = editable ? `${warning}<div id="je-lines">${linesTable()}</div>${saveBar}` : `${warning}${readonlyLines(rows, move.currency_id?.[1])}`;
   return `
     <div class="text-sm text-gray-500 mb-2"><a href="#/journal" class="hover:text-indigo-600">Jurnal Entry</a> / ${esc(creating ? "Baru" : name)}</div>
     <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-3">${actions}${statusbar(FLOW, STATES, creating ? "draft" : form.state)}</div>
