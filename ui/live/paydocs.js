@@ -112,7 +112,7 @@ export function createPayPicker(def) {
   const plan = () => planAllocation(selectedDocs(), def.type, budget());
 
   function docsHtml() {
-    const allocRows = new Map(plan().rows.map((r) => [r.doc.id, r]));
+    const allocRows = new Map(currencyNames().length > 1 ? [] : plan().rows.map((r) => [r.doc.id, r])); // campuran mata uang: tanpa pratinjau
     const allChecked = st.docs.length > 0 && st.docs.every((d) => st.selected.has(d.id));
     const th = (text, right) => `<th class="pb-2 px-2 text-xs font-semibold text-gray-500 uppercase ${right ? "text-right" : ""}">${text}</th>`;
     const head = [
@@ -135,16 +135,18 @@ export function createPayPicker(def) {
           <td class="py-2 px-2 text-sm"><label class="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" data-pd-doc="${d.id}" ${on ? "checked" : ""} class="rounded border-gray-300 text-indigo-600" aria-label="Pilih ${esc(d.name)}">
             <span><span class="font-medium text-gray-900">${esc(d.name)}</span>${d.ref ? `<span class="block text-xs text-gray-500">${esc(d.ref)}</span>` : ""}</span></label></td>
-          <td class="py-2 px-2 text-sm text-gray-600">${dateText(d.invoice_date)}</td>
-          <td class="py-2 px-2 text-sm ${overdue ? "text-rose-600 font-medium" : "text-gray-600"}">${dateText(d.invoice_date_due)}${overdue ? " (lewat)" : ""}</td>
-          <td class="py-2 px-2 text-sm text-right text-gray-600">${money(d.amount_total, cur)}</td>
-          <td class="py-2 px-2 text-sm text-right text-gray-900">${money(d.amount_residual, cur)}</td>
-          <td class="py-2 px-2 text-sm text-right">${paid}</td>
-          <td class="py-2 px-2 text-sm text-right">${rest}</td>
+          <td class="py-2 px-2 text-sm text-gray-600 whitespace-nowrap">${dateText(d.invoice_date)}</td>
+          <td class="py-2 px-2 text-sm whitespace-nowrap ${overdue ? "text-rose-600 font-medium" : "text-gray-600"}">${dateText(d.invoice_date_due)}${overdue ? " (lewat)" : ""}</td>
+          <td class="py-2 px-2 text-sm text-right text-gray-600 whitespace-nowrap">${money(d.amount_total, cur)}</td>
+          <td class="py-2 px-2 text-sm text-right text-gray-900 whitespace-nowrap">${money(d.amount_residual, cur)}</td>
+          <td class="py-2 px-2 text-sm text-right whitespace-nowrap">${paid}</td>
+          <td class="py-2 px-2 text-sm text-right whitespace-nowrap">${rest}</td>
         </tr>`;
       })
       .join("");
-    return `<div class="overflow-x-auto"><table class="w-full text-left"><thead><tr>${head}</tr></thead><tbody class="divide-y divide-gray-100">${rows}</tbody></table></div>`;
+    return `<div class="overflow-x-auto"><table class="w-full text-left"><thead><tr>${head}</tr></thead><tbody class="divide-y divide-gray-100">${rows}</tbody></table></div>${
+      st.hidden ? `<p class="mt-2 text-xs text-gray-500">Ada ${st.hidden} ${k.noun} terbuka dengan mata uang lain yang tidak ditampilkan.</p>` : ""
+    }`;
   }
 
   function emptyHtml() {
@@ -156,7 +158,7 @@ export function createPayPicker(def) {
   function previewHtml() {
     if (!st.partner || st.loading || !st.docs.length) return "";
     const chosen = selectedDocs();
-    if (!chosen.length) return "";
+    if (!chosen.length || currencyNames().length > 1) return "";
     const cur = chosen[0].currency_id[1];
     const { rows, unused } = plan();
     const total = totalOf(chosen);

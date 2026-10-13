@@ -123,7 +123,7 @@ async function renderList(query) {
     .join("");
   app.innerHTML =
     pageHeader(
-      type === "inbound" ? "Pembayaran Pelanggan" : type === "outbound" ? "Pembayaran Vendor" : "Pembayaran",
+      type === "inbound" ? "Pembayaran Pelanggan (Receipt)" : type === "outbound" ? "Pembayaran Vendor (Payment)" : "Pembayaran",
       `${filterSelect(options, filter)}
        <button data-action="refresh" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50" aria-label="Muat ulang"><i class="fas fa-rotate"></i></button>
        ${createMenu}`,
