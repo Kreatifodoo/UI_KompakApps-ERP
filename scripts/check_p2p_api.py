@@ -219,6 +219,7 @@ def main():
     check_inventory_valuation(api, vendor)
     check_replenish_routes(api, vendor)
     check_bill_invoice_create(api, vendor)
+    check_payment_receipt_create(api, vendor)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
