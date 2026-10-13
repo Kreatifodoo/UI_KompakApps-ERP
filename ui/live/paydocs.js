@@ -169,15 +169,13 @@ export function createPayPicker(def) {
     ];
     if (allocating() && unused > 0.004) bits.push(`Tetap belum dialokasikan <span class="font-semibold text-gray-900">${money(unused, cur)}</span>`);
     const note = skipped
-      ? `<p class="mt-1 text-xs text-amber-800">${skipped} dokumen berurutan terakhir tidak kebagian dan tidak ikut diproses; pelunasan sebagian mengikuti urutan jatuh tempo.</p>`
+      ? `<p class="mt-1 text-xs text-amber-800">${skipped} ${k.noun} dengan jatuh tempo paling akhir tidak kebagian dan tidak ikut diproses; pelunasan sebagian mengikuti urutan jatuh tempo.</p>`
       : "";
     return `<div class="rounded-lg bg-gray-50 border border-gray-200 text-sm text-gray-600 p-3">${bits.join(" · ")}${note}</div>`;
   }
 
   function fieldsHtml() {
-    if (allocating()) {
-      return `<div class="rounded-lg bg-indigo-50 border border-indigo-200 text-sm text-indigo-900 p-3">Pembayaran <span class="font-semibold">${esc(st.payment.name)}</span> belum dialokasikan sebesar <span class="font-semibold">${money(st.payment.residual, st.payment.currencyName)}</span>. Centang ${k.label.toLowerCase()} yang akan dilunasi; jumlah dibagi menurut urutan jatuh tempo.</div>`;
-    }
+    if (allocating()) return "";
     const options = (rows, selected) => rows.map((r) => `<option value="${r.id}" ${r.id === selected ? "selected" : ""}>${esc(r.display_name)}</option>`).join("");
     const label = (text, body) => `<label class="block"><span class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">${text}</span>${body}</label>`;
     return `<div class="grid sm:grid-cols-2 gap-3">
@@ -241,6 +239,7 @@ export function createPayPicker(def) {
       payment ? `Alokasikan ${payment.name} ke ${k.label}` : k.title,
       `${partnerField}
        <p class="text-xs text-gray-500">Centang satu atau beberapa ${k.label.toLowerCase()} milik ${k.partnerLabel.toLowerCase()} yang sama; semuanya dibayar dengan satu ${allocating() ? "alokasi" : "pembayaran"}. Mata uang harus sama.</p>
+       ${allocating() ? `<div class="rounded-lg bg-indigo-50 border border-indigo-200 text-sm text-indigo-900 p-3">Pembayaran <span class="font-semibold">${esc(payment.name)}</span> belum dialokasikan sebesar <span class="font-semibold">${money(payment.residual, payment.currencyName)}</span>. Centang ${k.label.toLowerCase()} yang akan dilunasi; jumlah dibagi menurut urutan jatuh tempo.</div>` : ""}
        <div id="pd-docs"></div><div id="pd-preview"></div>${fieldsHtml()}`,
       '<div id="pd-foot" class="contents"></div>',
       () => {

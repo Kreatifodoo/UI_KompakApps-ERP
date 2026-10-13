@@ -239,7 +239,7 @@ async function renderNew(type) {
       ${fieldBlock("Mata Uang", `<select data-value="currency" class="${INPUT}">${selectOptions(currencies, null, `Mengikuti jurnal (${ctx.company?.currency_id?.[1] ?? ""})`)}</select>`)}
       <div class="md:col-span-2">${fieldBlock("Memo", `<input data-value="memo" value="" placeholder="mis. uang muka, pelunasan, nomor kuitansi" class="${INPUT}">`)}</div>
     </section>
-    <p class="text-xs text-gray-500 mt-3">Pembayaran berdiri sendiri tidak langsung melunasi dokumen. Setelah dikonfirmasi, gunakan tombol Alokasikan di halaman pembayaran (atau Bank Transaction) untuk mencocokkannya ke ${esc(def.docsLabel.toLowerCase())}.</p>
+    <p class="text-xs text-gray-500 mt-3">Pembayaran berdiri sendiri tidak langsung melunasi dokumen. Setelah dikonfirmasi, gunakan tombol Alokasikan di halaman pembayaran untuk mencocokkannya ke ${esc(def.docsLabel.toLowerCase())}.</p>
     <div class="flex gap-2 mt-4">
       <button data-action="save-draft" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50">Simpan Draf</button>
       <button data-action="save-post" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan dan Konfirmasi</button>
