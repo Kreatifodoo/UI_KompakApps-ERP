@@ -8,6 +8,7 @@ import {
 import {
   closeMobile, goFirstMatch, goLeaf, openMobile, renderSidebar, resolveActive, setSearch, setVersion, toggleBranch,
 } from "./sidebar.js";
+import { initColumnResize } from "./colresize.js";
 import * as pr from "./pages/pr.js";
 import * as po from "./pages/po.js";
 import * as receipt from "./pages/receipt.js";
@@ -146,6 +147,8 @@ export function route() {
   return queue;
 }
 setReroute(route);
+// Semua tabel (baris pesanan, daftar, laporan) bisa diubah lebar kolomnya dengan menarik tepi judul kolom.
+initColumnResize(document.querySelector("#app"), document.querySelector("#modal"));
 
 const page = () => PAGES[currentId];
 
