@@ -45,8 +45,13 @@ wh = env["stock.warehouse"].search([("company_id", "=", company.id)], limit=1)
 stock_loc = wh.lot_stock_id
 bank = env["account.journal"].search([("type", "=", "bank"), ("company_id", "=", company.id)], limit=1)
 goods = env.ref("product.product_category_goods")
-sale_tax = env["account.tax"].search([("type_tax_use", "=", "sale"), ("company_id", "=", company.id)], limit=1)
-buy_tax = env["account.tax"].search([("type_tax_use", "=", "purchase"), ("company_id", "=", company.id)], limit=1)
+Tax = env["account.tax"]
+sale_tax = Tax.search([("type_tax_use", "=", "sale"), ("name", "=", "VAT Out 11%"), ("company_id", "=", company.id)], limit=1)
+buy_tax = Tax.search([("type_tax_use", "=", "purchase"), ("name", "=", "VAT In 11%"), ("company_id", "=", company.id)], limit=1)
+pph23 = Tax.search([("type_tax_use", "=", "purchase"), ("name", "=", "PPh 23 -2%"), ("company_id", "=", company.id)], limit=1)
+if not (sale_tax and buy_tax and pph23):
+    print("PRESALES_SKIP: jalankan scripts/setup_tax_id.py lebih dulu (VAT Out 11%, VAT In 11%, PPh 23 -2%)")
+    raise SystemExit(0)
 Partner = env["res.partner"]
 
 
@@ -59,6 +64,7 @@ def partner(name, city, street, kind):
 v_inst = partner("PT Sinar Medika Instrumen", "Jakarta", "Jl. Pulogadung No. 21", "vendor")
 v_pack = partner("PT Kemasan Laboratorium Nusantara", "Tangerang", "Kawasan Industri Jatake Blok C-7", "vendor")
 v_reag = partner("CV Bahan Reagen Prima", "Bandung", "Jl. Soekarno-Hatta No. 310", "vendor")
+v_kal = partner("CV Teknisi Kalibrasi Mandiri", "Jakarta", "Jl. Tebet Barat Dalam No. 9", "vendor")
 c_harapan = partner("RS Harapan Sehat Jakarta", "Jakarta", "Jl. Cikini Raya No. 14", "customer")
 c_sentosa = partner("Laboratorium Klinik Sentosa Bandung", "Bandung", "Jl. Dipatiukur No. 88", "customer")
 c_bunda = partner("Klinik Pratama Bunda Surabaya", "Surabaya", "Jl. Darmo Permai III No. 5", "customer")
@@ -77,6 +83,8 @@ def product(code, name, price, cost, vendor=None, vendor_price=None):
     return p
 
 
+jasa_install = Product.create({"name": "Jasa Instalasi dan Pelatihan Instrumen", "default_code": "PRL-JASA-INST", "type": "service", "categ_id": goods.id, "list_price": 7_500_000, "standard_price": 0, "taxes_id": [Command.set(sale_tax.ids)], "sale_ok": True, "purchase_ok": False})
+jasa_kalibrasi = Product.create({"name": "Jasa kalibrasi dan pemeliharaan instrumen", "default_code": "PRL-JASA-KAL", "type": "service", "categ_id": goods.id, "list_price": 0, "standard_price": 4_500_000, "supplier_taxes_id": [Command.set((buy_tax | pph23).ids)], "sale_ok": False, "purchase_ok": True})
 xi800 = product("PRL-XI800", "PROLINE Xi800 Automatic Chemiluminescence Analyzer", 485_000_000, 372_000_000, v_inst)
 ua120 = product("PRL-UA120", "PROLINE UA120 Urine Analyzer", 38_500_000, 27_500_000, v_inst)
 ua240 = product("PRL-UA240", "PROLINE UA240 Urine Analyzer", 62_000_000, 44_000_000, v_inst)
@@ -162,6 +170,9 @@ po3 = env["purchase.order"].create({"partner_id": v_reag.id, "date_order": at(8)
 po3.button_confirm()
 receive(po3, at(6))
 bill(po3, 5, "BRP/10/0087")
+bill_kal = env["account.move"].create({"move_type": "in_invoice", "partner_id": v_kal.id, "invoice_date": day(4), "ref": "TKM-2026-031", "invoice_line_ids": [Command.create({"product_id": jasa_kalibrasi.id, "quantity": 1, "price_unit": 4_500_000, "tax_ids": [Command.set((buy_tax | pph23).ids)]})]})
+bill_kal.action_post()
+pay(bill_kal, day(1))
 po4 = env["purchase.order"].create({"partner_id": v_inst.id, "date_order": at(1), "order_line": [Command.create({"product_id": xi800.id, "product_qty": 1, "price_unit": 372_000_000})]})
 # 4. Inventory transfer antar rak
 rack_inst = env["stock.location"].create({"name": "Rak Instrumen", "location_id": stock_loc.id, "usage": "internal"})
@@ -250,7 +261,7 @@ def invoice(so, back):
     return inv
 
 
-so1 = order(c_sentosa, 5, [(ua240, 1), (strip, 30), (kontrol, 2)], opp_sentosa)
+so1 = order(c_sentosa, 5, [(ua240, 1), (strip, 30), (kontrol, 2), (jasa_install, 1)], opp_sentosa)
 so1.action_confirm()
 deliver(so1, at(4))
 inv1 = invoice(so1, 4)
