@@ -8,6 +8,7 @@ import {
 } from "../common.js";
 import { printButton } from "../print.js";
 import { productionJournals } from "../stockjournal.js";
+import { defaultWarehouse, fmtQty, stockHint, stockText, storableStock } from "../stockqty.js";
 
 const STATES = {
   draft: ["Draft", "muted"],
@@ -24,10 +25,18 @@ const OPEN = ["confirmed", "progress", "to_close"];
 const nf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 4 });
 const round = (n) => Math.round(n * 10000) / 10000;
 
+/** Sel stok komponen MO: on hand di lokasi sumber dan sisa yang belum dicadangkan siapa pun; merah bila kebutuhan yang belum dicadangkan MO ini melebihi sisa itu. Kosong untuk komponen tanpa pelacakan stok. */
+const stockCell = (stock, planned, reserved) => {
+  const short = stock && planned - reserved > stock.available + 1e-9;
+  const detail = stock && Math.abs(stock.onhand - stock.available) > 1e-9 ? ` <span class="text-xs text-gray-500">(bebas ${esc(fmtQty(stock.available))})</span>` : "";
+  return `<td class="py-2 px-4 text-sm text-right tabular-nums ${short ? "text-rose-600 font-medium" : "text-gray-600"}">${stock ? `${esc(fmtQty(stock.onhand))}${detail}` : ""}</td>`;
+};
+
 let form = null; // MO baru: { id: null, product, bomId, boms, values } ; MO ada: { id, values, initial }
 let prod = null; // panel produksi: { qty, consume: Map(id move -> teks), touched: Set, lot, serials }
 let moData = null; // MO yang sedang dibuka, untuk dialog
 let pendingChoice = null;
+let whs = []; // gudang aktif, untuk info stok produk dan komponen (Q40)
 let last = { sub: "", query: new URLSearchParams() };
 export const leave = () => {
   form = null;
@@ -36,12 +45,19 @@ export const leave = () => {
 };
 const reload = () => render(last.sub, last.query);
 
+/** Gudang produksi MO baru: pilihan pada "Gudang Produksi" (tipe operasi manufaktur), atau gudang bawaan bila "Otomatis". */
+const mfgWarehouse = () => whs.find((w) => w.manu_type_id?.[0] === Number(form?.values?.picking_type_id)) ?? defaultWarehouse(whs);
+const mfgLocation = () => mfgWarehouse()?.lot_stock_id?.[0] ?? null;
+
 registerLookup("mo-product", {
-  search: (q) =>
-    searchRead("product.product", [["type", "=", "consu"], ["product_tmpl_id.bom_ids", "!=", false], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name", "uom_id", "product_tmpl_id"], {
+  search: async (q) => {
+    const items = await searchRead("product.product", [["type", "=", "consu"], ["product_tmpl_id.bom_ids", "!=", false], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name", "uom_id", "product_tmpl_id"], {
       limit: 10, order: "name",
-    }),
-  sub: (r) => r.uom_id?.[1] ?? "",
+    });
+    const stock = await storableStock(items.map((i) => i.id), mfgLocation());
+    return items.map((i) => ({ ...i, stock: stock.get(i.id) ?? null }));
+  },
+  sub: (r) => `${r.uom_id?.[1] ?? ""}${r.stock ? ` · ${stockText(r.stock)}` : ""}`,
   isChosen: (input) => form?.product?.display_name === input.value,
   choose: async (input, item) => {
     form.product = item;
@@ -132,6 +148,7 @@ async function renderNew(query) {
     }
   }
   const [users, warehouses] = await Promise.all([referenceUsers(), referenceWarehouses()]);
+  whs = warehouses;
   const v = form.values;
   const bom = form.boms.find((b) => b.id === form.bomId);
   app.innerHTML = `
@@ -151,12 +168,57 @@ async function renderNew(query) {
       ${fieldBlock("Dokumen Sumber", `<input data-mo="origin" value="${esc(v.origin)}" class="${INPUT}">`)}
       ${warehouses.length > 1 ? fieldBlock("Gudang Produksi", `<select data-mo="picking_type_id" data-kind="id" class="${INPUT}">${selectOptions(warehouses.filter((w) => w.manu_type_id).map((w) => ({ id: w.manu_type_id[0], display_name: w.display_name })), v.picking_type_id, "Otomatis (gudang utama)")}</select>`) : ""}
     </section>
+    <div id="mo-stock" class="mt-4"></div>
     <p class="text-xs text-gray-500 mt-3">Komponen dan produk sampingan mengikuti BoM; komponen diambil dari lokasi gudang yang dipilih. Kosongkan Mulai untuk memakai waktu sekarang.</p>
     <div class="flex flex-wrap gap-2 mt-4">
       <button data-action="save-new" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Simpan sebagai Draft</button>
       <button data-action="save-confirm" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan dan Konfirmasi</button>
       <a href="#/mo" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a>
     </div>`;
+  paintMoStock();
+}
+
+/** Panel stok MO baru: persediaan barang jadi dan kebutuhan tiap komponen BoM terhadap stok tersedia di gudang produksi; merah bila kurang (MO tetap bisa dibuat, menunggu stok). */
+let moStockToken = 0;
+let moStockTimer = null;
+async function paintMoStock() {
+  const current = form;
+  const token = ++moStockToken;
+  const box = document.querySelector("#mo-stock");
+  if (!box || !current?.product) {
+    if (box) box.innerHTML = "";
+    return;
+  }
+  const warehouse = mfgWarehouse();
+  const location = mfgLocation();
+  const bom = current.boms.find((b) => b.id === current.bomId);
+  let components = [];
+  if (bom) {
+    current.bomLines ??= {};
+    current.bomLines[bom.id] ??= await searchRead("mrp.bom.line", [["bom_id", "=", bom.id]], ["product_id", "product_qty", "product_uom_id"], { order: "sequence, id" });
+    components = current.bomLines[bom.id];
+  }
+  const stock = await storableStock([current.product.id, ...components.map((c) => c.product_id[0])], location);
+  if (token !== moStockToken || form !== current) return;
+  const qty = Number(current.values.qty) || 0;
+  const whName = warehouse?.display_name ?? "";
+  const finished = stock.get(current.product.id);
+  const rows = components
+    .map((c) => {
+      const need = bom.product_qty ? (c.product_qty * qty) / bom.product_qty : 0;
+      const st = stock.get(c.product_id[0]);
+      const short = st && need > st.available + 1e-9;
+      return `<tr><td class="py-2 px-4 text-sm">${esc(c.product_id[1])}</td>
+        <td class="py-2 px-4 text-sm text-right tabular-nums">${esc(fmtQty(round(need)))} ${esc(c.product_uom_id[1])}</td>
+        <td class="py-2 px-4 text-sm text-right tabular-nums ${short ? "text-rose-600 font-medium" : ""}">${st ? `${esc(fmtQty(st.available))}${Math.abs(st.onhand - st.available) > 1e-9 ? ` <span class="text-xs text-gray-500">(on hand ${esc(fmtQty(st.onhand))})</span>` : ""}` : '<span class="text-gray-400">tanpa pelacakan stok</span>'}</td>
+        <td class="py-2 px-4 text-sm">${short ? `<span class="text-rose-600">Kurang ${esc(fmtQty(round(need - st.available)))}</span>` : st ? '<span class="text-emerald-700">Cukup</span>' : ""}</td></tr>`;
+    })
+    .join("");
+  box.innerHTML = `<section class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
+      <div class="px-4 py-3 border-b border-gray-200 text-sm font-semibold">Stok di ${esc(whName || "gudang produksi")}</div>
+      <div class="px-4 py-3 text-sm text-gray-700 border-b border-gray-100">Barang jadi <b>${esc(current.product.display_name)}</b>${finished ? stockHint(finished, current.product.uom_id?.[1], whName) : '<div class="text-xs mt-1 text-gray-500">Tanpa pelacakan stok.</div>'}</div>
+      ${rows ? `<table class="w-full text-left"><thead class="bg-gray-50"><tr>${["Komponen BoM", "Dibutuhkan", "Tersedia", ""].map((h, i) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${i === 1 || i === 2 ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead><tbody class="divide-y divide-gray-100">${rows}</tbody></table>` : '<div class="px-4 py-3 text-sm text-gray-500">BoM ini belum punya komponen.</div>'}
+    </section>`;
 }
 
 async function createMo() {
@@ -218,6 +280,9 @@ async function renderForm(id, query) {
     referenceUsers(),
     referenceWarehouses(),
   ]);
+  // stok komponen di lokasi sumber MO (Q40): berguna selama komponen belum seluruhnya dicadangkan
+  const showStock = ["draft", ...OPEN].includes(mo.state);
+  const rawStock = showStock ? await storableStock(raw.map((m) => m.product_id[0]), mo.location_src_id?.[0]) : new Map();
   const trackedMoves = raw.filter((m) => m.has_tracking && m.has_tracking !== "none").map((m) => m.id);
   const lotLines = trackedMoves.length ? await searchRead("stock.move.line", [["move_id", "in", trackedMoves]], ["move_id", "lot_id", "quantity"], { order: "id" }) : [];
 
@@ -265,6 +330,7 @@ async function renderForm(id, query) {
         <td class="py-2 px-4 text-sm text-right tabular-nums">${open ? esc(nf.format(m.quantity)) : ""}</td>
         <td class="py-2 px-4 text-sm text-right ${open && !tracked ? "w-36" : ""}">${consumeCell}</td>
         <td class="py-2 px-4 text-sm">${esc(m.product_uom[1])}</td>
+        ${showStock ? stockCell(rawStock.get(m.product_id[0]), m.product_uom_qty, m.quantity) : ""}
         ${mo.state === "done" ? `<td class="py-2 px-4 text-sm text-right tabular-nums">${money(Math.abs(m.value))}</td>` : ""}</tr>`;
     })
     .join("");
@@ -326,7 +392,7 @@ async function renderForm(id, query) {
     ${editableHeader ? `<div class="mt-3"><button data-action="save-header" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Simpan Perubahan</button></div>` : ""}
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 overflow-x-auto">
       <div class="px-4 py-3 border-b border-gray-200 text-sm font-semibold">Komponen</div>
-      <table class="w-full text-left">${head(["Komponen", "Rencana", open ? "Dicadangkan" : "", open ? "Dikonsumsi" : mo.state === "done" ? "Terpakai" : "", "Satuan", ...(mo.state === "done" ? ["Nilai"] : [])], [1, 2, 3, ...(mo.state === "done" ? [5] : [])])}<tbody class="divide-y divide-gray-100">${rawRows || '<tr><td colspan="5" class="py-6 text-center text-sm text-gray-500">Tidak ada komponen.</td></tr>'}</tbody></table>
+      <table class="w-full text-left">${head(["Komponen", "Rencana", open ? "Dicadangkan" : "", open ? "Dikonsumsi" : mo.state === "done" ? "Terpakai" : "", "Satuan", ...(showStock ? ["Stok di Lokasi"] : []), ...(mo.state === "done" ? ["Nilai"] : [])], [1, 2, 3, ...(showStock || mo.state === "done" ? [5] : [])])}<tbody class="divide-y divide-gray-100">${rawRows || '<tr><td colspan="5" class="py-6 text-center text-sm text-gray-500">Tidak ada komponen.</td></tr>'}</tbody></table>
     </section>
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 overflow-x-auto">
       <div class="px-4 py-3 border-b border-gray-200 text-sm font-semibold">Barang Jadi</div>
@@ -624,7 +690,13 @@ export async function onInput(event, el) {
       const bom = form.boms.find((b) => b.id === form.bomId);
       if (bom) form.values.qty = bom.product_qty;
       if (form.id === null) reload();
-    } else form.values[key] = el.dataset.kind === "id" ? (el.value ? Number(el.value) : null) : el.value;
+    } else {
+      form.values[key] = el.dataset.kind === "id" ? (el.value ? Number(el.value) : null) : el.value;
+      if (form.id === null && (key === "qty" || key === "picking_type_id")) {
+        clearTimeout(moStockTimer);
+        moStockTimer = setTimeout(paintMoStock, 250);
+      }
+    }
   } else if (el.dataset.lookup === "mo-product" && form) {
     form.product = null;
     form.boms = [];
