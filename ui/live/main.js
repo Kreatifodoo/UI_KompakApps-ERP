@@ -3,7 +3,7 @@
 //   onSubmit(event, form, kind, button), leave().
 import {
   OdooError, auth, closeLookup, closeModal, ctx, loadSession, modalOpen, postNote, renderConnect, renderSession,
-  resetReferences, searchRead, setReroute, toast, guarded,
+  resetReferences, setReroute, toast, guarded,
 } from "./common.js";
 import {
   closeMobile, goFirstMatch, goLeaf, openMobile, renderSidebar, resolveActive, setSearch, setVersion, toggleBranch,
@@ -129,15 +129,9 @@ async function doRoute() {
   }
 }
 
-/** Versi server Odoo (dibaca dari modul base) untuk footer sidebar. */
+/** Status koneksi untuk footer sidebar. */
 async function showVersion() {
-  try {
-    const [base] = await searchRead("ir.module.module", [["name", "=", "base"]], ["latest_version"], { limit: 1 });
-    const version = String(base?.latest_version ?? "").split(".").slice(0, 2).join(".");
-    setVersion(version ? `Odoo ${version} · terhubung` : "Odoo · terhubung");
-  } catch {
-    setVersion("Odoo · terhubung");
-  }
+  setVersion("Terhubung");
 }
 
 // Permintaan render diserialkan agar hashchange dan pemuatan ulang tidak saling menimpa.

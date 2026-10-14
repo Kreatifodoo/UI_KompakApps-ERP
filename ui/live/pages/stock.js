@@ -1,5 +1,5 @@
 // Laporan Stok (stock.quant): stok per produk dan per lokasi dengan jumlah, terpesan, tersedia, dan nilai (biaya
-// rata-rata). Kartu atas membandingkan nilai stok dengan saldo akun Persediaan di buku besar: Odoo 19 tidak membuat
+// rata-rata). Kartu atas membandingkan nilai stok dengan saldo akun Persediaan di buku besar: Sistem tidak membuat
 // jurnal untuk penyesuaian stok dan scrap pada valuasi perpetual, jadi selisihnya perlu dipantau.
 import { app, call, esc, filterSelect, money, pageHeader, searchBox, searchRead } from "../common.js";
 
@@ -93,7 +93,7 @@ export async function render(sub, query) {
     `<div class="grid md:grid-cols-3 gap-4 mb-4">
       ${card("Nilai stok (barang di gudang)", esc(money(totalValue)), `${groups.size} ${mode === "report" ? "produk" : "lokasi"}, biaya rata-rata`)}
       ${card("Saldo akun Persediaan (buku besar)", esc(money(gl.balance)), "dijurnal saat tagihan dan faktur diposting")}
-      ${card("Selisih stok terhadap buku besar", esc(money(difference)), Math.abs(difference) < 0.5 ? "sama" : "wajar bila ada barang diterima yang belum ditagih, atau penyesuaian stok dan scrap (Odoo 19 tidak menjurnalnya otomatis)", Math.abs(difference) < 0.5 ? "text-emerald-700" : "text-amber-700")}
+      ${card("Selisih stok terhadap buku besar", esc(money(difference)), Math.abs(difference) < 0.5 ? "sama" : "wajar bila ada barang diterima yang belum ditagih, atau penyesuaian stok dan scrap (Sistem tidak menjurnalnya otomatis)", Math.abs(difference) < 0.5 ? "text-emerald-700" : "text-amber-700")}
     </div>
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
       <table class="w-full text-left"><thead class="bg-gray-50 border-b border-gray-200"><tr>${[def.title, "Jumlah", "Terpesan", "Tersedia", "Nilai"]
