@@ -195,6 +195,7 @@ def main():
     check_warehouse_master(api, product)
     check_multi_warehouse(api)
     check_stock_picker(api)
+    check_line_stock(api)
     check_product_smart_buttons(api)
     check_lots(api, vendor)
     check_removal_strategy(api, vendor)
@@ -2412,6 +2413,36 @@ def check_stock_picker(api):
     check(got == expected, f"on hand dan tersedia per produk ({len(expected)} produk) sama dengan hitungan quant langsung")
     other = api.call("stock.quant", "formatted_read_group", domain=[["location_id", "child_of", location], ["product_id", "=", -1]], groupby=["product_id"], aggregates=["quantity:sum"])
     check(other == [], "produk tanpa stok di lokasi itu tidak muncul (dianggap 0)")
+
+
+def check_line_stock(api):
+    """Info stok di baris SO, PO, dan MO (ui/live/stockqty.js): gudang bawaan sama dengan pilihan Odoo, hanya produk berstok yang dihitung, dan stok per gudang tidak tumpang tindih."""
+    step("Info stok di baris SO, PO, dan MO per gudang")
+    warehouses = api.search("stock.warehouse", [], ["display_name", "lot_stock_id", "in_type_id", "manu_type_id", "sequence"], order="sequence, id")
+    check(bool(warehouses) and all("sequence" in w and w["lot_stock_id"] for w in warehouses), "gudang punya sequence dan lokasi stok untuk menentukan gudang bawaan")
+    if not warehouses:
+        return
+    default = min(warehouses, key=lambda w: (w["sequence"], w["id"]))
+    partner = api.search("res.partner", [["customer_rank", ">", 0]], ["id"], limit=1) or api.search("res.partner", [], ["id"], limit=1)
+    [order_id] = api.call("sale.order", "create", vals_list=[{"partner_id": partner[0]["id"]}])
+    chosen = api.call("sale.order", "read", ids=[order_id], fields=["warehouse_id"])[0]["warehouse_id"]
+    api.call("sale.order", "unlink", ids=[order_id])
+    check(chosen and chosen[0] == default["id"], "gudang bawaan pemilih (sequence, lalu id) sama dengan gudang bawaan Sales Order Odoo")
+    storable = api.search("product.product", [["is_storable", "=", True]], ["id"], limit=20)
+    service = api.search("product.product", [["type", "=", "service"]], ["id"], limit=5)
+    ids = [p["id"] for p in storable + service]
+    only = api.search("product.product", [["id", "in", ids], ["is_storable", "=", True]], ["id"], limit=len(ids))
+    check({p["id"] for p in only} == {p["id"] for p in storable}, "jasa dan barang tanpa pelacakan stok tidak ikut dihitung (tanpa info stok di baris)")
+    if len(warehouses) > 1:
+        locations = [w["lot_stock_id"][0] for w in warehouses]
+        total = api.call("stock.quant", "formatted_read_group", domain=[["location_id", "child_of", locations]], groupby=[], aggregates=["quantity:sum"])
+        parts = 0.0
+        for location in locations:
+            rows = api.call("stock.quant", "formatted_read_group", domain=[["location_id", "child_of", location]], groupby=[], aggregates=["quantity:sum"])
+            parts += rows[0]["quantity:sum"] if rows else 0.0
+        check(abs((total[0]["quantity:sum"] if total else 0.0) - parts) < 1e-6, "stok per gudang tidak tumpang tindih: jumlah per gudang sama dengan jumlah semua gudang")
+    bom_lines = api.search("mrp.bom.line", [], ["bom_id", "product_id", "product_qty", "product_uom_id"], limit=5)
+    check(all(line["product_qty"] > 0 and line["product_uom_id"] for line in bom_lines), "baris BoM punya jumlah dan satuan untuk menghitung kebutuhan komponen MO")
 
 
 def check_product_smart_buttons(api):

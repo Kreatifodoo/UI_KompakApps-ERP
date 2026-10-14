@@ -251,7 +251,7 @@ export const resetReferences = () => {
 export const hasGroup = (group) => reference(`group-${group}`, () => call("res.users", "has_group", { ids: [ctx.user.id], group_ext_id: group }).then(Boolean));
 /** Gudang aktif beserta tipe operasi penerimaan, pengiriman, dan produksinya; pemilih gudang di dokumen hanya muncul bila ada lebih dari satu (D42). */
 export const referenceWarehouses = () =>
-  reference("warehouses", () => searchRead("stock.warehouse", [], ["display_name", "code", "lot_stock_id", "in_type_id", "out_type_id", "manu_type_id"], { order: "name" }));
+  reference("warehouses", () => searchRead("stock.warehouse", [], ["display_name", "code", "lot_stock_id", "in_type_id", "out_type_id", "manu_type_id", "sequence"], { order: "name" }));
 /** Strategi pengeluaran stok (product.removal) dan penjelasan singkatnya (D43). */
 export const referenceRemovals = () => reference("removals", () => searchRead("product.removal", [], ["name", "method"], { order: "id" }));
 export const REMOVAL_HELP = {

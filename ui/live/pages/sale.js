@@ -10,6 +10,7 @@ import {
 import { loadTaxNames, productDefaultTaxes, registerTaxes, taxCell, taxChange, taxList } from "../taxpick.js";
 import { analyticCell, distributionChange, preloadAnalytic, readDistribution, registerAnalytic } from "../analyticpick.js";
 import { printButton } from "../print.js";
+import { defaultWarehouse, stockHint, stockText, storableStock } from "../stockqty.js";
 
 const STATES = {
   draft: ["Quotation", "muted"],
@@ -53,6 +54,7 @@ const INVOICE_METHODS = [
 ];
 
 let form = null;
+let whs = []; // gudang aktif, untuk info stok per baris (Q40)
 let last = { sub: "", query: new URLSearchParams() };
 let invoiceDialog = null; // { orderId }
 let rewardDialog = null; // { orderId, rewards, selected, product }
@@ -74,15 +76,40 @@ registerLookup("sale-customer", {
     input.value = item.display_name;
   },
 });
+/** Gudang yang menyuplai dokumen: pilihan pengguna, atau gudang bawaan bila "Otomatis". */
+const docWarehouse = () => whs.find((w) => w.id === Number(form?.warehouse_id)) ?? defaultWarehouse(whs);
+const docStockLocation = () => docWarehouse()?.lot_stock_id?.[0] ?? null;
+
+/** Info stok di bawah produk pada baris; merah bila jumlah melebihi stok tersedia di gudang dokumen. Kosong untuk jasa dan barang tanpa pelacakan stok. */
+const stockLine = (l) => (l.product_id && l.stock ? stockHint(l.stock, l.uom_label, docWarehouse()?.display_name, l.product_uom_qty, true) : "");
+function paintStock(i) {
+  const box = document.querySelector(`#sale-stock-${i}`);
+  if (box && form?.lines[i]) box.innerHTML = stockLine(form.lines[i]);
+}
+/** Ambil ulang stok semua baris untuk gudang yang sedang berlaku (saat form dibuka dan saat gudang diganti). */
+async function refreshStock() {
+  const current = form;
+  if (!current) return;
+  const stock = await storableStock(current.lines.map((l) => l.product_id), docStockLocation());
+  if (form !== current) return;
+  current.lines.forEach((l, i) => {
+    l.stock = l.product_id ? stock.get(l.product_id) ?? null : null;
+    paintStock(i);
+  });
+}
+
 registerLookup("sale-product", {
-  search: (q) =>
-    searchRead(
+  search: async (q) => {
+    const items = await searchRead(
       "product.product",
       [["sale_ok", "=", true], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])],
       ["display_name", "uom_id", "description_sale", "list_price"],
       { limit: 10, order: "name" },
-    ),
-  sub: (r) => `${money(r.list_price)} / ${r.uom_id?.[1] ?? ""}`,
+    );
+    const stock = await storableStock(items.map((i) => i.id), docStockLocation());
+    return items.map((i) => ({ ...i, stock: stock.get(i.id) ?? null }));
+  },
+  sub: (r) => `${money(r.list_price)} / ${r.uom_id?.[1] ?? ""}${r.stock ? ` · ${stockText(r.stock)}` : ""}`,
   isChosen: (input) => {
     const line = form?.lines[Number(input.dataset.line)];
     return Boolean(line?.product_id) && line.productText === input.value;
@@ -92,7 +119,7 @@ registerLookup("sale-product", {
     const line = form.lines[i];
     Object.assign(line, {
       text: item.display_name, productText: item.display_name, product_id: item.id,
-      product_uom_id: item.uom_id[0], uom_label: item.uom_id[1],
+      product_uom_id: item.uom_id[0], uom_label: item.uom_id[1], stock: item.stock ?? null,
     });
     if (!line.name || line.name === line.lastAutoName) line.name = item.description_sale || item.display_name;
     line.lastAutoName = line.name;
@@ -200,7 +227,7 @@ function linesTable() {
   const rows = form.lines
     .map(
       (l, i) => `<tr class="align-top">
-        <td class="py-2 pr-2 min-w-48"><input data-lookup="sale-product" autocomplete="off" role="combobox" aria-autocomplete="list" data-line="${i}" data-field="text" value="${esc(l.text)}" placeholder="Cari atau pilih produk..." class="${INPUT}"></td>
+        <td class="py-2 pr-2 min-w-48"><input data-lookup="sale-product" autocomplete="off" role="combobox" aria-autocomplete="list" data-line="${i}" data-field="text" value="${esc(l.text)}" placeholder="Cari atau pilih produk..." class="${INPUT}"><div id="sale-stock-${i}">${stockLine(l)}</div></td>
         <td class="py-2 px-2 min-w-40"><input data-line="${i}" data-field="name" value="${esc(l.name)}" class="${INPUT}"></td>
         <td class="py-2 px-2 w-24"><input type="number" min="0" step="any" data-line="${i}" data-field="product_uom_qty" value="${esc(l.product_uom_qty)}" class="${INPUT} text-right"></td>
         <td class="py-2 px-2 w-20 text-sm text-gray-600">${esc(l.uom_label || "-")}</td>
@@ -249,6 +276,7 @@ async function renderForm(id) {
   closeLookup();
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
   const [users, terms, pricelists, warehouses] = await Promise.all([referenceUsers(), referenceTerms(), referencePricelists(), referenceWarehouses(), preloadAnalytic()]);
+  whs = warehouses;
   let so = null;
   let lines = [];
   let rewardLines = [];
@@ -370,6 +398,7 @@ async function renderForm(id) {
     ${so ? promotionSection(so, rewardLines, currency, editable) : ""}
     ${so ? chatterHtml("sale.order", so.id) : ""}`;
   if (so) loadMessages("sale.order", so.id);
+  if (editable) refreshStock();
 }
 
 /* ---------- Simpan dan aksi ---------- */
@@ -805,10 +834,19 @@ export async function onClick(event, el) {
 
 export function onInput(event, el) {
   if (!form) return;
-  if (el.dataset.value) form[el.dataset.value] = el.value;
-  else if (el.dataset.line !== undefined) {
+  if (el.dataset.value) {
+    form[el.dataset.value] = el.value;
+    if (el.dataset.value === "warehouse_id") refreshStock();
+  } else if (el.dataset.line !== undefined) {
     form.lines[Number(el.dataset.line)][el.dataset.field] = el.value;
-    if (el.dataset.field === "text") runLookup(el, 250);
+    if (el.dataset.field === "text") {
+      const line = form.lines[Number(el.dataset.line)];
+      if (line.stock && el.value !== line.productText) {
+        line.stock = null; // teks produk diubah: info stok produk lama tidak berlaku lagi
+        paintStock(Number(el.dataset.line));
+      }
+      runLookup(el, 250);
+    } else if (el.dataset.field === "product_uom_qty") paintStock(Number(el.dataset.line));
   } else if (el.dataset.lookup === "sale-customer") {
     form.partner = null;
     runLookup(el, 250);
