@@ -151,19 +151,28 @@ async function invoice(query, from, to) {
 /* ---------- Analytic Report ---------- */
 
 async function analytic(query, from, to) {
-  const domain = [["date", ">=", from], ["date", "<=", to]];
-  const [accounts, income, expense, enabled] = await Promise.all([
+  // hanya akun laba rugi (pendapatan dan biaya): pembelian persediaan masuk akun neraca dan bukan biaya sampai barangnya terjual
+  const domain = [["date", ">=", from], ["date", "<=", to], ["general_account_id.account_type", "in", ["income", "income_other", "expense", "expense_direct_cost", "expense_depreciation", "expense_other"]]];
+  // Tiap rencana analitik punya kolomnya sendiri di baris analitik: `account_id` untuk rencana bawaan (Project) dan `x_plan<id>_id` untuk
+  // rencana lain, jadi setiap kolom dikelompokkan sendiri-sendiri (satu baris bisa tercatat pada beberapa rencana).
+  const fieldMap = await call("account.analytic.line", "fields_get", { attributes: ["relation"] });
+  const columns = Object.entries(fieldMap).filter(([key, f]) => (key === "account_id" || /^x_plan\d+_id$/.test(key)) && f.relation === "account.analytic.account").map(([key]) => key);
+  const group = (column, sign) => call("account.analytic.line", "formatted_read_group", { domain: [...domain, ["amount", sign, 0]], groupby: [column], aggregates: ["__count", "amount:sum"] });
+  const [accounts, enabled, totalIn, totalOut, ...grouped] = await Promise.all([
     searchRead("account.analytic.account", [], ["name", "code", "plan_id"], { order: "name", limit: 500, context: { active_test: false } }),
-    call("account.analytic.line", "formatted_read_group", { domain: [...domain, ["amount", ">", 0]], groupby: ["account_id"], aggregates: ["__count", "amount:sum"] }),
-    call("account.analytic.line", "formatted_read_group", { domain: [...domain, ["amount", "<", 0]], groupby: ["account_id"], aggregates: ["__count", "amount:sum"] }),
     call("res.users", "has_group", { ids: [ctx.user.id], group_ext_id: "analytic.group_analytic_accounting" }),
+    call("account.analytic.line", "formatted_read_group", { domain: [...domain, ["amount", ">", 0]], groupby: [], aggregates: ["amount:sum"] }),
+    call("account.analytic.line", "formatted_read_group", { domain: [...domain, ["amount", "<", 0]], groupby: [], aggregates: ["amount:sum"] }),
+    ...columns.flatMap((column) => [group(column, ">"), group(column, "<")]),
   ]);
   const byAccount = new Map(accounts.map((a) => [a.id, { name: a.code ? `[${a.code}] ${a.name}` : a.name, plan: a.plan_id?.[1] ?? "", income: 0, expense: 0, lines: 0 }]));
-  for (const r of income) if (byAccount.has(r.account_id?.[0])) Object.assign(byAccount.get(r.account_id[0]), { income: r["amount:sum"], lines: byAccount.get(r.account_id[0]).lines + r.__count });
-  for (const r of expense) if (byAccount.has(r.account_id?.[0])) Object.assign(byAccount.get(r.account_id[0]), { expense: -r["amount:sum"], lines: byAccount.get(r.account_id[0]).lines + r.__count });
-  const list = [...byAccount.values()].filter((a) => a.lines).sort((a, b) => b.income - b.expense - (a.income - a.expense));
-  const totalIncome = list.reduce((s, a) => s + a.income, 0);
-  const totalExpense = list.reduce((s, a) => s + a.expense, 0);
+  columns.forEach((column, k) => {
+    for (const r of grouped[2 * k]) if (byAccount.has(r[column]?.[0])) Object.assign(byAccount.get(r[column][0]), { income: r["amount:sum"], lines: byAccount.get(r[column][0]).lines + r.__count });
+    for (const r of grouped[2 * k + 1]) if (byAccount.has(r[column]?.[0])) Object.assign(byAccount.get(r[column][0]), { expense: -r["amount:sum"], lines: byAccount.get(r[column][0]).lines + r.__count });
+  });
+  const list = [...byAccount.values()].filter((a) => a.lines).sort((a, b) => a.plan.localeCompare(b.plan) || b.income - b.expense - (a.income - a.expense));
+  const totalIncome = totalIn[0]?.["amount:sum"] || 0;
+  const totalExpense = -(totalOut[0]?.["amount:sum"] || 0);
   exportRows = [["Akun Analitik", "Rencana", "Pendapatan", "Biaya", "Saldo"], ...list.map((a) => [a.name, a.plan, a.income, a.expense, a.income - a.expense])];
   return {
     html:
@@ -175,7 +184,7 @@ async function analytic(query, from, to) {
             <td class="py-2 px-4 text-sm text-right tabular-nums">${esc(money(a.income))}</td><td class="py-2 px-4 text-sm text-right tabular-nums">${esc(money(a.expense))}</td><td class="py-2 px-4 text-sm text-right tabular-nums font-medium ${a.income - a.expense < 0 ? "text-rose-700" : ""}">${esc(money(a.income - a.expense))}</td></tr>`)
           .join("") || '<tr><td colspan="6" class="py-8 text-center text-sm text-gray-500">Belum ada baris analitik pada rentang ini.</td></tr>'
       }</tbody></table>`) +
-      '<p class="text-xs text-gray-500">Pendapatan adalah baris analitik bernilai positif dan biaya yang bernilai negatif, dari faktur, tagihan, dan entri jurnal yang diberi distribusi analitik.</p>',
+      '<p class="text-xs text-gray-500">Hanya baris pada akun laba rugi: pendapatan adalah baris analitik bernilai positif dan biaya yang bernilai negatif, dari faktur, tagihan, dan entri jurnal yang diberi distribusi analitik (pembelian persediaan masuk akun neraca dan belum dihitung sebagai biaya). Satu baris bisa tercatat pada akun dari beberapa rencana (mis. Departemen dan Lini Produk), jadi angka per akun tidak dijumlahkan lintas rencana; kartu di atas memakai total asli.</p>',
   };
 }
 

@@ -3,7 +3,7 @@
 // menjalankan compute(), menampilkan hasilnya, lalu menghapus instance. Angka bisa diklik untuk melihat
 // item jurnal pembentuknya (drilldown MIS).
 import {
-  INPUT, app, call, closeModal, ctx, dateText, esc, guarded, openModal, pageHeader, readOne, searchRead, toast,
+  INPUT, app, call, closeModal, ctx, dateText, esc, guarded, openModal, pageHeader, readOne, searchRead, selectOptions, toast,
 } from "../common.js";
 
 const REPORTS = {
@@ -129,9 +129,13 @@ async function renderReport(sub, def, query) {
     app.innerHTML = '<p class="text-sm text-rose-600">Template laporan belum dimuat. Perbarui modul nusara_base di Odoo.</p>';
     return;
   }
+  // saring per akun analitik: hanya item jurnal yang distribusi analitiknya memuat akun itu (sama seperti Budget Report)
+  const analyticId = Number(query.get("analytic")) || null;
+  const analytics = await searchRead("account.analytic.account", [], ["display_name"], { order: "name", limit: 300, context: { active_test: false } });
   const [instanceId] = await call("mis.report.instance", "create", {
     vals_list: [{
       name: `${def.title} (UI)`, report_id: template.res_id, temporary: true, target_move: moves,
+      analytic_domain: analyticId ? JSON.stringify([["analytic_distribution", "in", [analyticId]]]) : "[]",
       period_ids: p.list.map((period, i) => [0, 0, { name: period.label, sequence: i + 1, mode: "fix", manual_date_from: period.from, manual_date_to: period.to }]),
     }],
   });
@@ -180,6 +184,7 @@ async function renderReport(sub, def, query) {
         ${def.mode === "range" ? `<option value="prev" ${p.compare === "prev" ? "selected" : ""}>Periode sebelumnya</option>` : ""}</select></label>`}
       <label class="text-xs font-medium text-gray-500 uppercase">Entri<select data-period="moves" class="${INPUT} mt-1 w-48">
         <option value="posted" ${moves === "posted" ? "selected" : ""}>Hanya terposting</option><option value="all" ${moves === "all" ? "selected" : ""}>Termasuk draft</option></select></label>
+      <label class="text-xs font-medium text-gray-500 uppercase">Akun analitik<select data-period="analytic" class="${INPUT} mt-1 w-56">${selectOptions(analytics, analyticId, "Semua akun analitik")}</select></label>
       <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Tampilkan</button>
       <button type="button" data-action="csv" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Unduh CSV</button>
       <button type="button" data-action="print" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cetak</button>
@@ -188,7 +193,8 @@ async function renderReport(sub, def, query) {
   app.innerHTML = `
     <div class="text-sm text-gray-500 mb-2"><a href="#/report" class="hover:text-indigo-600">Laporan Keuangan</a> / ${esc(def.title)}</div>
     <h1 class="text-2xl font-bold text-gray-900">${esc(def.title)}</h1>
-    <p class="text-sm text-gray-500 mb-4">${esc(ctx.company.name ?? "")}${moves === "all" ? " · termasuk entri draft" : ""}</p>
+    <p class="text-sm text-gray-500 mb-4">${esc(ctx.company.name ?? "")}${moves === "all" ? " · termasuk entri draft" : ""}${analyticId ? ` · akun analitik: ${esc(analytics.find((a) => a.id === analyticId)?.display_name ?? analyticId)}` : ""}</p>
+    ${analyticId && ["neraca", "arus-kas"].includes(sub) ? '<p class="mb-3 text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">Akun neraca jarang memakai akun analitik, jadi Neraca dan Arus Kas yang disaring per analitik hanya memuat baris yang diberi analitik dan tidak akan seimbang. Pakai Laba Rugi, Neraca Saldo, atau Buku Besar untuk analisis per analitik.</p>' : ""}
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-4">${controls}</section>
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
       <table class="w-full text-left" id="report-table"><thead class="bg-gray-50 border-b border-gray-200"><tr>${head1}</tr>${head2}</thead>
