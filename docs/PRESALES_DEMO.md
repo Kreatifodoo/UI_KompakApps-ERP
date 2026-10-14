@@ -6,7 +6,7 @@ Data contoh bertema PROLINE (produk diagnostik: instrumen, reagen, strip urin, t
 docker compose run --rm -T --no-deps odoo odoo shell -d nusara --no-http < scripts/seed_presales.py
 ```
 
-Skrip juga mengaktifkan fitur Storage Locations (transfer antar rak) dan Leads di CRM bila belum aktif. Buka UI di http://127.0.0.1:8080 dan masuk dengan API key.
+Jalankan lebih dulu `scripts/setup_tax_id.py` (pajak Indonesia: VAT Out 11%, VAT In 11%, PPh 23 -2%; lihat bagian Pajak). Skrip seed juga mengaktifkan fitur Storage Locations (transfer antar rak) dan Leads di CRM bila belum aktif. Buka UI di http://127.0.0.1:8080 dan masuk dengan API key.
 
 ## Cerita demo (sekitar 15 menit)
 
@@ -28,5 +28,9 @@ Prolog: "Kami distributor dan produsen alat diagnostik. Instrumen kami beli dari
 | 12 | Inventory Transfer | Inventory > Transfer Internal | Pindah barang ke Rak Instrumen dan Rak Bahan Baku (selesai), WH/INT/00004 ke Rak Reagen dan Kit berstatus Siap; buat transfer baru untuk melihat stok tersedia di lokasi asal |
 | 13 | Manufacturing | Manufacture > Manufacturing Order | MO strip urin 200 botol selesai, MO kit reagen glukosa 60 selesai (komponen terpotong otomatis, biaya masuk ke nilai persediaan), MO strip 300 botol berjalan |
 | 14 | Laporan | Inventory > Report > Inventory Valuation, Accounting > Reporting | Nilai persediaan per tanggal, laba rugi, neraca, aged receivable dan payable |
+
+## Pajak (lokalisasi Indonesia)
+
+`scripts/setup_tax_id.py` menyiapkan **VAT Out 11%** (PPN keluaran, penjualan), **VAT In 11%** (PPN masukan, pembelian), dan **PPh 23 -2%** (pemotongan; versi pembelian memakai akun Tax Payable PPh 23, versi penjualan "dipotong pelanggan" memakai Prepaid Tax PPh 23). VAT Out dan VAT In menjadi pajak bawaan perusahaan dan produk; dua pajak "12% (Non-Luxury Good)" lama diarsipkan. Pada demo ada contoh nyata: tagihan jasa kalibrasi dari CV Teknisi Kalibrasi Mandiri (BILL/2026/10/0009) dengan dua pajak pada satu baris, VAT In 11% dan PPh 23 -2%, sehingga yang dibayar Rp4.905.000 dari dasar Rp4.500.000. Sales Order S00007 juga memuat jasa instalasi dan pelatihan instrumen (kebijakan faktur: jumlah dipesan), sehingga fakturnya INV/2026/00004 bernilai Rp87.412.500.
 
 Tips: lakukan satu aksi langsung saat demo (validasi WH/OUT/00008, atau Buat faktur dari S00009 setelah pengiriman) agar terlihat alurnya hidup. Nomor dokumen di atas berasal dari data yang dibuat pada 13 Okt 2026; pada basis data lain nomornya mengikuti urutan Odoo.
