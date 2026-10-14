@@ -7,6 +7,7 @@ import {
   selectOptions, statTiles, statusbar, table, toast, toInputDateTime, actionBar,
 } from "../common.js";
 import { printButton } from "../print.js";
+import { productionJournals } from "../stockjournal.js";
 
 const STATES = {
   draft: ["Draft", "muted"],
@@ -291,14 +292,7 @@ async function renderForm(id, query) {
     .join("");
 
   const componentsLeft = open && mo.reservation_state !== "assigned";
-  const valuation = mo.state === "done"
-    ? (() => {
-        const cost = raw.reduce((s, m) => s + Math.abs(m.value), 0);
-        const out = finished.reduce((s, m) => s + Math.abs(m.value), 0);
-        return `<p class="mt-3 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3">Komponen terpakai bernilai ${money(cost)}; barang jadi dan produk sampingan masuk gudang bernilai ${money(out)}.
-          Nilainya tercatat pada pergerakan stok. Odoo tidak membuat jurnal saat produksi; jurnal persediaan tercipta saat faktur dan tagihan diposting.</p>`;
-      })()
-    : "";
+  const valuation = productionJournals(mo, raw, finished);
   const tracking = open && mo.product_tracking !== "none"
     ? `<div class="mt-4 pt-4 border-t border-gray-100">${mo.product_tracking === "serial"
         ? fieldBlock("Nomor Seri Barang Jadi (satu per baris, sebanyak jumlah diproduksi)", `<textarea data-prod="serials" rows="4" class="${INPUT} font-mono">${esc(prod.serials)}</textarea>`)

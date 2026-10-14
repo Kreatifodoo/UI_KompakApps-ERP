@@ -6,6 +6,7 @@ import {
   actionBar, app, badge, call, cell, chatterHtml, closeModal, dateText, dateTimeText, esc, fieldBlock, filterSelect, fromInputDateTime, guarded, loadMessages,
   openModal, money, pageHeader, readOne, readonlyValue, rowLink, searchRead, statTiles, statusbar, table, toast, toInputDateTime, INPUT,
 } from "../common.js";
+import { deliveryJournals, receiptJournals } from "../stockjournal.js";
 import { printButton } from "../print.js";
 
 const STATES = {
@@ -155,6 +156,8 @@ export function createPickingPage(config) {
       { order: "id" },
     );
     const chain = await chainSteps(id, moves);
+    // jurnal sungguhan dari tagihan vendor (penerimaan) atau faktur pelanggan (pengiriman) yang memuat nilai stok ini
+    const journal = pk.state === "done" && config.code === "incoming" ? await receiptJournals(pk, moves) : pk.state === "done" && config.code === "outgoing" ? await deliveryJournals(pk, moves) : "";
     edits = new Map();
     await loadLots(pk);
     last.state = pk.state;
@@ -218,6 +221,7 @@ export function createPickingPage(config) {
       </section>
       ${chain}
       ${valued && config.valuedNote ? `<p class="mt-3 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3">${config.valuedNote(pk)}</p>` : ""}
+      ${journal}
       ${chatterHtml("stock.picking", pk.id)}`;
     loadMessages("stock.picking", pk.id);
   }
