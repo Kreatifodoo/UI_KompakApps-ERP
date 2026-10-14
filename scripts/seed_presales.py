@@ -83,7 +83,7 @@ def product(code, name, price, cost, vendor=None, vendor_price=None):
     return p
 
 
-jasa_install = Product.create({"name": "Jasa Instalasi dan Pelatihan Instrumen", "default_code": "PRL-JASA-INST", "type": "service", "categ_id": goods.id, "list_price": 7_500_000, "standard_price": 0, "taxes_id": [Command.set(sale_tax.ids)], "sale_ok": True, "purchase_ok": False})
+jasa_install = Product.create({"name": "Jasa Instalasi dan Pelatihan Instrumen", "default_code": "PRL-JASA-INST", "type": "service", "invoice_policy": "order", "categ_id": goods.id, "list_price": 7_500_000, "standard_price": 0, "taxes_id": [Command.set(sale_tax.ids)], "sale_ok": True, "purchase_ok": False})
 jasa_kalibrasi = Product.create({"name": "Jasa kalibrasi dan pemeliharaan instrumen", "default_code": "PRL-JASA-KAL", "type": "service", "categ_id": goods.id, "list_price": 0, "standard_price": 4_500_000, "supplier_taxes_id": [Command.set((buy_tax | pph23).ids)], "sale_ok": False, "purchase_ok": True})
 xi800 = product("PRL-XI800", "PROLINE Xi800 Automatic Chemiluminescence Analyzer", 485_000_000, 372_000_000, v_inst)
 ua120 = product("PRL-UA120", "PROLINE UA120 Urine Analyzer", 38_500_000, 27_500_000, v_inst)
