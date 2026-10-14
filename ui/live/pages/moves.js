@@ -61,7 +61,7 @@ export async function render(sub, query) {
       body,
       loss ? "Belum ada penyesuaian stok atau scrap." : "Belum ada pergerakan stok.",
     ) +
-    `<p class="text-xs text-gray-500 mt-3">Hanya pergerakan yang sudah selesai.${rows.length >= 200 ? " Menampilkan 200 terbaru; persempit dengan tanggal." : ""}${loss ? " Odoo 19 mencatat nilainya pada pergerakan stok tetapi tidak membuat jurnal otomatis." : ""}</p>`;
+    `<p class="text-xs text-gray-500 mt-3">Hanya pergerakan yang sudah selesai.${rows.length >= 200 ? " Menampilkan 200 terbaru; persempit dengan tanggal." : ""}${loss ? " Sistem mencatat nilainya pada pergerakan stok tetapi tidak membuat jurnal otomatis." : ""}</p>`;
 }
 
 export function onChange(event, el) {

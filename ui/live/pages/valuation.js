@@ -1,5 +1,5 @@
 // Inventory Valuation (D46): nilai persediaan per tanggal (as of), mutasi periode, rincian pergerakan bernilai, dan ringkasan per akun
-// persediaan terhadap buku besar. Odoo 19 tidak lagi punya stock.valuation.layer; nilai tercatat pada stock.move (`value`, `is_in`,
+// persediaan terhadap buku besar. Sistem tidak lagi punya stock.valuation.layer; nilai tercatat pada stock.move (`value`, `is_in`,
 // `is_out`) dan nilai pada tanggal lampau dihitung Odoo dengan memutar ulang pergerakan selesai (konteks `to_date` pada product.product:
 // qty_available, avg_cost, total_value). Halaman ini memakai hitungan Odoo itu supaya hasilnya sama dengan laporan Stock Valuation bawaan.
 import { INPUT, app, call, dateText, dateTimeText, esc, filterSelect, money, pageHeader, referenceCategories, searchBox, searchRead, today } from "../common.js";
@@ -478,7 +478,7 @@ async function viewMoves(query) {
         ${card("Bersih", esc(money(net)), `${esc(dateText(from))} s.d. ${esc(dateText(to))}`, net < 0 ? "text-rose-700" : "")}
       </div>` +
       tableHtml(m) +
-      `<p class="text-xs text-gray-500 mt-3">Hanya pergerakan selesai yang masuk atau keluar dari persediaan perusahaan (nilai positif = masuk, negatif = keluar). Biaya satuan = nilai pergerakan dibagi jumlahnya. Kolom Jurnal berisi jurnal valuasi pergerakan itu bila ada, atau tagihan dan faktur terposting dari baris PO dan SO-nya; penerimaan, penyesuaian, dan scrap umumnya belum dijurnal (Odoo 19 menjurnal persediaan saat tagihan dan faktur diposting).${moves.length >= MOVE_LIMIT ? ` Menampilkan ${MOVE_LIMIT} terbaru; persempit dengan tanggal atau pencarian (total di atas mencakup semua).` : ""}</p>`,
+      `<p class="text-xs text-gray-500 mt-3">Hanya pergerakan selesai yang masuk atau keluar dari persediaan perusahaan (nilai positif = masuk, negatif = keluar). Biaya satuan = nilai pergerakan dibagi jumlahnya. Kolom Jurnal berisi jurnal valuasi pergerakan itu bila ada, atau tagihan dan faktur terposting dari baris PO dan SO-nya; penerimaan, penyesuaian, dan scrap umumnya belum dijurnal (jurnal persediaan terbentuk saat tagihan dan faktur diposting).${moves.length >= MOVE_LIMIT ? ` Menampilkan ${MOVE_LIMIT} terbaru; persempit dengan tanggal atau pencarian (total di atas mencakup semua).` : ""}</p>`,
   };
 }
 
@@ -539,7 +539,7 @@ async function viewAccount(query) {
     empty: "Belum ada kategori dengan akun persediaan.",
     subtitle: `Per ${dateText(date)}`,
     meta: [["Tanggal", dateText(date)]],
-    note: "Selisih wajar bila ada barang diterima yang belum ditagih (Odoo menjurnal persediaan saat tagihan diposting) atau penyesuaian stok dan scrap (Odoo 19 tidak menjurnalnya otomatis).",
+    note: "Selisih wajar bila ada barang diterima yang belum ditagih (Odoo menjurnal persediaan saat tagihan diposting) atau penyesuaian stok dan scrap (Sistem tidak menjurnalnya otomatis).",
     file: `inventory-valuation-akun-${date}`,
   };
   const difference = stockTotal - glTotal;
@@ -554,7 +554,7 @@ async function viewAccount(query) {
       </div>` +
       tableHtml(m) +
       `<div class="text-xs text-gray-600 mt-3 space-y-1">
-        <p><b>Mengapa selisih terjadi.</b> (1) Barang yang sudah diterima tetapi belum ditagih sudah masuk nilai stok, sedangkan jurnalnya baru terbentuk saat tagihan vendor diposting. (2) Penyesuaian stok dan scrap hanya tercatat pada nilai pergerakan stok; Odoo 19 tidak membuat jurnalnya pada valuasi perpetual ini. (3) Jurnal manual atau koreksi langsung pada akun persediaan ikut dalam saldo buku besar. (4) Selisih pembulatan biaya rata-rata.</p>
+        <p><b>Mengapa selisih terjadi.</b> (1) Barang yang sudah diterima tetapi belum ditagih sudah masuk nilai stok, sedangkan jurnalnya baru terbentuk saat tagihan vendor diposting. (2) Penyesuaian stok dan scrap hanya tercatat pada nilai pergerakan stok; Sistem tidak membuat jurnalnya pada valuasi perpetual ini. (3) Jurnal manual atau koreksi langsung pada akun persediaan ikut dalam saldo buku besar. (4) Selisih pembulatan biaya rata-rata.</p>
         <p>Telusuri pergerakannya di ${link(`#/valuation/moves?state=adjust&from=2000-01-01&to=${date}`, "Rincian Pergerakan (penyesuaian dan scrap)", "text-indigo-700 underline")}. Klik kategori untuk melihat nilai per produk pada tanggal ini.</p>
       </div>`,
   };
