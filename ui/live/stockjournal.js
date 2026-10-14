@@ -63,4 +63,3 @@ export function productionJournals(mo, raw, finished) {
       : '<p class="mt-3 text-sm text-gray-500">Nilai muncul setelah produksi diselesaikan.</p>',
   );
 }
-
