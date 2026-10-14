@@ -1,7 +1,7 @@
 // Buku Besar (per akun) dan Buku Besar Pembantu / Partner Ledger (per mitra): item jurnal terposting pada rentang
 // tanggal, dengan saldo awal dan saldo berjalan. Saldo awal dihitung Odoo (formatted_read_group), bukan dijumlah di browser.
 import {
-  INPUT, app, call, dateText, esc, pageHeader, registerLookup, runLookup, searchAccounts, searchRead, ACCOUNT_TYPE_LABELS,
+  INPUT, app, call, dateText, esc, pageHeader, registerLookup, runLookup, searchAccounts, searchRead, selectOptions, ACCOUNT_TYPE_LABELS,
 } from "../common.js";
 
 const MODES = {
@@ -55,10 +55,13 @@ export async function render(sub, query) {
   }
   if (!subjectId) chosen = null;
 
+  const analyticId = Number(query.get("analytic")) || null;
+  const analytics = await searchRead("account.analytic.account", [], ["display_name"], { order: "name", limit: 300, context: { active_test: false } });
   let body = '<p class="text-sm text-gray-500 mt-4">Pilih akun atau mitra, lalu tekan Tampilkan.</p>';
   if (chosen) {
     const base = [["parent_state", "=", "posted"], [mode.field, "=", chosen.id]];
     if (mode.field === "partner_id") base.push(["account_id.account_type", "in", ["asset_receivable", "liability_payable"]]);
+    if (analyticId) base.push(["analytic_distribution", "in", [analyticId]]);
     const [opening] = await call("account.move.line", "formatted_read_group", {
       domain: [...base, ["date", "<", from]], groupby: [], aggregates: ["balance:sum"],
     });
@@ -98,6 +101,7 @@ export async function render(sub, query) {
         <label class="text-xs font-medium text-gray-500 uppercase">${mode.subject}<input data-lookup="${mode.lookup}" autocomplete="off" role="combobox" aria-autocomplete="list" value="${esc(chosen?.display_name ?? "")}" placeholder="${mode.placeholder}" class="${INPUT} mt-1 w-80"></label>
         <label class="text-xs font-medium text-gray-500 uppercase">Dari<input type="date" data-ledger="from" value="${esc(from)}" class="${INPUT} mt-1 w-44"></label>
         <label class="text-xs font-medium text-gray-500 uppercase">Sampai<input type="date" data-ledger="to" value="${esc(to)}" class="${INPUT} mt-1 w-44"></label>
+        <label class="text-xs font-medium text-gray-500 uppercase">Akun analitik<select data-ledger="analytic" class="${INPUT} mt-1 w-56">${selectOptions(analytics, analyticId, "Semua akun analitik")}</select></label>
         <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Tampilkan</button>
       </form></section>${body}
     <p class="text-xs text-gray-500 mt-3">Hanya entri terposting. Saldo = debit dikurangi kredit; untuk hutang dan akun berkarakter kredit, saldo bertanda kurung berarti saldo kredit.</p>`;
