@@ -106,7 +106,7 @@ function openPartner(button, id) {
     .join("");
   openModal(
     group.name,
-    `<div class="overflow-x-auto max-h-[60vh] overflow-y-auto"><table class="w-full text-left"><thead class="bg-gray-50"><tr>${[kind.doc, "Tanggal", "Jatuh Tempo", "Hari", "Sisa"]
+    `<div class="overflow-x-auto max-h-[60vh] overflow-y-auto"><table class="w-full text-left" data-list="on"><thead class="bg-gray-50"><tr>${[kind.doc, "Tanggal", "Jatuh Tempo", "Hari", "Sisa"]
       .map((h, i) => `<th class="py-2 px-3 text-xs font-semibold text-gray-600 uppercase ${i > 2 ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
       <tbody class="divide-y divide-gray-100">${rows}</tbody></table></div>`,
     '<button data-action="modal-close" class="px-4 py-2 rounded-lg text-sm font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50">Tutup</button>',

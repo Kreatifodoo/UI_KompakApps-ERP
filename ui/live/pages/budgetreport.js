@@ -210,7 +210,7 @@ async function drill(button, rowIndex, colIndex) {
       .map((i) => `<tr><td class="py-2 px-3 text-sm">${esc(i.account_id[1])}</td><td class="py-2 px-3 text-sm whitespace-nowrap">${esc(dateText(i.date_from))} s.d. ${esc(dateText(i.date_to))}</td><td class="py-2 px-3 text-sm">${esc(i.name || "")}</td>
         <td class="py-2 px-3 text-sm text-right tabular-nums">${i.debit ? num(i.debit) : ""}</td><td class="py-2 px-3 text-sm text-right tabular-nums">${i.credit ? num(i.credit) : ""}</td></tr>`)
       .join("");
-    table = `<table class="w-full text-left">${th(["Akun", "Periode baris", "Label", "Debit", "Kredit"], 3)}<tbody class="divide-y divide-gray-100">${rows || '<tr><td colspan="5" class="py-6 text-center text-sm text-gray-500">Tidak ada baris anggaran.</td></tr>'}</tbody></table>
+    table = `<table class="w-full text-left" data-list="on">${th(["Akun", "Periode baris", "Label", "Debit", "Kredit"], 3)}<tbody class="divide-y divide-gray-100">${rows || '<tr><td colspan="5" class="py-6 text-center text-sm text-gray-500">Tidak ada baris anggaran.</td></tr>'}</tbody></table>
       <p class="text-xs text-gray-500 mt-2">Angka pada laporan adalah bagian baris yang beririsan dengan periode laporan (dibagi per hari).</p>`;
   } else {
     const rows = shown.lines
@@ -218,7 +218,7 @@ async function drill(button, rowIndex, colIndex) {
         <td class="py-2 px-3 text-sm">${esc(l.account_id[1])}</td><td class="py-2 px-3 text-sm">${esc(l.name || "")}</td><td class="py-2 px-3 text-sm">${esc(l.partner_id?.[1] ?? "")}</td>
         <td class="py-2 px-3 text-sm text-right tabular-nums">${l.debit ? num(l.debit) : ""}</td><td class="py-2 px-3 text-sm text-right tabular-nums">${l.credit ? num(l.credit) : ""}</td></tr>`)
       .join("");
-    table = `<table class="w-full text-left">${th(["Tanggal", "Jurnal", "Akun", "Label", "Mitra", "Debit", "Kredit"], 5)}<tbody class="divide-y divide-gray-100">${rows || '<tr><td colspan="7" class="py-6 text-center text-sm text-gray-500">Tidak ada item jurnal.</td></tr>'}</tbody></table>`;
+    table = `<table class="w-full text-left" data-list="on">${th(["Tanggal", "Jurnal", "Akun", "Label", "Mitra", "Debit", "Kredit"], 5)}<tbody class="divide-y divide-gray-100">${rows || '<tr><td colspan="7" class="py-6 text-center text-sm text-gray-500">Tidak ada item jurnal.</td></tr>'}</tbody></table>`;
   }
   openModal(
     title,

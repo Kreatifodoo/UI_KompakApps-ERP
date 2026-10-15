@@ -64,7 +64,7 @@ export async function render(sub, query) {
        <button data-action="apply-all" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Terapkan Semua yang Dihitung</button>`,
     ) +
     `<div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
-      <table class="w-full text-left"><thead class="bg-gray-50 border-b border-gray-200"><tr>${["Produk", "Lokasi", "Lot/Serial", "Tercatat", "Hasil Hitung", "Selisih", ""]
+      <table class="w-full text-left" data-list="on"><thead class="bg-gray-50 border-b border-gray-200"><tr>${["Produk", "Lokasi", "Lot/Serial", "Tercatat", "Hasil Hitung", "Selisih", ""]
         .map((h, i) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${[3, 4, 5].includes(i) ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
         <tbody class="divide-y divide-gray-100">${rows || '<tr><td colspan="7" class="py-10 text-center text-sm text-gray-500">Belum ada stok yang bisa dihitung. Tambahkan hitungan baru di bawah.</td></tr>'}</tbody></table>
     </div>

@@ -125,14 +125,14 @@ export function statTiles(tiles) {
     .join("");
 }
 
-/** Tabel sederhana; headers = [{ label, right }]. */
+/** Tabel sederhana; headers = [{ label, right }]. Tabel daftar ini otomatis mendapat bilah Kelompokkan dan Filter (listtools.js). */
 export function table(headers, rowsHtml, emptyText) {
   const head = headers
     .map((h) => `<th class="py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider ${h.right ? "text-right" : ""}">${esc(h.label)}</th>`)
     .join("");
   const body = rowsHtml || `<tr><td colspan="${headers.length}" class="py-10 text-center text-sm text-gray-500">${esc(emptyText)}</td></tr>`;
   return `<div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
-    <table class="w-full text-left"><thead class="bg-gray-50 border-b border-gray-200"><tr>${head}</tr></thead>
+    <table class="w-full text-left" data-list="on"><thead class="bg-gray-50 border-b border-gray-200"><tr>${head}</tr></thead>
     <tbody class="divide-y divide-gray-200">${body}</tbody></table></div>`;
 }
 
