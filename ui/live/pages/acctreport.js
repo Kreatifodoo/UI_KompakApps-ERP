@@ -86,7 +86,7 @@ async function taxDetail(id, name, sign) {
   });
   openModal(
     `Rincian ${name}`,
-    `<div class="overflow-x-auto"><table class="w-full text-left">${head(["Tanggal", "Dokumen", "Mitra", "DPP", "Pajak"], [3, 4])}<tbody class="divide-y divide-gray-100">${lines
+    `<div class="overflow-x-auto"><table class="w-full text-left" data-list="on">${head(["Tanggal", "Dokumen", "Mitra", "DPP", "Pajak"], [3, 4])}<tbody class="divide-y divide-gray-100">${lines
       .map((l) => `<tr><td class="py-2 px-3 text-sm">${esc(dateText(l.date))}</td><td class="py-2 px-3 text-sm">${esc(l.move_id[1])}</td><td class="py-2 px-3 text-sm">${esc(l.partner_id?.[1] ?? "-")}</td><td class="py-2 px-3 text-sm text-right tabular-nums">${esc(money(sign * l.tax_base_amount))}</td><td class="py-2 px-3 text-sm text-right tabular-nums">${esc(money(sign * l.balance))}</td></tr>`)
       .join("")}</tbody></table></div>${lines.length >= 200 ? '<p class="text-xs text-gray-500 mt-2">Menampilkan 200 terbaru.</p>' : ""}`,
     '<button data-action="modal-close" class="px-4 py-2 rounded-lg text-sm font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50">Tutup</button>',

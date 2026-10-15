@@ -85,7 +85,7 @@ export async function render(sub, query) {
     const debit = lines.reduce((s, l) => s + l.debit, 0);
     const credit = lines.reduce((s, l) => s + l.credit, 0);
     body = `<div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto mt-4">
-      <table class="w-full text-left"><thead class="bg-gray-50 border-b border-gray-200"><tr>${["Tanggal", "Jurnal", mode.field === "partner_id" ? "Akun" : "Mitra", "Label", "Debit", "Kredit", "Saldo"]
+      <table class="w-full text-left" data-list="on"><thead class="bg-gray-50 border-b border-gray-200"><tr>${["Tanggal", "Jurnal", mode.field === "partner_id" ? "Akun" : "Mitra", "Label", "Debit", "Kredit", "Saldo"]
         .map((h, i) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${i > 3 ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
         <tbody class="divide-y divide-gray-100">
           <tr class="bg-gray-50 font-medium"><td class="py-2 px-4 text-sm" colspan="6">Saldo awal (sebelum ${esc(dateText(from))})</td><td class="py-2 px-4 text-sm text-right tabular-nums">${num(start)}</td></tr>

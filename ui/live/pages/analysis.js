@@ -468,7 +468,7 @@ const detailExport = (columns, rows) => [columns.map((c) => c.label), ...rows.ma
 const detailTable = (columns, rows, heading, empty) => {
   const body = rows.map((r) => `<tr>${columns.map((c) => `<td class="py-2 px-4 text-sm ${c.right ? "text-right tabular-nums" : ""}">${c.raw ? c.value(r) : esc(c.value(r))}</td>`).join("")}</tr>`).join("");
   return `<section class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto"><div class="px-4 py-3 border-b border-gray-200 text-sm font-semibold">${heading}</div>
-    <table class="w-full text-left"><thead class="bg-gray-50"><tr>${columns.map((c) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${c.right ? "text-right" : ""}">${esc(c.label)}</th>`).join("")}</tr></thead>
+    <table class="w-full text-left" data-list="on"><thead class="bg-gray-50"><tr>${columns.map((c) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${c.right ? "text-right" : ""}">${esc(c.label)}</th>`).join("")}</tr></thead>
       <tbody class="divide-y divide-gray-100">${body || `<tr><td colspan="${columns.length}" class="py-8 text-center text-sm text-gray-500">${esc(empty)}</td></tr>`}</tbody></table></section>`;
 };
 
