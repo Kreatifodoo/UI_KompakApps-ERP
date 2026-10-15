@@ -1,8 +1,8 @@
 // POS Session (pos.session): daftar sesi, ringkasan pembayaran per metode, kas (awal, diterima, diharapkan, dihitung, selisih),
 // pesanan, tutup sesi dengan hitung kas, dan jurnal yang tercipta saat sesi ditutup (penjualan, pembayaran, selisih kas).
 import {
-  INPUT, app, badge, button, call, cell, closeModal, ctx, dateTimeText, esc, fieldBlock, filterSelect, guarded, journalHtml, loadJournalItems, money, openModal,
-  pageHeader, readOne, readonlyValue, rowLink, searchBox, searchRead, statTiles, table, toast,
+  INPUT, app, badge, button, call, cell, closeModal, ctx, dateTimeText, esc, fieldBlock, filterSelect, guarded, journalHtml, loadJournalItems, money,
+  openModal, pageHeader, readOne, readonlyValue, rowLink, searchBox, searchRead, statTiles, table, toast, chatterHtml, loadMessages,
 } from "../common.js";
 
 const STATES = {
@@ -136,7 +136,9 @@ async function renderForm(id) {
       <div class="px-4 py-3 border-b border-gray-200 text-sm font-semibold">Pesanan</div>
       <table class="w-full text-left"><thead class="bg-gray-50"><tr>${["Referensi", "Waktu", "Pelanggan", "Total", "Status"].map((h, i) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${i === 3 ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
         <tbody class="divide-y divide-gray-100">${orderRows || '<tr><td colspan="5" class="py-6 text-center text-sm text-gray-500">Belum ada pesanan pada sesi ini.</td></tr>'}</tbody></table></section>
-    ${journals}`;
+    ${journals}
+    ${chatterHtml("pos.session", session.id)}`;
+  loadMessages("pos.session", session.id);
 }
 
 const statCell = (label, value, tone = "") => `<div><div class="text-xs font-medium text-gray-500 uppercase">${esc(label)}</div><div class="text-lg font-semibold mt-1 ${tone}">${esc(value)}</div></div>`;

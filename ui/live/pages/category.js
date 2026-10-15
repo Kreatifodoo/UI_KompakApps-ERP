@@ -2,9 +2,9 @@
 // (standar/FIFO/rata-rata), valuasi persediaan (periodik/perpetual), akun pendapatan, beban, persediaan,
 // dan selisih harga. Nilai ini yang menentukan akun yang didebit saat tagihan vendor diposting.
 import {
-  ACCOUNT_TYPE_LABELS, INPUT, app, call, cell, changedValues, closeLookup, esc, fieldBlock, fieldValue, guarded, pageHeader, readOne,
-  REMOVAL_HELP, referenceCategories, referenceJournals, referenceRemovals, removalNote, removalSelect, registerLookup, resetReferences, rowLink, runLookup, searchAccounts, searchBox, searchRead, selectOptions, statTiles,
-  table, toast, button,
+  ACCOUNT_TYPE_LABELS, INPUT, app, call, cell, changedValues, closeLookup, esc, fieldBlock, fieldValue, guarded, pageHeader, readOne, REMOVAL_HELP,
+  referenceCategories, referenceJournals, referenceRemovals, removalNote, removalSelect, registerLookup, resetReferences, rowLink, runLookup,
+  searchAccounts, searchBox, searchRead, selectOptions, statTiles, table, toast, button, chatterHtml, loadMessages,
 } from "../common.js";
 
 const COSTING = { standard: "Harga Standar", fifo: "FIFO", average: "Rata-rata Tertimbang (AVCO)" };
@@ -154,7 +154,9 @@ async function renderForm(id) {
       <button data-action="save" data-id="${category?.id ?? ""}" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
       <a href="#/category" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a>
       ${category && !category.product_count ? button("delete", "Hapus", "danger", { id: category.id }) : ""}
-    </div>`;
+    </div>
+    ${category ? chatterHtml("product.category", category.id) : ""}`;
+  if (category) loadMessages("product.category", category.id);
 }
 
 async function persist() {

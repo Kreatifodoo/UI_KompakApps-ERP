@@ -222,6 +222,7 @@ def main():
     check_bill_invoice_create(api, vendor)
     check_payment_receipt_create(api, vendor)
     check_journal_entry_create(api, vendor)
+    check_activities(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -2413,6 +2414,42 @@ def check_stock_picker(api):
     check(got == expected, f"on hand dan tersedia per produk ({len(expected)} produk) sama dengan hitungan quant langsung")
     other = api.call("stock.quant", "formatted_read_group", domain=[["location_id", "child_of", location], ["product_id", "=", -1]], groupby=["product_id"], aggregates=["quantity:sum"])
     check(other == [], "produk tanpa stok di lokasi itu tidak muncul (dianggap 0)")
+
+
+ACTIVITY_MODELS = [
+    "sale.order", "purchase.order", "purchase.request", "stock.picking", "mrp.production", "account.move", "account.payment", "res.partner", "product.template",
+    "crm.lead", "stock.lot", "pos.session", "account.asset", "account.account", "account.journal", "product.pricelist", "mrp.bom", "mrp.workcenter", "stock.scrap",
+    "account.analytic.account", "account.tax", "product.category", "pos.order", "mis.budget.by.account",
+]
+
+
+def check_activities(api):
+    """Jadwalkan Aktivitas di semua formulir (ui/live/activity.js): model mendukung aktivitas, dan jadwal, tampil, selesai, dan hapus bekerja dengan panggilan yang sama dengan UI."""
+    step("Aktivitas terjadwal di formulir dokumen dan master")
+    supported = {m["model"] for m in api.search("ir.model", [["is_mail_activity", "=", True]], ["model"], limit=500)}
+    missing = [m for m in ACTIVITY_MODELS if m not in supported]
+    check(not missing, f"semua model formulir mendukung aktivitas (kurang: {', '.join(missing) or '-'})")
+    todo = api.search("mail.activity.type", [["name", "=", "To-Do"]], ["id"], limit=1)[0]["id"]
+    me = api.search("res.users", [["login", "!=", False]], ["id"], limit=1)[0]["id"]
+    today = datetime.date.today()
+    targets = []
+    for model, domain in [("res.partner", []), ("sale.order", []), ("purchase.order", []), ("mrp.bom", []), ("mrp.workcenter", []), ("product.category", []), ("account.tax", [])]:
+        found = api.search(model, domain, ["id"], limit=1)
+        if found:
+            targets.append((model, found[0]["id"]))
+    check(len(targets) >= 3, f"ada dokumen dan master untuk dijadwali ({len(targets)} model)")
+    for model, record in targets:
+        model_id = api.search("ir.model", [["model", "=", model]], ["id"], limit=1)[0]["id"]
+        vals = {"res_model_id": model_id, "res_id": record, "activity_type_id": todo, "summary": "Cek regresi", "date_deadline": (today - datetime.timedelta(days=1)).isoformat(), "user_id": me}
+        [first] = api.call("mail.activity", "create", vals_list=[vals])
+        listed = api.search("mail.activity", [["res_model", "=", model], ["res_id", "=", record]], ["state", "summary"])
+        check(any(a["id"] == first and a["state"] == "overdue" for a in listed), f"{model}: aktivitas tampil dengan status Terlambat")
+        api.call("mail.activity", "action_feedback", ids=[first], feedback="")
+        check(not api.search("mail.activity", [["id", "=", first]], ["id"]), f"{model}: aktivitas selesai hilang dari daftar")
+        [second] = api.call("mail.activity", "create", vals_list=[{**vals, "date_deadline": today.isoformat(), "summary": "Akan dihapus"}])
+        check(api.search("mail.activity", [["id", "=", second]], ["state"])[0]["state"] == "today", f"{model}: tenggat hari ini berstatus Hari ini")
+        api.call("mail.activity", "unlink", ids=[second])
+        check(not api.search("mail.activity", [["id", "=", second]], ["id"]), f"{model}: aktivitas dihapus")
 
 
 def check_line_stock(api):

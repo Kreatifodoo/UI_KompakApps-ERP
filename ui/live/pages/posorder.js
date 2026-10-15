@@ -1,8 +1,8 @@
 // POS Order (pos.order): daftar pesanan kasir dan detailnya (barang, pajak, pembayaran, pengiriman stok, faktur), cetak ulang struk,
 // dan pembuatan faktur untuk pesanan yang punya pelanggan.
 import {
-  app, badge, button, call, cell, dateTimeText, esc, fieldBlock, filterSelect, guarded, money, pageHeader, readOne, readonlyValue, rowLink, searchBox,
-  searchRead, statTiles, statusbar, table, toast,
+  app, badge, button, call, cell, dateTimeText, esc, fieldBlock, filterSelect, guarded, money, pageHeader, readOne, readonlyValue, rowLink,
+  searchBox, searchRead, statTiles, statusbar, table, toast, chatterHtml, loadMessages,
 } from "../common.js";
 import { printButton } from "../print.js";
 
@@ -107,7 +107,9 @@ async function renderForm(id) {
           <tr><td colspan="5" class="py-2 px-4 text-sm text-right font-semibold">Total</td><td class="py-2 px-4 text-sm text-right tabular-nums font-semibold">${esc(money(order.amount_total))}</td></tr></tfoot></table></section>
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 overflow-x-auto"><div class="px-4 py-3 border-b border-gray-200 text-sm font-semibold">Pembayaran</div>
       <table class="w-full text-left">${head(["Metode", "Waktu", "Jumlah"], [2])}<tbody class="divide-y divide-gray-100">${paymentRows || '<tr><td colspan="3" class="py-6 text-center text-sm text-gray-500">Belum ada pembayaran.</td></tr>'}</tbody></table></section>
-    <p class="mt-3 text-xs text-gray-500">Jurnal penjualan POS tercipta saat sesi ditutup; lihat di halaman <a href="#/possession/${order.session_id[0]}" class="underline">sesi</a>. Pesanan dengan pelanggan bisa dibuatkan faktur.</p>`;
+    <p class="mt-3 text-xs text-gray-500">Jurnal penjualan POS tercipta saat sesi ditutup; lihat di halaman <a href="#/possession/${order.session_id[0]}" class="underline">sesi</a>. Pesanan dengan pelanggan bisa dibuatkan faktur.</p>
+    ${chatterHtml("pos.order", order.id)}`;
+  loadMessages("pos.order", order.id);
 }
 
 export async function onClick(event, el) {
