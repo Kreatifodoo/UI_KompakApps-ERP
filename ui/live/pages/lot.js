@@ -2,8 +2,9 @@
 // Detail menampilkan stok per lokasi dan riwayat pergerakan (penelusuran dari penerimaan sampai pengiriman), serta
 // tanggal kedaluwarsa bila produk memakainya (modul product_expiry).
 import {
-  INPUT, app, badge, call, cell, changedValues, dateText, dateTimeText, esc, fieldBlock, filterSelect, fromInputDateTime, guarded, hasGroup, pageHeader,
-  parseOdooDate, plain, readOne, readonlyValue, registerLookup, rowLink, runLookup, searchBox, searchRead, statTiles, table, toast, toInputDateTime,
+  INPUT, app, badge, call, cell, changedValues, dateText, dateTimeText, esc, fieldBlock, filterSelect, fromInputDateTime, guarded, hasGroup,
+  pageHeader, parseOdooDate, plain, readOne, readonlyValue, registerLookup, rowLink, runLookup, searchBox, searchRead, statTiles, table, toast,
+  toInputDateTime, chatterHtml, loadMessages,
 } from "../common.js";
 
 const FILTERS = [["stock", "Ada stok"], ["all", "Semua lot"], ["expired", "Sudah kedaluwarsa"], ["alert", "Perlu perhatian"]];
@@ -202,7 +203,9 @@ async function renderForm(id) {
       <button data-action="save" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
       <a href="#/lot" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a>
     </div>
-    ${trace ? traceHtml(trace) : '<p class="mt-6 text-sm text-gray-500">Simpan lot terlebih dahulu untuk melihat stok dan riwayat pergerakannya.</p>'}`;
+    ${trace ? traceHtml(trace) : '<p class="mt-6 text-sm text-gray-500">Simpan lot terlebih dahulu untuk melihat stok dan riwayat pergerakannya.</p>'}
+    ${lot ? chatterHtml("stock.lot", lot.id) : ""}`;
+  if (lot) loadMessages("stock.lot", lot.id);
 }
 
 async function persist() {

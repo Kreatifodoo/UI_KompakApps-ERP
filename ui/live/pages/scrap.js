@@ -2,7 +2,7 @@
 // lokasi Inventory Loss. Odoo 19 mencatat nilainya pada pergerakan stok tanpa jurnal otomatis.
 import {
   INPUT, app, badge, call, cell, dateTimeText, esc, fieldBlock, guarded, pageHeader, readOne, readonlyValue, registerLookup, rowLink, runLookup,
-  searchBox, searchRead, selectOptions, statusbar, table, toast, button, filterSelect,
+  searchBox, searchRead, selectOptions, statusbar, table, toast, button, filterSelect, chatterHtml, loadMessages,
 } from "../common.js";
 
 const STATES = { draft: ["Draft", "muted"], done: ["Selesai", "success"] };
@@ -120,7 +120,9 @@ async function renderForm(id) {
     <h1 class="text-2xl font-bold text-gray-900 mb-3">${esc(scrap?.name ?? "Scrap Baru")}</h1>
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 grid md:grid-cols-2 gap-x-8 gap-y-4">${fields}</section>
     ${editable ? `<div class="flex gap-2 mt-4"><button data-action="save" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
-      <a href="#/scrap" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a></div>` : `<p class="mt-4 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3">Stok sudah berkurang. Nilainya tercatat pada pergerakan stok; <a href="#/moves?kind=loss" class="underline">lihat di Inventory Loss</a>.</p>`}`;
+      <a href="#/scrap" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a></div>` : `<p class="mt-4 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3">Stok sudah berkurang. Nilainya tercatat pada pergerakan stok; <a href="#/moves?kind=loss" class="underline">lihat di Inventory Loss</a>.</p>`}
+    ${scrap ? chatterHtml("stock.scrap", scrap.id) : ""}`;
+  if (scrap) loadMessages("stock.scrap", scrap.id);
 }
 
 async function persist() {

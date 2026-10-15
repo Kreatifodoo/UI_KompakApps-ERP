@@ -4,7 +4,7 @@
 import {
   INPUT, actionBar, app, badge, button, call, cell, changedValues, chatterHtml, closeLookup, closeModal, ctx, dateText, esc, fieldBlock, filterSelect, guarded,
   hasGroup, loadMessages, money, openModal, pageHeader, plain, readOne, readonlyValue, referenceCountries, referenceUsers, registerLookup, resetReferences,
-  rowLink, runLookup, searchBox, searchRead, selectOptions, statTiles, statusbar, table, toast, today,
+  rowLink, runLookup, searchBox, searchRead, selectOptions, statTiles, statusbar, table, toast,
 } from "../common.js";
 
 const PRIORITY = { 0: "Normal", 1: "Rendah", 2: "Tinggi", 3: "Sangat Tinggi" };
@@ -253,15 +253,6 @@ export function createLeadPage(config) {
           .map((t) => `<label class="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" data-tag value="${t.id}" ${v.tag_ids.includes(t.id) ? "checked" : ""} class="rounded border-gray-300 text-indigo-600"> ${esc(t.display_name)}</label>`)
           .join("")}</div>`
       : '<div class="py-2 text-sm text-gray-400">Belum ada tag. Tambahkan di CRM Setting.</div>';
-    const activityRows = activities
-      .map((a) => {
-        const overdue = a.state === "overdue";
-        return `<tr><td class="py-2 px-4 text-sm">${esc(a.activity_type_id?.[1] ?? "")}</td><td class="py-2 px-4 text-sm">${esc(a.summary || "-")}</td>
-          <td class="py-2 px-4 text-sm ${overdue ? "text-rose-700 font-medium" : ""}">${esc(dateText(a.date_deadline))}${overdue ? " (lewat)" : ""}</td>
-          <td class="py-2 px-4 text-sm">${esc(a.user_id?.[1] ?? "")}</td>
-          <td class="py-2 px-4 text-right"><button type="button" data-action="activity-done" data-id="${a.id}" class="px-3 py-1 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Selesai</button></td></tr>`;
-      })
-      .join("");
     app.innerHTML = `
       <div class="text-sm text-gray-500 mb-2"><a href="#/${config.route}" class="hover:text-indigo-600">${config.title}</a> / ${esc(lead?.name ?? "Baru")}</div>
       <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-3">
@@ -300,13 +291,7 @@ export function createLeadPage(config) {
         <button data-action="save" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
         <a href="#/${config.route}" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a>
       </div>
-      ${lead
-        ? `<section id="section-activities" class="bg-white rounded-xl shadow-sm border border-gray-200 mt-6 overflow-x-auto">
-            <div class="px-4 py-3 border-b border-gray-200 flex items-center justify-between"><div class="text-sm font-semibold">Aktivitas Terjadwal</div>
-              <button type="button" data-action="schedule" data-id="${lead.id}" class="px-3 py-1 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50"><i class="fas fa-plus mr-1"></i>Jadwalkan</button></div>
-            <table class="w-full text-left"><tbody class="divide-y divide-gray-100">${activityRows || '<tr><td class="py-6 text-center text-sm text-gray-500">Belum ada aktivitas terjadwal.</td></tr>'}</tbody></table></section>
-          ${chatterHtml("crm.lead", lead.id)}`
-        : ""}`;
+      ${lead ? chatterHtml("crm.lead", lead.id) : ""}`;
     if (lead) loadMessages("crm.lead", lead.id);
   }
 
@@ -356,21 +341,6 @@ export function createLeadPage(config) {
          <p class="text-xs text-gray-500">Yang kalah diarsipkan dan bisa dipulihkan.</p></form>`,
       `<button data-action="modal-close" class="px-4 py-2 rounded-lg text-sm font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50">Batal</button>
        <button data-action="lost-confirm" class="px-4 py-2 rounded-lg text-sm font-medium bg-rose-600 text-white hover:bg-rose-700">Tandai Kalah</button>`,
-    );
-  }
-
-  async function scheduleDialog(id) {
-    const types = await searchRead("mail.activity.type", [], ["name"], { order: "sequence, id" });
-    const users = await referenceUsers();
-    openModal(
-      "Jadwalkan Aktivitas",
-      `<form data-form="activity" data-id="${id}" class="space-y-3">
-         ${fieldBlock("Jenis", `<select data-act="type" class="${INPUT}">${types.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("")}</select>`)}
-         ${fieldBlock("Ringkasan", `<input data-act="summary" class="${INPUT}" placeholder="mis. Telepon untuk penawaran">`)}
-         ${fieldBlock("Tenggat", `<input type="date" data-act="date" value="${esc(today())}" class="${INPUT}">`)}
-         ${fieldBlock("Ditugaskan ke", `<select data-act="user" class="${INPUT}">${selectOptions(users, ctx.user.id)}</select>`)}</form>`,
-      `<button data-action="modal-close" class="px-4 py-2 rounded-lg text-sm font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50">Batal</button>
-       <button data-action="schedule-confirm" data-id="${id}" class="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700">Jadwalkan</button>`,
     );
   }
 
@@ -487,31 +457,6 @@ export function createLeadPage(config) {
         form = null;
         toast("Lead dikonversi menjadi opportunity.");
         location.hash = `#/opportunity/${id}`;
-      }
-    } else if (action === "schedule") await scheduleDialog(id);
-    else if (action === "schedule-confirm") {
-      const ok = await guarded(el, async () => {
-        const date = document.querySelector('[data-act="date"]').value;
-        if (!date) throw new Error("Isi tenggat aktivitas.");
-        const [model] = await searchRead("ir.model", [["model", "=", "crm.lead"]], ["id"], { limit: 1 });
-        await call("mail.activity", "create", {
-          vals_list: [{
-            res_model_id: model.id, res_id: id, activity_type_id: Number(document.querySelector('[data-act="type"]').value), summary: document.querySelector('[data-act="summary"]').value.trim() || false,
-            date_deadline: date, user_id: Number(document.querySelector('[data-act="user"]').value),
-          }],
-        });
-        return true;
-      });
-      if (ok) {
-        closeModal();
-        toast("Aktivitas dijadwalkan.");
-        reload();
-      }
-    } else if (action === "activity-done") {
-      const ok = await guarded(el, () => call("mail.activity", "action_feedback", { ids: [Number(el.dataset.id)], feedback: "" }));
-      if (ok !== undefined) {
-        toast("Aktivitas selesai.");
-        reload();
       }
     } else if (action === "enable-leads") {
       const ok = await guarded(el, async () => {

@@ -4,7 +4,7 @@
 // dokumen lain) bisa dibuat, diedit saat draf, diposting, dibatalkan ke draf, diduplikat, dan dibalik lewat jentry.js (D50).
 import {
   app, badge, cell, dateText, esc, fieldBlock, filterSelect, journalHtml, loadJournalItems, money, pageHeader, readOne, readonlyValue, rowLink,
-  searchBox, searchRead, statTiles, table,
+  searchBox, searchRead, statTiles, table, chatterHtml, loadMessages,
 } from "../common.js";
 import { analyticSummary, preloadAnalytic } from "../analyticpick.js";
 import * as entry from "../jentry.js";
@@ -111,7 +111,9 @@ async function renderForm(id) {
       ${fieldBlock("Mitra", readonlyValue(move.partner_id?.[1]))}
       ${fieldBlock("Total", readonlyValue(money(move.amount_total, currency)))}
     </section>
-    ${journalHtml(items, currency, { journal: move.journal_id?.[1], state: move.state })}${analyticSection(analytic, currency)}`;
+    ${journalHtml(items, currency, { journal: move.journal_id?.[1], state: move.state })}${analyticSection(analytic, currency)}
+    ${chatterHtml("account.move", move.id)}`;
+  loadMessages("account.move", move.id);
 }
 
 /** Item jurnal yang membawa distribusi analitik (dibaca saja di sini; diubah pada baris dokumen sumbernya). */

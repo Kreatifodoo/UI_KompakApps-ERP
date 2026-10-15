@@ -527,8 +527,19 @@ export function journalHtml(items, currency, { title = "Item Jurnal", journal = 
 
 /* ---------- Chatter ---------- */
 
+/** Pengait yang dipasang activity.js: mengisi bagian "Aktivitas Terjadwal" setelah halaman menggambar chatter. */
+let activityHook = null;
+export const setActivityHook = (fn) => {
+  activityHook = fn;
+};
+
+/** Catatan dan riwayat, didahului bagian Aktivitas Terjadwal (tersembunyi sampai ketahuan modelnya mendukung aktivitas; lihat activity.js). */
 export function chatterHtml(model, id) {
-  return `<section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 p-4">
+  return `<section id="section-activities" data-model="${esc(model)}" data-id="${id}" class="hidden bg-white rounded-xl shadow-sm border border-gray-200 mt-4 overflow-x-auto">
+    <div class="px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3"><div class="text-sm font-semibold">Aktivitas Terjadwal <span class="font-normal text-gray-500" data-activity-count></span></div>
+      <button type="button" data-action="act-schedule" data-model="${esc(model)}" data-id="${id}" class="px-3 py-1 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50"><i class="fas fa-plus mr-1"></i>Jadwalkan</button></div>
+    <div data-activity-list class="px-4 py-3 text-sm text-gray-500">Memuat...</div></section>
+  <section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 p-4">
     <div class="text-sm font-semibold mb-3">Catatan dan riwayat</div>
     <form data-form="note" data-model="${esc(model)}" data-id="${id}" class="flex gap-2 mb-4">
       <input name="note" placeholder="Tambah catatan internal..." class="${INPUT}" required>
@@ -538,6 +549,7 @@ export function chatterHtml(model, id) {
 }
 
 export async function loadMessages(model, id) {
+  activityHook?.(model, id);
   const box = document.querySelector("#messages");
   if (!box) return;
   try {

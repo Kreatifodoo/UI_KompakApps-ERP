@@ -9,6 +9,7 @@ import {
   closeMobile, goFirstMatch, goLeaf, openMobile, renderSidebar, resolveActive, setSearch, setVersion, toggleBranch,
 } from "./sidebar.js";
 import { initColumnResize } from "./colresize.js";
+import { handleActivityAction } from "./activity.js";
 import * as pr from "./pages/pr.js";
 import * as po from "./pages/po.js";
 import * as receipt from "./pages/receipt.js";
@@ -175,6 +176,8 @@ document.addEventListener("click", async (event) => {
     document.getElementById(el.dataset.target)?.scrollIntoView({ behavior: "smooth", block: "start" });
   } else if (action === "modal-close") {
     closeModal();
+  } else if (action.startsWith("act-") && (await handleActivityAction(action, el))) {
+    /* aktivitas terjadwal ditangani activity.js */
   } else if (action === "print-doc") {
     await printDocument(el.dataset.model, Number(el.dataset.id), el);
   } else if (action === "print-now") {
