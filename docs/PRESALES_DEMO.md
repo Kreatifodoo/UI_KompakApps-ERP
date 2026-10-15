@@ -42,3 +42,11 @@ Prolog: "Kami distributor dan produsen alat diagnostik. Instrumen kami beli dari
 `scripts/seed_presales_assets.py` (jalankan sesudah setup_tax_id.py) menambah **empat model aset** (Peralatan Laboratorium 4 tahun, Kendaraan Operasional 8 tahun, Peralatan Kantor dan Komputer 4 tahun, Renovasi Gudang 10 tahun; garis lurus per bulan), akun aset dan penyusutan untuk peralatan laboratorium, **empat tagihan vendor yang membentuk aset** (autoclave dan lemari pendingin Rp85 juta, Gran Max Rp245 juta, laptop dan printer Rp38 juta, renovasi gudang Rp120 juta yang belum dibayar), dan satu aset saldo awal (mesin fotokopi Rp18 juta). Penyusutan bulanan sudah diposting sampai hari ini (24 jurnal). Tunjukkan Accounting > Master > Asset Model, Accounting > Asset (nilai sisa per aset), lalu Laba Rugi (beban penyusutan) dan Neraca (aset tetap dan akumulasi penyusutan).
 
 Tips: lakukan satu aksi langsung saat demo (validasi WH/OUT/00008, atau Buat faktur dari S00009 setelah pengiriman) agar terlihat alurnya hidup. Nomor dokumen di atas berasal dari data yang dibuat pada 13 Okt 2026; pada basis data lain nomornya mengikuti urutan Odoo.
+
+## Lapisan PROLINE dan storyline
+
+`scripts/seed_presales_proline.py` (jalankan paling akhir) menambah katalog PROLINE yang lengkap (kimia klinik, hematologi, imunologi, urinalisis, tes cepat, biomolekuler), produk ber-lot dengan kedaluwarsa dan instrumen ber-nomor seri, daftar harga e-Katalog INAPROC dan distributor, rak dingin, dan transaksi baru dari CRM sampai pembayaran. Naskah presentasi enam bab (CRM, Sales, Inventory, Manufacturing, Purchase, Accounting) ada di [PRESALES_STORYLINE.md](PRESALES_STORYLINE.md).
+
+```bash
+docker compose run --rm -T --no-deps odoo odoo shell -d nusara --no-http < scripts/seed_presales_proline.py
+```

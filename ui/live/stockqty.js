@@ -15,7 +15,7 @@ export async function stockAt(productIds, locationId) {
     });
     for (const r of rows) {
       const onhand = r["quantity:sum"] ?? 0;
-      out.set(r.product_id[0], { onhand, available: onhand - (r["reserved_quantity:sum"] ?? 0) });
+      out.set(r.product_id[0], { onhand, available: Math.max(0, onhand - (r["reserved_quantity:sum"] ?? 0)) }); // cadangan melebihi stok tidak ditampilkan sebagai tersedia negatif
     }
   } catch {
     /* info stok hanya pelengkap; pemilih produk tetap bekerja tanpanya */
