@@ -66,17 +66,24 @@ const page = createMasterPage({
       options: [["", "Tanpa akses"], ...a.levels.map(([v, l]) => [v, l])],
     })),
     { key: "is_admin", label: "Administrator", type: "check", virtual: true, checkLabel: "Administrator: akses penuh ke pengaturan dan seluruh modul" },
+    // hak perusahaan hanya relevan bila ada lebih dari satu perusahaan (D62)
+    { key: "company_ids", label: "Perusahaan yang boleh diakses", type: "m2m", optionsOf: (refs) => refs.companies ?? [], show: () => ctx.multiCompany, hint: "Pengguna hanya melihat dokumen perusahaan yang dicentang dan bisa berpindah di antaranya lewat pemilih di header." },
+    { key: "company_id", label: "Perusahaan bawaan", type: "m2o", optionsOf: (refs) => refs.companies ?? [], blank: "-", show: () => ctx.multiCompany, hint: "Perusahaan yang aktif saat pengguna masuk; harus termasuk yang boleh diakses." },
   ],
-  loadRefs: async () => ({ ids: await loadGroupIds() }),
+  loadRefs: async () => ({ ids: await loadGroupIds(), companies: ctx.companies }),
   readFields: ["all_group_ids", "login_date"],
   virtualValues: async (record, refs) => {
     const memberOf = new Set(record.all_group_ids);
     return { ...Object.fromEntries(APPS.map((a) => [`role_${a.key}`, roleOf(a, memberOf, refs.ids)])), is_admin: Boolean(refs.ids[ADMIN_GROUP] && memberOf.has(refs.ids[ADMIN_GROUP])) };
   },
-  newValues: () => Object.fromEntries(APPS.map((a) => [`role_${a.key}`, ""])),
+  newValues: () => ({ ...Object.fromEntries(APPS.map((a) => [`role_${a.key}`, ""])), company_ids: [ctx.company.id], company_id: ctx.company.id }),
   extraCreate: (v) => (String(v.login).includes("@") ? { email: String(v.login).trim() } : {}),
   validate: (v, id) => {
     if (id === ctx.user.id && !v.is_admin) throw new Error("Anda tidak bisa mencabut peran administrator dari akun Anda sendiri.");
+    if (ctx.multiCompany) {
+      if (!v.company_ids.length) throw new Error("Pilih minimal satu perusahaan yang boleh diakses pengguna ini.");
+      if (v.company_id && !v.company_ids.includes(v.company_id)) throw new Error("Perusahaan bawaan harus termasuk perusahaan yang boleh diakses.");
+    }
   },
   afterSave: async (userId, v, isNew, refs) => {
     const commands = [];

@@ -3,6 +3,7 @@
 // dengan API key pengguna sebagai bearer. API key hanya disimpan di sessionStorage tab ini.
 
 const STORAGE_KEY = "nusara.odoo.apikey";
+const COMPANY_KEY = "nusara.odoo.company";
 
 function store() {
   try {
@@ -18,9 +19,33 @@ export const auth = {
   },
   set(key) {
     store()?.setItem(STORAGE_KEY, key);
+    activeCompany.clear(); // pengguna lain mungkin tidak berhak atas perusahaan yang dipilih sebelumnya
   },
   clear() {
     store()?.removeItem(STORAGE_KEY);
+    activeCompany.clear();
+  },
+};
+
+/** Perusahaan aktif (multi-company, D62): dikirim pada setiap panggilan sebagai allowed_company_ids sehingga dokumen, laporan, dan nomor urut memakai perusahaan itu.
+ *  `scope` bisa dibuat "all" sementara (halaman Perusahaan) agar semua perusahaan yang diizinkan pengguna terlihat. */
+export const activeCompany = {
+  allowed: [],
+  scope: "one",
+  get id() {
+    return Number(store()?.getItem(COMPANY_KEY)) || null;
+  },
+  set(id) {
+    store()?.setItem(COMPANY_KEY, String(id));
+  },
+  clear() {
+    store()?.removeItem(COMPANY_KEY);
+  },
+  /** Daftar allowed_company_ids untuk panggilan: perusahaan aktif di depan, lalu (bila scope all) perusahaan lain yang diizinkan. */
+  get ids() {
+    const id = this.id;
+    if (!id) return undefined;
+    return this.scope === "all" ? [id, ...this.allowed.filter((x) => x !== id)] : [id];
   },
 };
 
@@ -45,13 +70,15 @@ function describeError(status, body) {
 export async function call(model, method, params = {}) {
   let response;
   try {
+    // allowed_company_ids dari perusahaan aktif; pemanggil boleh menimpanya (atau mengisi undefined untuk tidak mengirimnya) lewat params.context
+    const body = { ...params, context: { allowed_company_ids: activeCompany.ids, ...(params.context ?? {}) } };
     response = await fetch(`/json/2/${model}/${method}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json; charset=utf-8",
         Authorization: `bearer ${auth.key}`,
       },
-      body: JSON.stringify(params),
+      body: JSON.stringify(body),
     });
   } catch {
     throw new OdooError(0, "Tidak dapat menjangkau server Odoo. Pastikan Odoo berjalan.");

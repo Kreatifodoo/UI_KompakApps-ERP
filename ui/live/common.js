@@ -1,5 +1,5 @@
 // Bagian bersama UI Nusara: pembantu tampilan, sesi, kotak saran, dialog, dan chatter.
-import { OdooError, auth, call, readOne, searchRead } from "./odoo.js";
+import { OdooError, activeCompany, auth, call, readOne, searchRead } from "./odoo.js";
 
 export const app = document.querySelector("#app");
 const sessionBox = document.querySelector("#session");
@@ -213,17 +213,25 @@ export async function guarded(button, task) {
 /* ---------- Sesi dan navigasi ---------- */
 
 export async function loadSession() {
-  const { uid } = await call("res.users", "context_get");
-  const user = await readOne("res.users", uid, ["name", "company_id"]);
-  const company = await readOne("res.company", user.company_id[0], ["name", "currency_id"]);
+  // pembacaan awal tanpa perusahaan pilihan (bisa saja tidak lagi diizinkan); sesudah itu semua panggilan memakai perusahaan aktif
+  const open = { context: { allowed_company_ids: undefined } };
+  const { uid } = await call("res.users", "context_get", open);
+  const user = await readOne("res.users", uid, ["name", "company_id", "company_ids"]);
+  const allowed = user.company_ids?.length ? user.company_ids : [user.company_id[0]];
+  const activeId = allowed.includes(activeCompany.id) ? activeCompany.id : user.company_id[0];
+  activeCompany.set(activeId);
+  activeCompany.allowed = allowed;
+  const [company, companies] = await Promise.all([
+    readOne("res.company", activeId, ["name", "currency_id"]),
+    searchRead("res.company", [["id", "in", allowed]], ["display_name"], { order: "name", context: { allowed_company_ids: allowed } }),
+  ]);
   const has = (group) => call("res.users", "has_group", { ids: [uid], group_ext_id: group }).then(Boolean);
-  const [prManager, purchaseManager, stockUser, companyCount] = await Promise.all([
+  const [prManager, purchaseManager, stockUser] = await Promise.all([
     has("purchase_request.group_purchase_request_manager"),
     has("purchase.group_purchase_manager"),
     has("stock.group_stock_user"),
-    call("res.company", "search_count", { domain: [] }),
   ]);
-  Object.assign(ctx, { user, company, flags: { prManager, purchaseManager, stockUser }, multiCompany: companyCount > 1, users: null });
+  Object.assign(ctx, { user, company, companies, flags: { prManager, purchaseManager, stockUser }, multiCompany: companies.length > 1, users: null });
 }
 
 export async function referenceUsers() {
@@ -298,6 +306,14 @@ export const referenceSelection = (model, field) =>
     return info[field]?.selection ?? [];
   });
 
+/** Nama perusahaan di header; pengguna dengan lebih dari satu perusahaan mendapat pemilih (D62). */
+function companyLine() {
+  if (!ctx.multiCompany) return `<p class="text-xs text-gray-500">${esc(ctx.company.name)}</p>`;
+  return `<select data-change="company" aria-label="Perusahaan aktif" title="Ganti perusahaan aktif" class="text-xs text-gray-600 border border-gray-200 rounded px-1 py-0.5 bg-white max-w-48">${ctx.companies
+    .map((c) => `<option value="${c.id}" ${c.id === ctx.company.id ? "selected" : ""}>${esc(c.display_name)}</option>`)
+    .join("")}</select>`;
+}
+
 export function renderSession() {
   if (!ctx.user) {
     sessionBox.innerHTML = '<span class="text-sm text-gray-400">Belum terhubung</span>';
@@ -305,7 +321,7 @@ export function renderSession() {
   }
   const initials = ctx.user.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   sessionBox.innerHTML = `<span class="h-8 w-8 rounded-full bg-indigo-600 text-white text-xs font-semibold flex items-center justify-center border border-gray-200" aria-hidden="true">${esc(initials)}</span>
-    <div class="ml-3 hidden md:block"><p class="text-sm font-medium text-gray-700">${esc(ctx.user.name)}</p><p class="text-xs text-gray-500">${esc(ctx.company.name)}</p></div>
+    <div class="ml-3 hidden md:block"><p class="text-sm font-medium text-gray-700">${esc(ctx.user.name)}</p>${companyLine()}</div>
     <button data-action="disconnect" class="ml-4 text-xs text-gray-400 hover:text-gray-700 underline">Putus</button>`;
 }
 
@@ -587,4 +603,4 @@ export async function postNote(form, submitButton) {
   }
 }
 
-export { OdooError, auth, call, readOne, searchRead };
+export { OdooError, activeCompany, auth, call, readOne, searchRead };

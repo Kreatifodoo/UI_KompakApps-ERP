@@ -14,3 +14,4 @@ from . import test_budget
 from . import test_loyalty
 from . import test_data_import
 from . import test_activity
+from . import test_multi_company
