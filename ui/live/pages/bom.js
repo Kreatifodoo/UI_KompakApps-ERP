@@ -2,6 +2,7 @@
 // komponen, produk sampingan (bila fiturnya aktif), dan operasi per work center (bila Work Orders aktif). Kartu biaya
 // memakai laporan struktur BoM Odoo: biaya komponen ditambah biaya operasi.
 import {
+  PRODUCT_PAGE, searchProducts,
   INPUT, app, badge, call, cell, changedValues, chatterHtml, closeLookup, esc, fieldBlock, fieldValue, filterSelect, guarded, hasGroup, loadMessages,
   money, pageHeader, readOne, readonlyValue, referenceUoms, registerLookup, rowLink, runLookup, searchBox, searchRead, selectOptions, statTiles, table,
   toast, button,
@@ -27,16 +28,12 @@ const SECTIONS = {
   byproducts: { model: "mrp.bom.byproduct", key: "byproduct_ids", lookup: "bom-byproduct-product", title: "Produk Sampingan" },
 };
 
-const productSearch = (extra) => (q) =>
-  searchRead("product.product", [["type", "=", "consu"], ...extra, ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name", "uom_id"], {
-    limit: 10, order: "name",
-  });
+const productSearch = (extra) => (q, _input, page) =>
+  searchProducts(q, page, { domain: [["type", "=", "consu"], ...extra], fields: ["display_name", "uom_id"] });
 
 registerLookup("bom-product", {
-  search: (q) =>
-    searchRead("product.template", [["type", "=", "consu"], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name", "uom_id"], {
-      limit: 10, order: "name",
-    }),
+  pageSize: PRODUCT_PAGE,
+  search: (q, _input, page) => searchProducts(q, page, { model: "product.template", domain: [["type", "=", "consu"]], fields: ["display_name", "uom_id"] }),
   sub: (r) => r.uom_id?.[1] ?? "",
   isChosen: (input) => form?.product?.display_name === input.value,
   choose: (input, item) => {
@@ -48,6 +45,7 @@ registerLookup("bom-product", {
 });
 for (const [name, section] of Object.entries(SECTIONS)) {
   registerLookup(section.lookup, {
+    pageSize: PRODUCT_PAGE,
     search: productSearch([]),
     sub: (r) => r.uom_id?.[1] ?? "",
     isChosen: (input) => {

@@ -2,6 +2,7 @@
 // jumlah komponen yang dikonsumsi, tandai selesai (wizard backorder dan peringatan konsumsi), work order, scrap, dan
 // unbuild. Nilai persediaan tercatat pada pergerakan stok; Odoo tidak membuat jurnal saat produksi.
 import {
+  PRODUCT_PAGE, searchProducts,
   INPUT, app, badge, call, cell, chatterHtml, closeLookup, closeModal, ctx, dateTimeText, esc, fieldBlock, filterSelect, fromInputDateTime, guarded,
   loadMessages, money, openModal, pageHeader, readOne, readonlyValue, referenceUsers, referenceWarehouses, registerLookup, rowLink, runLookup, searchBox, searchRead,
   selectOptions, statTiles, statusbar, table, toast, toInputDateTime, actionBar,
@@ -50,12 +51,11 @@ const mfgWarehouse = () => whs.find((w) => w.manu_type_id?.[0] === Number(form?.
 const mfgLocation = () => mfgWarehouse()?.lot_stock_id?.[0] ?? null;
 
 registerLookup("mo-product", {
-  search: async (q) => {
-    const items = await searchRead("product.product", [["type", "=", "consu"], ["product_tmpl_id.bom_ids", "!=", false], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name", "uom_id", "product_tmpl_id"], {
-      limit: 10, order: "name",
-    });
+  pageSize: PRODUCT_PAGE,
+  search: async (q, _input, page) => {
+    const { items, total } = await searchProducts(q, page, { domain: [["type", "=", "consu"], ["product_tmpl_id.bom_ids", "!=", false]], fields: ["display_name", "uom_id", "product_tmpl_id"] });
     const stock = await storableStock(items.map((i) => i.id), mfgLocation());
-    return items.map((i) => ({ ...i, stock: stock.get(i.id) ?? null }));
+    return { items: items.map((i) => ({ ...i, stock: stock.get(i.id) ?? null })), total };
   },
   sub: (r) => `${r.uom_id?.[1] ?? ""}${r.stock ? ` · ${stockText(r.stock)}` : ""}`,
   isChosen: (input) => form?.product?.display_name === input.value,

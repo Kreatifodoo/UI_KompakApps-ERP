@@ -3,6 +3,7 @@
 // bilah status draft/posted; status pembayaran; total, sisa; item jurnal; dan dialog "Register Payment"
 // yang memakai wizard account.payment.register (arah pembayaran mengikuti jenis faktur).
 import {
+  PRODUCT_PAGE, searchProducts,
   ACCOUNT_TYPE_LABELS, INPUT, actionBar, app, badge, call, cell, chatterHtml, closeLookup, closeModal, ctx, dateText, esc, fieldBlock, filterSelect, guarded,
   journalHtml, loadJournalItems, loadMessages, money, openModal, pageHeader, plain, readOne, readonlyValue, referenceAssetProfiles, referenceCurrencies,
   referenceJournals, referenceSelection, referenceTerms, registerLookup, rowLink, runLookup, searchAccounts, searchRead, selectOptions, statTiles, statusbar,
@@ -140,13 +141,12 @@ export function createInvoicePage(config) {
   });
 
   registerLookup(productKind, {
-    search: (q) =>
-      searchRead(
-        "product.product",
-        [[purchaseSide ? "purchase_ok" : "sale_ok", "=", true], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])],
-        ["display_name", "uom_id", purchaseSide ? "description_purchase" : "description_sale"],
-        { limit: 10, order: "name" },
-      ),
+    pageSize: PRODUCT_PAGE,
+    search: (q, _input, page) =>
+      searchProducts(q, page, {
+        domain: [[purchaseSide ? "purchase_ok" : "sale_ok", "=", true]],
+        fields: ["display_name", "uom_id", purchaseSide ? "description_purchase" : "description_sale"],
+      }),
     sub: (r) => r.uom_id?.[1] ?? "",
     isChosen: (input) => {
       const line = lineAt(input);

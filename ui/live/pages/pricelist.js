@@ -2,6 +2,7 @@
 // pemasok, lead time, jumlah minimum, harga satuan, mata uang, diskon, dan masa berlaku. Harga di sini
 // menentukan harga otomatis pada baris RFQ.
 import {
+  PRODUCT_PAGE, searchProducts,
   INPUT, app, call, cell, changedValues, ctx, dateText, esc, fieldBlock, fieldValue, guarded, money, pageHeader, readOne, referenceCurrencies,
   registerLookup, rowLink, runLookup, searchBox, searchRead, selectOptions, table, toast, button, closeLookup,
 } from "../common.js";
@@ -26,13 +27,8 @@ registerLookup("pl-vendor", {
   },
 });
 registerLookup("pl-product", {
-  search: (q) =>
-    searchRead(
-      "product.template",
-      [["purchase_ok", "=", true], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])],
-      ["display_name", "uom_id"],
-      { limit: 10, order: "name" },
-    ),
+  pageSize: PRODUCT_PAGE,
+  search: (q, _input, page) => searchProducts(q, page, { model: "product.template", domain: [["purchase_ok", "=", true]], fields: ["display_name", "uom_id"] }),
   sub: (r) => r.uom_id?.[1] ?? "",
   isChosen: (input) => form?.product?.display_name === input.value,
   choose: (input, item) => {

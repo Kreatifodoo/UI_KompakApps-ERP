@@ -376,19 +376,21 @@ export const modalOpen = () => !modalRoot.classList.contains("hidden");
  * Pengganti <datalist>, yang popup-nya tidak tampil di semua browser (mis. browser tertanam).
  * Satu menu berposisi fixed agar tidak terpotong tabel yang dapat digulir. Terbuka saat field
  * difokuskan, difilter saat mengetik, dan dapat dipilih dengan klik atau keyboard.
- * Setiap halaman mendaftarkan jenisnya: { search(q), sub?(item), isChosen(input), choose(input, item) }.
+ * Setiap halaman mendaftarkan jenisnya: { search(q, input, { limit }), sub?(item), isChosen(input), choose(input, item), pageSize? }.
+ * `search` mengembalikan daftar baris, atau { items, total } bila jumlah seluruh yang cocok diketahui. Dengan `pageSize`, menu memuat satu halaman
+ * dulu dan menambah halaman berikutnya saat digulir sampai bawah, diklik "Menampilkan N dari M", atau panah bawah di baris terakhir.
  */
 const menu = document.createElement("div");
 menu.id = "lookup-menu";
 menu.setAttribute("role", "listbox");
-menu.className = "hidden fixed z-50 bg-white border border-gray-200 rounded-lg shadow-lg max-h-64 overflow-auto text-sm";
+menu.className = "hidden fixed z-50 bg-white border border-gray-200 rounded-lg shadow-lg overflow-auto text-sm";
 document.body.append(menu);
 
 const lookupKinds = {};
 export const registerLookup = (kind, def) => {
   lookupKinds[kind] = def;
 };
-let lookup = null; // { input, def, items, active, seq, loading }
+let lookup = null; // { input, def, items, total, limit, active, seq, loading, keepScroll }
 let lookupTimer;
 
 export function closeLookup() {
@@ -396,39 +398,74 @@ export function closeLookup() {
   menu.classList.add("hidden");
 }
 
+/** Masih ada hasil yang belum dimuat (jumlah seluruh yang cocok lebih besar dari yang tampil). */
+const hasMore = () => Boolean(lookup && lookup.total != null && lookup.items.length < lookup.total);
+
 function paintMenu() {
   if (!lookup) return;
-  menu.innerHTML = lookup.items.length
-    ? lookup.items
-        .map(
-          (it, i) => `<div role="option" data-lookup-item="${i}" class="px-3 py-2 cursor-pointer flex justify-between gap-4 hover:bg-indigo-50 ${i === lookup.active ? "bg-indigo-50" : ""}">
-            <span>${esc(it.display_name)}</span><span class="text-gray-400 text-xs">${esc(lookup.def.sub?.(it) ?? "")}</span></div>`,
-        )
-        .join("")
-    : `<div class="px-3 py-2 text-gray-500">${lookup.loading ? "Mencari..." : "Tidak ada hasil"}</div>`;
+  const top = menu.scrollTop; // diambil sebelum isi diganti (mengganti isi mereset gulir)
+  const rows = lookup.items
+    .map(
+      (it, i) => `<div role="option" data-lookup-item="${i}" class="px-3 py-2 cursor-pointer flex justify-between gap-4 hover:bg-indigo-50 ${i === lookup.active ? "bg-indigo-50" : ""}">
+        <span>${esc(it.display_name)}</span><span class="text-gray-400 text-xs">${esc(lookup.def.sub?.(it) ?? "")}</span></div>`,
+    )
+    .join("");
+  let footer = "";
+  if (hasMore()) {
+    footer = `<div data-lookup-more class="sticky bottom-0 px-3 py-2 text-xs text-center text-indigo-700 bg-gray-50 border-t border-gray-200 cursor-pointer hover:bg-indigo-50">${
+      lookup.loading ? "Memuat..." : `Menampilkan ${lookup.items.length} dari ${lookup.total} · gulir atau klik untuk menampilkan lebih banyak`
+    }</div>`;
+  } else if (lookup.total > 0 && lookup.def.pageSize) {
+    footer = `<div class="px-3 py-1.5 text-xs text-center text-gray-400 border-t border-gray-100">${lookup.total} hasil</div>`;
+  }
+  menu.innerHTML = lookup.items.length ? rows + footer : `<div class="px-3 py-2 text-gray-500">${lookup.loading ? "Mencari..." : "Tidak ada hasil"}</div>`;
   const box = lookup.input.getBoundingClientRect();
-  Object.assign(menu.style, { left: `${box.left}px`, top: `${box.bottom + 4}px`, minWidth: `${Math.max(box.width, 280)}px` });
+  // buka ke bawah bila lega, ke atas bila ruang di bawah sempit; tinggi mengikuti ruang yang ada agar lebih banyak baris terlihat sekaligus
+  const below = window.innerHeight - box.bottom - 12;
+  const above = box.top - 12;
+  const up = below < 220 && above > below;
+  const room = Math.max(160, Math.min(up ? above : below, 460));
+  Object.assign(menu.style, {
+    left: `${box.left}px`, minWidth: `${Math.max(box.width, 280)}px`, maxHeight: `${room}px`,
+    top: up ? "auto" : `${box.bottom + 4}px`, bottom: up ? `${window.innerHeight - box.top + 4}px` : "auto",
+  });
   menu.classList.remove("hidden");
+  menu.scrollTop = lookup.keepScroll ? top : 0; // saat menambah halaman posisi gulir tetap; pencarian baru mulai dari atas
+  if (!lookup.loading) lookup.keepScroll = false;
 }
 
-export function runLookup(input, delay = 0) {
+/** Memuat halaman berikutnya (menambah batas satu halaman) tanpa mengubah baris aktif atau posisi gulir. */
+function loadMore() {
+  if (!hasMore() || lookup.loading) return;
+  lookup.limit += lookup.def.pageSize;
+  lookup.keepScroll = true;
+  runLookup(lookup.input, 0, { more: true });
+}
+
+export function runLookup(input, delay = 0, { more = false } = {}) {
   const def = lookupKinds[input.dataset.lookup];
   if (!def) return;
-  if (!lookup || lookup.input !== input) lookup = { input, def, items: [], active: -1, seq: 0, loading: true };
+  if (!lookup || lookup.input !== input) lookup = { input, def, items: [], total: null, limit: def.pageSize ?? null, active: -1, seq: 0, loading: true, keepScroll: false };
   const current = lookup;
+  if (!more) {
+    current.keepScroll = false;
+    if (def.pageSize) current.limit = def.pageSize; // pencarian baru mulai lagi dari halaman pertama
+  }
   const mine = ++current.seq;
   current.loading = true;
   paintMenu();
   clearTimeout(lookupTimer);
   lookupTimer = setTimeout(async () => {
     try {
-      const items = await def.search(def.isChosen(input) ? "" : input.value.trim(), input);
+      const out = await def.search(def.isChosen(input) ? "" : input.value.trim(), input, { limit: current.limit });
       if (lookup !== current || current.seq !== mine) return; // jawaban usang
-      current.items = items;
-      current.active = items.length ? 0 : -1;
+      current.items = Array.isArray(out) ? out : out.items;
+      current.total = Array.isArray(out) ? null : out.total ?? null;
+      if (!more) current.active = current.items.length ? 0 : -1;
     } catch (error) {
       if (lookup !== current) return;
       current.items = [];
+      current.total = null;
       toast(error.message, "error");
     }
     current.loading = false;
@@ -446,8 +483,12 @@ function chooseItem(index) {
 
 menu.addEventListener("mousedown", (event) => {
   event.preventDefault(); // jaga fokus tetap di field sampai pilihan diproses
+  if (event.target.closest("[data-lookup-more]")) return loadMore();
   const item = event.target.closest("[data-lookup-item]");
   if (item) chooseItem(Number(item.dataset.lookupItem));
+});
+menu.addEventListener("scroll", () => {
+  if (hasMore() && !lookup.loading && menu.scrollTop + menu.clientHeight >= menu.scrollHeight - 48) loadMore();
 });
 window.addEventListener("resize", closeLookup);
 window.addEventListener(
@@ -476,6 +517,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault();
     const count = lookup.items.length;
+    if (event.key === "ArrowDown" && lookup.active === count - 1 && hasMore()) return loadMore(); // di baris terakhir, panah bawah memuat halaman berikutnya
     if (count) {
       lookup.active = (lookup.active + (event.key === "ArrowDown" ? 1 : -1) + count) % count;
       paintMenu();
@@ -488,6 +530,20 @@ document.addEventListener("keydown", (event) => {
     closeLookup();
   }
 });
+
+/** Banyaknya baris per halaman di kotak saran produk (bagian dari `pageSize` pendaftaran lookup). */
+export const PRODUCT_PAGE = 30;
+/**
+ * Pencarian produk bersama untuk semua kotak saran produk. Setiap kata yang diketik harus cocok, urutan bebas, dengan kode, nama, atau barcode
+ * (`display_name` Odoo), jadi "covid bpro" menemukan "[PRL-RDT-COVID] BPRO COVID-19 ...". Hasil diurutkan menurut nama, satu halaman per `limit`,
+ * dan `total` memuat jumlah seluruh yang cocok supaya menu bisa menampilkan "30 dari 41" dan memuat sisanya. Mengembalikan { items, total }.
+ */
+export async function searchProducts(q, { limit = PRODUCT_PAGE } = {}, { model = "product.product", domain = [], fields = ["display_name"] } = {}) {
+  const full = [...domain, ...String(q ?? "").split(/\s+/).filter(Boolean).map((word) => ["display_name", "ilike", word])];
+  const items = await searchRead(model, full, fields, { limit, order: "name" });
+  const total = items.length < limit ? items.length : await call(model, "search_count", { domain: full });
+  return { items, total };
+}
 
 /** Pencarian akun untuk kotak saran: kode atau nama, opsional dibatasi jenis akun. */
 export const searchAccounts = (query, types = null) =>

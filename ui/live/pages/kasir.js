@@ -66,13 +66,15 @@ export async function render(sub, query) {
   paintAll();
 }
 
-const loadProducts = (text) =>
-  searchRead(
-    "product.product",
-    [["available_in_pos", "=", true], ["sale_ok", "=", true], ...(text ? ["|", "|", ["name", "ilike", text], ["default_code", "ilike", text], ["barcode", "=", text]] : [])],
-    ["display_name", "lst_price", "taxes_id", "default_code", "barcode", "uom_id"],
-    { limit: 60, order: "name" },
-  );
+const PRODUCT_LIMIT = 60;
+
+/** Produk untuk grid kasir. Tiap kata harus cocok (urutan bebas) dengan kode, nama, atau barcode; `state.productTotal` mencatat jumlah seluruh yang cocok. */
+async function loadProducts(text) {
+  const domain = [["available_in_pos", "=", true], ["sale_ok", "=", true], ...text.split(/\s+/).filter(Boolean).map((word) => ["display_name", "ilike", word])];
+  const items = await searchRead("product.product", domain, ["display_name", "lst_price", "taxes_id", "default_code", "barcode", "uom_id"], { limit: PRODUCT_LIMIT, order: "name" });
+  state.productTotal = items.length < PRODUCT_LIMIT ? items.length : await call("product.product", "search_count", { domain });
+  return items;
+}
 
 function paintAll() {
   app.innerHTML = `
@@ -102,6 +104,9 @@ function paintProducts() {
         )
         .join("")
     : `<p class="text-sm text-gray-500 sm:col-span-2 xl:col-span-3">Tidak ada produk. Tandai produk sebagai "Dijual di POS" di <a href="#/product" class="text-indigo-700 underline">Product Master</a>.</p>`;
+  if (state.productTotal > state.products.length) {
+    box.insertAdjacentHTML("beforeend", `<p class="text-xs text-gray-500 sm:col-span-2 xl:col-span-3">Menampilkan ${state.products.length} dari ${state.productTotal} produk. Ketik kode, nama, atau barcode di kolom cari untuk mempersempit.</p>`);
+  }
 }
 
 /* ---------- Keranjang dan pajak ---------- */

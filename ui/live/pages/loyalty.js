@@ -6,6 +6,7 @@
 // Nilai bawaan tiap tipe diambil dari `loyalty.program.default_get` (lihat D30); aturan, hadiah, dan komunikasi dikirim
 // eksplisit karena Odoo tidak mengisi `trigger` program yang dibuat lewat API.
 import {
+  PRODUCT_PAGE, searchProducts,
   INPUT, app, badge, button, call, cell, closeLookup, closeModal, ctx, dateText, dateTimeText, esc, fieldBlock, filterSelect, guarded, hasGroup,
   money, openModal, pageHeader, readOne, readonlyValue, referenceCategories, referenceCurrencies, referencePricelists, registerLookup, rowLink, runLookup, searchBox,
   searchRead, selectOptions, statTiles, table, toast,
@@ -62,7 +63,8 @@ const reload = () => render(last.sub, last.query);
 /* ---------- Pencarian produk dan pelanggan (chip) ---------- */
 
 registerLookup("loy-product", {
-  search: (q) => searchRead("product.product", [...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name"], { limit: 10, order: "name" }),
+  pageSize: PRODUCT_PAGE,
+  search: (q, _input, page) => searchProducts(q, page, {}),
   isChosen: () => false,
   choose: (input, item) => {
     const { scope, i, f } = input.dataset;
