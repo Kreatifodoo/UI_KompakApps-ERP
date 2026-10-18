@@ -96,9 +96,11 @@ export const TARGETS = {
       { f: "code", label: "Kode akun", req: true },
       { f: "name", label: "Nama akun", req: true },
       { f: "account_type", label: "Jenis akun (nilai teknis, lihat catatan)", req: true },
+      { f: "kompakapps_report_group", label: "Pos Laporan (opsional; kosongkan agar terisi otomatis)" },
     ],
-    rows: [["61101099", "Beban Lain-lain", "expense"], ["11210099", "Piutang Karyawan", "asset_current"]],
+    rows: [["61101099", "Beban Lain-lain", "expense", ""], ["11210099", "Piutang Karyawan", "asset_current", "Neraca: Piutang Usaha"]],
     notes: [
+      "Pos Laporan menentukan baris Laba Rugi, Neraca, dan Arus Kas tempat akun muncul. Tulis labelnya persis seperti di Chart of Account (mis. Laba Rugi: Penjualan, Neraca: Persediaan, atau Tidak dilaporkan); kosongkan agar terisi otomatis menurut kode dan jenis akun.",
       "Jenis akun: asset_receivable, asset_cash, asset_current, asset_non_current, asset_prepayments, asset_fixed, liability_payable, liability_current, liability_non_current, equity, income, income_other, expense, expense_depreciation, expense_direct_cost.",
     ],
   },

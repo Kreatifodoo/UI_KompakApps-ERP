@@ -57,6 +57,8 @@ const show = (cell) => {
   if (isPct(cell)) return `${(cell.val * 100).toFixed(1).replace(".", ",")} %`;
   return num(cell.val);
 };
+/** Baris uraian per akun di bawah baris pos laporan (hanya Neraca Saldo yang seluruh barisnya per akun, jadi tidak dijorokkan). */
+const isDetail = (row, def) => def?.name !== "mis_neraca_saldo" && row.cells.some((c) => c.drilldown_arg?.account_id);
 const csvNumber = (cell) => (cell.val === null || cell.val === undefined ? "" : isPct(cell) ? (cell.val * 100).toFixed(2) : String(cell.val));
 
 /** Sel hasil rumus akun (balp[...], bale[...]) bisa diurai ke item jurnal; sel turunan (nama KPI) tidak. */
@@ -98,18 +100,22 @@ function renderIndex() {
       .join("")}</div>`;
 }
 
+const SINCE_START = new Date(2000, 0, 1);
+
 async function periods(def, query) {
   fiscal ??= await readOne("res.company", ctx.company.id, ["fiscalyear_last_day", "fiscalyear_last_month"]).then((c) => ({
     day: c?.fiscalyear_last_day ?? 31, month: c?.fiscalyear_last_month ?? 12,
   }));
   const today = new Date();
   const to = query.get("to") ? parse(query.get("to")) : today;
-  const from = def.mode === "asof" ? fiscalStart(to) : query.get("from") ? parse(query.get("from")) : fiscalStart(to);
+  // Neraca per tanggal dihitung kumulatif sejak awal pencatatan: laba tahun-tahun sebelumnya yang belum ditutup ke saldo laba tetap masuk ekuitas
+  // (tanpa itu aset dan ekuitas selisih sebesar saldo akun laba rugi tahun lalu).
+  const from = def.mode === "asof" ? SINCE_START : query.get("from") ? parse(query.get("from")) : fiscalStart(to);
   const compare = def.compare === false ? "none" : query.get("cmp") || "none";
   const list = [{ label: def.mode === "asof" ? `Per ${dateText(iso(to))}` : `${dateText(iso(from))} s.d. ${dateText(iso(to))}`, from: iso(from), to: iso(to) }];
   if (compare === "year") {
     const toPrev = shiftYear(to, -1);
-    const fromPrev = def.mode === "asof" ? fiscalStart(toPrev) : shiftYear(from, -1);
+    const fromPrev = def.mode === "asof" ? SINCE_START : shiftYear(from, -1);
     list.push({ label: def.mode === "asof" ? `Per ${dateText(iso(toPrev))}` : `${dateText(iso(fromPrev))} s.d. ${dateText(iso(toPrev))}`, from: iso(fromPrev), to: iso(toPrev) });
   } else if (compare === "prev" && def.mode === "range") {
     const length = Math.round((to - from) / 86400000);
@@ -171,7 +177,8 @@ async function renderReport(sub, def, query) {
           ? `<td class="py-2 px-4 text-sm text-right tabular-nums">${num(a.val - b.val)}</td><td class="py-2 px-4 text-sm text-right tabular-nums text-gray-500">${b.val ? `${(((a.val - b.val) / Math.abs(b.val)) * 100).toFixed(1).replace(".", ",")} %` : ""}</td>`
           : '<td></td><td></td>';
       }
-      return `<tr style="${esc(row.style ?? "")}"><td class="py-2 px-4 text-sm" style="${esc(row.style ?? "")}">${esc(row.label)}</td>${cells}${variance}</tr>`;
+      const detail = isDetail(row, def);
+      return `<tr style="${esc(row.style ?? "")}"><td class="py-2 px-4 text-sm ${detail ? "pl-10 text-gray-600" : ""}" style="${esc(row.style ?? "")}">${esc(row.label)}</td>${cells}${variance}</tr>`;
     })
     .join("");
 
@@ -200,7 +207,7 @@ async function renderReport(sub, def, query) {
       <table class="w-full text-left" id="report-table"><thead class="bg-gray-50 border-b border-gray-200"><tr>${head1}</tr>${head2}</thead>
         <tbody class="divide-y divide-gray-100">${rows}</tbody></table>
     </div>
-    <p class="text-xs text-gray-500 mt-3">Angka bertanda kurung bernilai negatif. Klik angka untuk melihat item jurnalnya. Baris bertanda "harus 0" menyala bila ada akun di luar pemetaan template.</p>`;
+    <p class="text-xs text-gray-500 mt-3">Angka bertanda kurung bernilai negatif. Klik angka untuk melihat item jurnalnya. Baris menjorok adalah uraian per akun; akun baru muncul sendiri menurut Pos Laporan-nya di <a href="#/account" class="underline">Chart of Account</a>. Baris bertanda "harus 0" menyala bila ada akun bersaldo yang dipilih Tidak dilaporkan.</p>`;
 }
 
 /* ---------- Drilldown ---------- */
@@ -249,7 +256,7 @@ function downloadCsv() {
     const subs = result.header[1].cols.filter((s) => s.label);
     return c.colspan > 1 && subs.length ? subs.map((s) => `${c.label} - ${s.label}`) : [c.label || `Kolom ${i + 1}`];
   })];
-  const lines = [header, ...result.body.map((row) => [row.label, ...row.cells.map(csvNumber)])];
+  const lines = [header, ...result.body.map((row) => [isDetail(row, REPORTS[last.sub]) ? `    ${row.label}` : row.label, ...row.cells.map(csvNumber)])];
   const text = lines.map((cells) => cells.map((v) => `"${String(v).replaceAll('"', '""')}"`).join(",")).join("\n");
   const link = document.createElement("a");
   link.href = URL.createObjectURL(new Blob([`﻿${text}`], { type: "text/csv;charset=utf-8" }));

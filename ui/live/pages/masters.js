@@ -13,7 +13,7 @@ const ARCHIVE_FILTERS = [["active", "Aktif"], ["archived", "Diarsipkan"]];
  *   route, title, noun, model, newLabel, empty, order, limit, archive,
  *   listFields: [...], columns: [{ label, value(record), right?, raw? }], search: ["name", ...],
  *   filters: [{ key, label, options: [[value, label]], domain(value) }],
- *   fields: [{ key, label, type, required?, options?, optionsOf?(refs), readonly?, show?(values), span2?, hint?, placeholder? }],
+ *   fields: [{ key, label, type, required?, options?, optionsOf?(refs, values), readonly?, show?(values), span2?, hint?, placeholder? }],
  *   readFields, loadRefs?(), newValues?(refs), extraCreate?(values, refs), tiles?(record), extra?(record, refs), titleOf?(record),
  * }
  */
@@ -104,7 +104,7 @@ export function createMasterPage(config) {
       case "date": return `<input type="date" ${data} value="${esc(v[f.key])}" ${dis} class="${INPUT}">`;
       case "check": return `<label class="flex items-center gap-2 text-sm text-gray-700 mt-2"><input type="checkbox" ${data} ${v[f.key] ? "checked" : ""} ${dis} class="rounded border-gray-300 text-indigo-600"> ${esc(f.checkLabel ?? f.label)}</label>`;
       case "select": {
-        const options = f.options ?? f.optionsOf?.(refs) ?? [];
+        const options = f.options ?? f.optionsOf?.(refs, v) ?? [];
         return `<select ${data} ${dis} class="${INPUT}">${options.map(([k, l]) => `<option value="${esc(k)}" ${String(k) === String(v[f.key]) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
       }
       case "m2o": return `<select ${data} data-kind="id" ${dis} class="${INPUT}">${selectOptions(f.optionsOf?.(refs) ?? [], v[f.key], f.blank ?? "-")}</select>`;
