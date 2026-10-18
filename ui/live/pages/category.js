@@ -1,6 +1,7 @@
 // Product Category (product.category). Kategori menentukan pencatatan akuntansi produknya: metode biaya
 // (standar/FIFO/rata-rata), valuasi persediaan (periodik/perpetual), akun pendapatan, beban, persediaan,
-// dan selisih harga. Nilai ini yang menentukan akun yang didebit saat tagihan vendor diposting.
+// dan selisih harga. Nilai ini yang menentukan akun yang didebit saat tagihan vendor diposting. Bila akun Barang Diterima dan Barang Terkirim Belum Ditagih
+// terisi (metode biaya FIFO atau rata-rata), setiap penerimaan dan pengiriman juga dijurnal saat terjadi dengan akun kategori ini (D69).
 import {
   ACCOUNT_TYPE_LABELS, INPUT, app, call, cell, changedValues, closeLookup, esc, fieldBlock, fieldValue, guarded, pageHeader, readOne, REMOVAL_HELP,
   referenceCategories, referenceJournals, referenceRemovals, removalNote, removalSelect, registerLookup, resetReferences, rowLink, runLookup,
@@ -13,6 +14,8 @@ const ACCOUNT_FIELDS = {
   property_account_income_categ_id: { label: "Akun Pendapatan", types: ["income", "income_other"] },
   property_account_expense_categ_id: { label: "Akun Beban", types: ["expense", "expense_direct_cost", "expense_other"] },
   property_stock_valuation_account_id: { label: "Akun Persediaan (Valuasi Stok)", types: ["asset_current", "asset_non_current"] },
+  kompakapps_stock_input_account_id: { label: "Akun Barang Diterima Belum Ditagih", types: ["liability_current", "liability_non_current", "asset_current"] },
+  kompakapps_stock_output_account_id: { label: "Akun Barang Terkirim Belum Ditagih", types: ["asset_current", "liability_current"] },
   property_price_difference_account_id: { label: "Akun Selisih Harga", types: ["expense", "expense_direct_cost", "expense_other", "income_other"] },
 };
 const READ_FIELDS = [
@@ -49,6 +52,8 @@ registerLookup("cat-account", {
     form.values[input.dataset.key] = item;
     form.pending.delete(input.dataset.key);
     input.value = item.display_name;
+    const note = document.querySelector("#journal-note");
+    if (note) note.innerHTML = journalNote(form.values);
   },
 });
 
@@ -95,11 +100,18 @@ async function renderList(query) {
 
 /** Penjelasan jurnal yang tercipta menurut valuasi yang dipilih: inilah yang membuat pengaturan ini penting. */
 function journalNote(v) {
-  const stock = v.property_stock_valuation_account_id?.display_name ?? "akun Persediaan";
-  const expense = v.property_account_expense_categ_id?.display_name ?? "akun Beban";
-  return v.property_valuation === "real_time"
-    ? `<b>Perpetual:</b> tagihan vendor atas barang stok mendebit <b>${esc(stock)}</b>, bukan akun beban. Barang diterima tanpa jurnal; nilainya dicatat pada pergerakan stok dan dijurnal saat tagihan diposting.`
-    : `<b>Periodik:</b> tagihan vendor atas barang stok langsung mendebit <b>${esc(expense)}</b>. Persediaan baru disesuaikan lewat jurnal saat tutup periode.`;
+  const name = (key, fallback) => esc(v[key]?.display_name ?? fallback);
+  const stock = name("property_stock_valuation_account_id", "akun Persediaan");
+  const expense = name("property_account_expense_categ_id", "akun Beban");
+  const input = v.kompakapps_stock_input_account_id?.display_name;
+  const output = v.kompakapps_stock_output_account_id?.display_name;
+  if (v.property_valuation !== "real_time") {
+    return `<b>Periodik:</b> tagihan vendor atas barang stok langsung mendebit <b>${expense}</b>. Persediaan baru disesuaikan lewat jurnal saat tutup periode.`;
+  }
+  if (v.property_cost_method !== "standard" && input && output) {
+    return `<b>Perpetual, dijurnal pada setiap transaksi:</b> penerimaan Dr <b>${stock}</b>, Cr <b>${esc(input)}</b>; tagihan vendor Dr <b>${esc(input)}</b>, Cr Hutang Usaha. Pengiriman Dr <b>${esc(output)}</b>, Cr <b>${stock}</b>; faktur pelanggan Dr <b>${expense}</b> (HPP), Cr <b>${esc(output)}</b>. Stok opname, scrap, dan produksi memakai akun pada lokasi virtualnya. Jurnalnya masuk ke Jurnal Stok kategori ini.`;
+  }
+  return `<b>Perpetual saat ditagih:</b> tagihan vendor atas barang stok mendebit <b>${stock}</b>, bukan akun beban; faktur pelanggan mencatat HPP (Dr ${expense}, Cr ${stock}). Penerimaan dan pengiriman barang belum dijurnal. Untuk menjurnalnya saat terjadi, pilih metode FIFO atau rata-rata dan isi Akun Barang Diterima dan Barang Terkirim Belum Ditagih.`;
 }
 
 async function renderForm(id) {
@@ -147,6 +159,8 @@ async function renderForm(id) {
       ${accountInput("property_account_income_categ_id")}
       ${accountInput("property_account_expense_categ_id")}
       ${accountInput("property_stock_valuation_account_id")}
+      ${accountInput("kompakapps_stock_input_account_id")}
+      ${accountInput("kompakapps_stock_output_account_id")}
       ${fieldBlock("Jurnal Stok", `<select data-value="property_stock_journal" data-kind="id" class="${INPUT}">${selectOptions(journals, v.property_stock_journal, "-")}</select>`)}
       ${accountInput("property_price_difference_account_id")}
     </section>

@@ -1,5 +1,6 @@
 // Scrap (stock.scrap): membuang barang dari stok. Draft bisa diubah atau dihapus; Validasi memindahkan stok ke
-// lokasi Inventory Loss. Odoo 19 mencatat nilainya pada pergerakan stok tanpa jurnal otomatis.
+// lokasi Scrap (bawaan; lokasi lain berjenis inventory bisa dipilih). Nilainya dicatat pada pergerakan stok dan dijurnal bila lokasi tujuan
+// punya akun valuasi (Dr Beban Barang Rusak, Cr Persediaan, D69).
 import {
   INPUT, app, badge, call, cell, dateTimeText, esc, fieldBlock, guarded, pageHeader, readOne, readonlyValue, registerLookup, rowLink, runLookup,
   searchBox, searchRead, selectOptions, statusbar, table, toast, button, filterSelect, chatterHtml, loadMessages,
@@ -97,7 +98,7 @@ async function renderForm(id) {
     const [tracking] = scrap ? await searchRead("product.product", [["id", "=", scrap.product_id[0]]], ["tracking"], { limit: 1 }) : [];
     form = scrap
       ? { id: scrap.id, product: { id: scrap.product_id[0], display_name: scrap.product_id[1], uom_id: scrap.product_uom_id, tracking: tracking?.tracking ?? "none" }, qty: scrap.scrap_qty, location: scrap.location_id[0], scrapLocation: scrap.scrap_location_id[0], origin: scrap.origin || "", lot: scrap.lot_id?.[0] ?? null }
-      : { id: null, product: null, qty: "", location: r.internal[0]?.id ?? null, scrapLocation: r.scrap[0]?.id ?? null, origin: "", lot: null };
+      : { id: null, product: null, qty: "", location: r.internal[0]?.id ?? null, scrapLocation: (r.scrap.find((l) => /scrap$/i.test(l.display_name)) ?? r.scrap[0])?.id ?? null, origin: "", lot: null };
   }
   const f = form;
   const choices = editable && isTracked(f.product) ? await lotChoices(f.product, f.location) : [];

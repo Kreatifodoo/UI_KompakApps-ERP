@@ -1,9 +1,18 @@
 import logging
 
-from odoo import _, models
+from odoo import Command, _, models
 from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
+
+# Akun untuk jurnal per transaksi inventori (Q49, D69): (kunci, kode, nama, jenis akun). Akun Barang Diterima memakai "Interim Stock" bawaan l10n_id bila ada.
+STOCK_JOURNAL_ACCOUNTS = [
+    ("input", "29000000", "Barang Diterima Belum Ditagih", "liability_current"),
+    ("output", "11300190", "Barang Terkirim Belum Ditagih", "asset_current"),
+    ("wip", "11300200", "Barang Dalam Proses", "asset_current"),
+    ("adjustment", "51000030", "Selisih Persediaan (Stock Opname)", "expense_direct_cost"),
+    ("scrap", "51000040", "Beban Barang Rusak (Scrap)", "expense_direct_cost"),
+]
 
 
 class ResCompany(models.Model):
@@ -47,6 +56,7 @@ class ResCompany(models.Model):
                 ]
             ).write({"currency_id": idr.id})
             company.kompakapps_setup_inventory_valuation()
+            company.kompakapps_setup_stock_journals()
         return True
 
     def kompakapps_setup_warehouse(self):
@@ -81,9 +91,10 @@ class ResCompany(models.Model):
 
         Bawaan Odoo 19 adalah periodik dengan harga standar: tagihan vendor atas barang stok
         langsung mendebit akun beban (COGS) dan persediaan baru disesuaikan saat tutup periode.
-        Untuk Indonesia (PSAK 14) persediaan dicatat saat barang ditagih: tagihan mendebit akun
-        Persediaan, dan biaya rata-rata mengikuti harga beli. Odoo 19 tidak membuat jurnal saat
-        penerimaan barang; jurnal valuasi muncul saat tagihan vendor diposting.
+        Untuk Indonesia (PSAK 14) persediaan memakai biaya rata-rata yang mengikuti harga beli.
+        Pada bawaan Odoo 19 jurnal valuasi muncul saat tagihan vendor atau faktur pelanggan diposting;
+        jurnal pada saat penerimaan, pengiriman, opname, scrap, dan produksi diaktifkan terpisah oleh
+        `kompakapps_setup_stock_journals`.
 
         Hanya kategori Goods yang diubah (Services dan Expenses tidak menyimpan stok).
         Jurnal yang sudah ada tidak diubah; hanya transaksi berikutnya yang memakai aturan ini.
@@ -108,5 +119,49 @@ class ResCompany(models.Model):
                     "Perusahaan %s sudah punya %s pergerakan barang stok; jurnal lama tidak diubah.",
                     company.name,
                     valued,
+                )
+        return True
+
+    def kompakapps_setup_stock_journals(self):
+        """Aktifkan jurnal pada transaksi inventori mengikuti Product Category (Q49, D69).
+
+        Membuat akun yang belum ada (Barang Terkirim Belum Ditagih, Barang Dalam Proses, Selisih Persediaan, Scrap; Barang Diterima memakai "Interim Stock"
+        bawaan l10n_id), mengisi akun Barang Diterima dan Barang Terkirim pada kategori berbiaya rata-rata atau FIFO yang belum punya (kategori baru ikut
+        kategori induk atau Goods), dan memberi akun valuasi pada lokasi virtual: Inventory adjustment (selisih opname), Scrap (lokasi baru), dan Production
+        (barang dalam proses). Hanya mengisi yang masih kosong, jadi pilihan yang sudah dibuat pengguna tidak ditimpa. Transaksi lama tidak dijurnal ulang;
+        dokumen yang sudah ditagih atau difakturkan dengan pola lama dilewati. Aman dijalankan ulang.
+        """
+        Account = self.env["account.account"]
+        Location = self.env["stock.location"].sudo().with_context(active_test=False)
+        for company in self:
+            if not (company.anglo_saxon_accounting and company.inventory_valuation == "real_time"):
+                continue
+            account = {}
+            for key, code, name, account_type in STOCK_JOURNAL_ACCOUNTS:
+                found = Account.with_company(company).search([("code", "=", code), ("company_ids", "in", company.id)], limit=1)
+                if not found:
+                    found = Account.with_company(company).create(
+                        {"code": code, "name": name, "account_type": account_type, "company_ids": [Command.link(company.id)]}
+                    )
+                account[key] = found
+            categories = self.env["product.category"].with_company(company).search([])
+            for category in categories.filtered(lambda c: c.property_cost_method in ("average", "fifo")):
+                for field, key in (("kompakapps_stock_input_account_id", "input"), ("kompakapps_stock_output_account_id", "output")):
+                    if not category[field]:
+                        category[field] = account[key]
+            for usage, key in (("inventory", "adjustment"), ("production", "wip")):
+                for location in Location.search([("company_id", "=", company.id), ("usage", "=", usage)]):
+                    if not location.valuation_account_id:
+                        location.valuation_account_id = account[key]
+            adjustment = Location.search([("company_id", "=", company.id), ("usage", "=", "inventory")], order="id", limit=1)
+            if adjustment and not Location.search_count([("company_id", "=", company.id), ("usage", "=", "inventory"), ("name", "=", "Scrap")]):
+                Location.create(
+                    {
+                        "name": "Scrap",
+                        "usage": "inventory",
+                        "location_id": adjustment.location_id.id,
+                        "company_id": company.id,
+                        "valuation_account_id": account["scrap"].id,
+                    }
                 )
         return True

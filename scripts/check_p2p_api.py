@@ -155,11 +155,12 @@ def main():
     check(abs(sum(i["debit"] for i in items) - sum(i["credit"] for i in items)) < 0.005, "jurnal tagihan seimbang")
     payable = [i for i in items if i["credit"]]
     check(len(payable) == 1 and payable[0]["credit"] == bill["amount_total"], "hutang usaha dikredit sebesar total tagihan")
-    category = api.read("product.category", product["categ_id"][0], ["property_valuation", "property_stock_valuation_account_id"]) if product["categ_id"] else None
+    category = api.read("product.category", product["categ_id"][0], ["property_valuation", "property_stock_valuation_account_id", "kompakapps_stock_input_account_id"]) if product["categ_id"] else None
     check(category is not None, "produk contoh punya kategori (tanpa kategori barang stok tidak masuk Persediaan)")
     if category and category["property_valuation"] == "real_time":
-        stock_account = category["property_stock_valuation_account_id"][0]
-        check(any(i["account_id"][0] == stock_account and i["debit"] == 1_000_000.0 for i in items), "valuasi perpetual: tagihan mendebit akun Persediaan, bukan beban")
+        # dengan jurnal per transaksi (D69) tagihan mendebit Barang Diterima Belum Ditagih (penerimaan sudah mendebit Persediaan); tanpa itu langsung Persediaan
+        debit_account = (category["kompakapps_stock_input_account_id"] or category["property_stock_valuation_account_id"])[0]
+        check(any(i["account_id"][0] == debit_account and i["debit"] == 1_000_000.0 for i in items), "valuasi perpetual: tagihan mendebit Barang Diterima Belum Ditagih atau Persediaan, bukan beban")
 
     step("Pembayaran sebagian lalu pelunasan lewat wizard Register Payment")
     pay_context = {"active_model": "account.move", "active_ids": [bill_id]}
@@ -193,6 +194,7 @@ def main():
     check_report_groups(api)
     check_bank_reconciliation(api)
     check_inventory(api, product)
+    check_stock_journals(api, vendor)
     check_warehouse_master(api, product)
     check_multi_warehouse(api)
     check_stock_picker(api)
@@ -323,7 +325,18 @@ def check_order_to_cash(api, product):
     api.call("stock.move", "write", ids=[move["id"]], vals={"quantity": 3.0, "picked": True})
     check(api.call("stock.picking", "button_validate", ids=[picking["id"]]) is True, "pengiriman divalidasi tanpa dialog")
     check(api.read("sale.order", so_id, ["delivery_status"])["delivery_status"] == "full", "SO terkirim penuh")
-    check(journal_count() == before, "pengiriman barang tidak membuat jurnal")
+    categ = api.read("product.category", product["categ_id"][0], ["property_stock_valuation_account_id", "kompakapps_stock_output_account_id"])
+    delivered = api.read("stock.move", move["id"], ["account_move_id", "value"])
+    if categ["kompakapps_stock_output_account_id"]:
+        stock_id, output_id = categ["property_stock_valuation_account_id"][0], categ["kompakapps_stock_output_account_id"][0]
+        check(journal_count() == before + 1 and bool(delivered["account_move_id"]), "pengiriman barang dijurnal saat barang keluar (satu jurnal baru)")
+        entry = api.search("account.move.line", [["move_id", "=", (delivered["account_move_id"] or [0])[0]]], ["account_id", "debit", "credit"])
+        check(
+            sorted((i["account_id"][0], i["debit"], i["credit"]) for i in entry) == sorted([(output_id, delivered["value"], 0.0), (stock_id, 0.0, delivered["value"])]) and delivered["value"] > 0,
+            f"pengiriman: Dr Barang Terkirim Belum Ditagih dan Cr Persediaan sebesar nilai pergerakan ({delivered['value']:,.0f})",
+        )
+    else:
+        check(journal_count() == before, "pengiriman barang tidak membuat jurnal")
 
     context = {"active_model": "sale.order", "active_ids": [so_id], "active_id": so_id}
     wizard = api.call("sale.advance.payment.inv", "create", vals_list=[{}], context=context)
@@ -344,7 +357,9 @@ def check_order_to_cash(api, product):
     cost = [i for i in items if types[i["account_id"][0]] in ("expense", "expense_direct_cost") and i["debit"]]
     stock = [i for i in items if types[i["account_id"][0]] == "asset_current" and i["credit"]]
     if cost and stock:
-        check(sum(i["debit"] for i in cost) == sum(i["credit"] for i in stock) > 0, "valuasi perpetual: HPP didebit dan Persediaan dikredit sama besar")
+        check(sum(i["debit"] for i in cost) == sum(i["credit"] for i in stock) > 0, "valuasi perpetual: HPP didebit dan Persediaan atau Barang Terkirim dikredit sama besar")
+        if categ["kompakapps_stock_output_account_id"]:
+            check({i["account_id"][0] for i in stock} == {categ["kompakapps_stock_output_account_id"][0]}, "faktur mengkredit Barang Terkirim Belum Ditagih (Persediaan sudah dikredit saat pengiriman)")
     else:
         check(False, "faktur penjualan barang stok harus menjurnal HPP dan Persediaan (valuasi perpetual)")
 
@@ -382,7 +397,14 @@ def check_inventory(api, product):
     check(on_hand() == start - 2, "penerapan hitungan fisik mengubah stok")
     adjustment = api.search("stock.move", [["product_id", "=", product["id"]], ["is_inventory", "=", True]], ["value", "state", "account_move_id"], order="id desc", limit=1)[0]
     check(adjustment["state"] == "done" and abs(adjustment["value"]) > 0, "penyesuaian dinilai pada pergerakan stok")
-    check(not adjustment["account_move_id"] and api.call("account.move", "search_count", domain=[]) == journals_before, "penyesuaian stok tidak dijurnal otomatis (dipantau di Laporan Stok)")
+    stock_id = api.read("product.category", product["categ_id"][0], ["property_stock_valuation_account_id"])["property_stock_valuation_account_id"][0]
+    entry = api.search("account.move.line", [["move_id", "=", (adjustment["account_move_id"] or [0])[0]]], ["account_id", "debit", "credit"])
+    check(bool(adjustment["account_move_id"]) and api.call("account.move", "search_count", domain=[]) == journals_before + 1, "penyesuaian stok dijurnal saat diterapkan (satu jurnal baru)")
+    check(
+        len(entry) == 2 and {i["account_id"][0] for i in entry if i["credit"]} == {stock_id} and stock_id not in {i["account_id"][0] for i in entry if i["debit"]}
+        and abs(sum(i["credit"] for i in entry) - abs(adjustment["value"])) < 0.005,
+        "selisih kurang: Dr Selisih Persediaan, Cr Persediaan sebesar nilai penyesuaian",
+    )
 
     scrap_vals = {"product_id": product["id"], "scrap_qty": 1.0, "location_id": quant["location_id"][0], "product_uom_id": product["uom_id"][0]}
     [scrap] = api.call("stock.scrap", "create", vals_list=[scrap_vals])
@@ -421,6 +443,92 @@ def check_inventory(api, product):
         api.call("stock.warehouse.orderpoint", "write", ids=[rule], vals=original)
     else:
         api.call("stock.warehouse.orderpoint", "unlink", ids=[rule])
+
+
+def check_stock_journals(api, vendor):
+    """Jurnal pada transaksi inventori mengikuti Product Category (D69): penerimaan Dr Persediaan Cr Barang Diterima Belum Ditagih, tagihan membersihkannya
+    (selisih harga dikoreksi), pengiriman Dr Barang Terkirim Cr Persediaan, faktur membersihkannya dengan HPP (juga bila ditagih bertahap), opname dan scrap
+    lewat akun lokasi. Saldo dihitung per produk supaya tidak bercampur dengan pengujian lain."""
+    import random
+
+    step("Jurnal per transaksi inventori: penerimaan, tagihan, pengiriman, faktur, opname, scrap")
+    tag = f"{random.randint(0, 99999):05d}"
+    goods = api.search("product.category", [["name", "=", "Goods"]], ["property_stock_valuation_account_id", "kompakapps_stock_input_account_id", "kompakapps_stock_output_account_id", "property_account_expense_categ_id"], limit=1)[0]
+    stock_acc, input_acc, output_acc = (goods[f][0] for f in ("property_stock_valuation_account_id", "kompakapps_stock_input_account_id", "kompakapps_stock_output_account_id"))
+    cogs_acc = goods["property_account_expense_categ_id"][0]
+    [tmpl] = api.call("product.template", "create", vals_list=[{"name": f"Jurnal Stok {tag}", "type": "consu", "is_storable": True, "categ_id": api.search("product.category", [["name", "=", "Goods"]], ["id"], limit=1)[0]["id"], "standard_price": 0.0, "list_price": 150_000.0, "taxes_id": [[5, 0, 0]], "supplier_taxes_id": [[5, 0, 0]]}])
+    info = api.read("product.template", tmpl, ["product_variant_id", "uom_id"])
+    pid = info["product_variant_id"][0]
+
+    def bal(account):
+        rows = api.call("account.move.line", "formatted_read_group", domain=[["account_id", "=", account], ["product_id", "=", pid], ["parent_state", "=", "posted"]], groupby=[], aggregates=["balance:sum"])
+        return round(rows[0]["balance:sum"], 2) if rows else 0.0
+
+    def balances():
+        return bal(stock_acc), bal(input_acc), bal(output_acc), bal(cogs_acc)
+
+    def entry_of(move):
+        entry = api.read("stock.move", move, ["account_move_id"])["account_move_id"]
+        lines = api.search("account.move.line", [["move_id", "=", (entry or [0])[0]]], ["account_id", "debit", "credit"]) if entry else []
+        return {i["account_id"][0]: (i["debit"], i["credit"]) for i in lines}
+
+    # penerimaan 10 @ 100.000, lalu tagihan 10 @ 110.000
+    [po] = api.call("purchase.order", "create", vals_list=[{"partner_id": vendor["id"], "order_line": [[0, 0, {"product_id": pid, "name": f"Jurnal Stok {tag}", "product_qty": 10.0, "product_uom_id": info["uom_id"][0], "price_unit": 100_000.0}]]}])
+    api.call("purchase.order", "button_confirm", ids=[po])
+    receipt = api.search("stock.picking", [["purchase_id", "=", po]], ["id"])[0]["id"]
+    rmove = api.search("stock.move", [["picking_id", "=", receipt]], ["id"])[0]["id"]
+    api.call("stock.move", "write", ids=[rmove], vals={"quantity": 10.0, "picked": True})
+    check(api.call("stock.picking", "button_validate", ids=[receipt]) is True, "penerimaan 10 unit divalidasi")
+    check(entry_of(rmove) == {stock_acc: (1_000_000.0, 0.0), input_acc: (0.0, 1_000_000.0)}, "penerimaan: Dr Persediaan 1.000.000, Cr Barang Diterima Belum Ditagih 1.000.000")
+    check(balances() == (1_000_000.0, -1_000_000.0, 0.0, 0.0), "saldo setelah penerimaan: persediaan 1.000.000 dan barang diterima belum ditagih -1.000.000")
+    api.call("purchase.order", "action_create_invoice", ids=[po])
+    bill_id = api.read("purchase.order", po, ["invoice_ids"])["invoice_ids"][-1]
+    line = api.search("account.move.line", [["move_id", "=", bill_id], ["display_type", "=", "product"]], ["id", "account_id"])[0]
+    check(line["account_id"][0] == input_acc, "baris tagihan barang stok memakai akun Barang Diterima Belum Ditagih, bukan Persediaan")
+    api.call("account.move.line", "write", ids=[line["id"]], vals={"price_unit": 110_000.0})
+    api.call("account.move", "write", ids=[bill_id], vals={"invoice_date": datetime.date.today().isoformat()})
+    api.call("account.move", "action_post", ids=[bill_id])
+    check(balances() == (1_100_000.0, 0.0, 0.0, 0.0), "setelah tagihan 110.000 per unit: Barang Diterima habis dan Persediaan dikoreksi menjadi 1.100.000")
+    check(abs(api.read("product.product", pid, ["total_value"])["total_value"] - 1_100_000.0) < 0.5, "saldo Persediaan sama dengan nilai stok produk")
+
+    # pengiriman 4 unit, faktur bertahap 2 + 2
+    [so] = api.call("sale.order", "create", vals_list=[{"partner_id": api.search("res.partner", [["customer_rank", ">", 0]], ["id"], limit=1)[0]["id"], "order_line": [[0, 0, {"product_id": pid, "product_uom_qty": 4.0}]]}])
+    api.call("sale.order", "action_confirm", ids=[so])
+    delivery = api.search("stock.picking", [["sale_id", "=", so]], ["id"])[0]["id"]
+    dmove = api.search("stock.move", [["picking_id", "=", delivery]], ["id"])[0]["id"]
+    api.call("stock.move", "write", ids=[dmove], vals={"quantity": 4.0, "picked": True})
+    check(api.call("stock.picking", "button_validate", ids=[delivery]) is True, "pengiriman 4 unit divalidasi")
+    check(entry_of(dmove) == {output_acc: (440_000.0, 0.0), stock_acc: (0.0, 440_000.0)}, "pengiriman: Dr Barang Terkirim Belum Ditagih 440.000 (4 x 110.000), Cr Persediaan 440.000")
+    check(balances() == (660_000.0, 0.0, 440_000.0, 0.0), "saldo setelah pengiriman: persediaan 660.000 dan barang terkirim belum ditagih 440.000")
+
+    def invoice(quantity):
+        context = {"active_model": "sale.order", "active_ids": [so], "active_id": so}
+        wizard = api.call("sale.advance.payment.inv", "create", vals_list=[{}], context=context)
+        invoice_id = api.call("sale.advance.payment.inv", "create_invoices", ids=wizard, context=context)["res_id"]
+        item = api.search("account.move.line", [["move_id", "=", invoice_id], ["display_type", "=", "product"]], ["id"])[0]["id"]
+        api.call("account.move.line", "write", ids=[item], vals={"quantity": quantity})
+        api.call("account.move", "action_post", ids=[invoice_id])
+        return invoice_id
+
+    invoice(2.0)
+    check(balances() == (660_000.0, 0.0, 220_000.0, 220_000.0), "faktur pertama 2 unit: HPP 220.000 didebit dan Barang Terkirim dikredit 220.000")
+    invoice(2.0)
+    check(balances() == (660_000.0, 0.0, 0.0, 440_000.0), "faktur kedua 2 unit: HPP total 440.000, tidak dihitung dua kali, Barang Terkirim habis")
+
+    # opname: hitung 5 unit (dari 6), scrap 1 unit lewat lokasi Scrap
+    quant = api.search("stock.quant", [["product_id", "=", pid], ["location_id.usage", "=", "internal"]], ["id", "quantity", "location_id"])[0]
+    mode = {"inventory_mode": True}
+    api.call("stock.quant", "write", ids=[quant["id"]], vals={"inventory_quantity": quant["quantity"] - 1}, context=mode)
+    api.call("stock.quant", "action_apply_inventory", ids=[quant["id"]], context=mode)
+    check(balances()[0] == 550_000.0, "opname kurang 1 unit: Persediaan berkurang 110.000 (Dr Selisih Persediaan)")
+    scrap_location = api.search("stock.location", [["usage", "=", "inventory"], ["name", "=", "Scrap"]], ["id", "valuation_account_id"], limit=1)
+    check(bool(scrap_location) and bool(scrap_location[0]["valuation_account_id"]), "lokasi Scrap ada dan punya akun valuasi sendiri")
+    [scrap] = api.call("stock.scrap", "create", vals_list=[{"product_id": pid, "scrap_qty": 1.0, "location_id": quant["location_id"][0], "product_uom_id": info["uom_id"][0], "scrap_location_id": scrap_location[0]["id"]}])
+    check(api.call("stock.scrap", "action_validate", ids=[scrap]) is True, "scrap 1 unit divalidasi")
+    check(balances()[0] == 440_000.0 and abs(api.read("product.product", pid, ["total_value"])["total_value"] - 440_000.0) < 0.5, "setelah scrap: Persediaan 440.000 sama dengan nilai stok produk")
+    scrap_move = api.read("stock.scrap", scrap, ["move_ids"])["move_ids"][0]
+    scrap_entry = api.search("account.move.line", [["move_id", "=", (api.read("stock.move", scrap_move, ["account_move_id"])["account_move_id"] or [0])[0]]], ["account_id", "debit", "credit"])
+    check({i["account_id"][0] for i in scrap_entry if i["debit"]} == {scrap_location[0]["valuation_account_id"][0]}, "scrap mendebit akun Beban Barang Rusak milik lokasi Scrap")
 
 
 def check_warehouse_master(api, product):
@@ -934,7 +1042,12 @@ def check_manufacturing(api):
     minutes = api.read("mrp.workorder", workorder, ["duration"])["duration"]
     expected_cost = (4 * 10_000.0 + 2 * 5_000.0 + minutes / 60 * 60_000.0) * 0.9 / 2
     check(abs(cost - expected_cost) < 0.5, f"biaya barang jadi = (komponen + operasi {minutes:g} menit) dikurangi porsi sampingan 10% ({cost:,.0f} per unit)")
-    check(api.call("account.move", "search_count", domain=[]) == journals, "produksi tidak membuat jurnal (valuasi saat penagihan)")
+    # produksi dijurnal saat selesai lewat akun Barang Dalam Proses pada lokasi Production (D69): komponen keluar, barang jadi dan produk sampingan masuk
+    moves_done = api.search("stock.move", ["|", ["production_id", "=", mo], ["raw_material_production_id", "=", mo], ["state", "=", "done"]], ["account_move_id", "value"])
+    entry_ids = sorted({m["account_move_id"][0] for m in moves_done if m["account_move_id"]})
+    check(bool(entry_ids) and api.call("account.move", "search_count", domain=[]) > journals and all(m["account_move_id"] for m in moves_done if m["value"]), "produksi dijurnal saat selesai: komponen keluar dan barang jadi masuk")
+    entry_lines = api.search("account.move.line", [["move_id", "in", entry_ids]], ["debit", "credit"])
+    check(abs(sum(i["debit"] for i in entry_lines) - sum(i["credit"] for i in entry_lines)) < 0.005 and sum(i["debit"] for i in entry_lines) > 0, "jurnal produksi seimbang")
 
     # Backorder dengan konsumsi berlebih -> peringatan konsumsi
     api.call("mrp.production", "action_assign", ids=[backorder])
@@ -2740,6 +2853,8 @@ def check_inventory_valuation(api, vendor):
     [categ] = api.call("product.category", "create", vals_list=[{
         "name": f"Valuasi Uji {tag}", "parent_id": goods["id"], "property_valuation": "real_time", "property_cost_method": "average",
         "property_stock_valuation_account_id": account, "property_stock_journal": goods["property_stock_journal"][0],
+        # kosong secara eksplisit = tanpa jurnal per transaksi: pengujian ini memeriksa pola lama (jurnal saat tagihan dan faktur) terhadap buku besar
+        "kompakapps_stock_input_account_id": False, "kompakapps_stock_output_account_id": False,
     }])
 
     def new_product(name, category):
@@ -2911,7 +3026,10 @@ def check_inventory_valuation(api, vendor):
     check(len(receipts) == 2 and all(m["picking_code"] == "incoming" and m["purchase_line_id"] for m in receipts), "penerimaan A bertaut ke dokumen penerimaan dan baris PO")
     bills = {row["purchase_line_id"][0]: row["move_id"][0] for row in api.search("account.move.line", [["purchase_line_id", "in", [receipt_a1["line"], receipt_a2["line"]]], ["parent_state", "=", "posted"]], ["purchase_line_id", "move_id"])}
     check(bills.get(receipt_a1["line"]) == bill_a1 and bills.get(receipt_a2["line"]) == bill_a2, "tautan jurnal penerimaan: tagihan vendor terposting dari baris PO-nya")
-    check(all(not m["account_move_id"] for m in by_product[item_a["id"]]), "pergerakan stok tanpa lokasi berakun valuasi tidak punya jurnal sendiri")
+    check(
+        all(not m["account_move_id"] for m in by_product[item_a["id"]] if m["picking_id"]) and any(m["is_inventory"] and m["account_move_id"] for m in by_product[item_a["id"]]),
+        "kategori tanpa akun perantara: penerimaan dan pengiriman tidak punya jurnal sendiri, penyesuaian dijurnal lewat akun lokasi Inventory adjustment",
+    )
     in_period = api.call("stock.move", "formatted_read_group", domain=[["product_id", "in", ids], ["state", "=", "done"], ["is_in", "=", True], ["date", ">=", f"{day(10)} 00:00:00"], ["date", "<=", f"{day(1)} 23:59:59"]], groupby=[], aggregates=["value:sum", "__count"])
     check(in_period and abs(in_period[0]["value:sum"] - 1_400_000) < 0.5 and in_period[0]["__count"] == 2, "total masuk di rentang hari -10 sampai -1: 1.400.000 (A 1.200.000 dan B 200.000)")
     # filter kategori (termasuk anak) dan template, seperti parameter categ dan product pada rute
@@ -2931,8 +3049,8 @@ def check_inventory_valuation(api, vendor):
     check(abs(stock_a(15) - gl(15)) < 0.5, "hari -15: nilai stok kategori sama dengan saldo buku besar akunnya (selisih 0)")
     check(abs(gl(11) - 1_000_000) < 0.5 and abs(stock_a(11) - 1_000_000) < 0.5, "hari -11: stok dan buku besar 1.000.000")
     check(abs(stock_a(7) - 2_200_000) < 0.5 and abs(gl(7) - 2_200_000) < 0.5, "hari -7: stok dan buku besar 2.200.000 (kedua tagihan terposting)")
-    check(abs(stock_a(0) - gl(0) + 770_000) < 0.5, "hari ini: selisih stok terhadap buku besar = -770.000, yaitu pengiriman 550.000 dan penyesuaian 220.000 yang belum dijurnal")
-    check(abs(gl(0) - 2_200_000) < 0.5, "saldo buku besar akun uji hari ini 2.200.000 (dua tagihan)")
+    check(abs(stock_a(0) - gl(0) + 550_000) < 0.5, "hari ini: selisih stok terhadap buku besar = -550.000, yaitu pengiriman yang belum dijurnal (penyesuaian 220.000 sudah dijurnal lewat akun lokasi)")
+    check(abs(gl(0) - 1_980_000) < 0.5, "saldo buku besar akun uji hari ini 1.980.000 (dua tagihan 2.200.000 dikurangi penyesuaian 220.000)")
 
 
 def check_replenish_routes(api, vendor):

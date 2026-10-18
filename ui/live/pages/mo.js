@@ -1,6 +1,6 @@
 // Manufacturing Order (mrp.production). Alur mengikuti Odoo 19: draft, konfirmasi (komponen dicadangkan), produksi dengan
 // jumlah komponen yang dikonsumsi, tandai selesai (wizard backorder dan peringatan konsumsi), work order, scrap, dan
-// unbuild. Nilai persediaan tercatat pada pergerakan stok; Odoo tidak membuat jurnal saat produksi.
+// unbuild. Nilai persediaan tercatat pada pergerakan stok dan, bila akun Barang Dalam Proses pada lokasi Production terisi, dijurnal saat produksi selesai.
 import {
   INPUT, app, badge, call, cell, chatterHtml, closeLookup, closeModal, ctx, dateTimeText, esc, fieldBlock, filterSelect, fromInputDateTime, guarded,
   loadMessages, money, openModal, pageHeader, readOne, readonlyValue, referenceUsers, referenceWarehouses, registerLookup, rowLink, runLookup, searchBox, searchRead,
@@ -269,10 +269,10 @@ async function renderForm(id, query) {
   moData = mo;
   const [raw, finished, orders, users, moWarehouses] = await Promise.all([
     mo.move_raw_ids.length
-      ? searchRead("stock.move", [["id", "in", mo.move_raw_ids]], ["product_id", "product_uom_qty", "quantity", "product_uom", "state", "value", "has_tracking"], { order: "id" })
+      ? searchRead("stock.move", [["id", "in", mo.move_raw_ids]], ["product_id", "product_uom_qty", "quantity", "product_uom", "state", "value", "has_tracking", "account_move_id"], { order: "id" })
       : [],
     mo.move_finished_ids.length
-      ? searchRead("stock.move", [["id", "in", mo.move_finished_ids]], ["product_id", "product_uom_qty", "quantity", "product_uom", "state", "value", "cost_share", "byproduct_id"], { order: "id" })
+      ? searchRead("stock.move", [["id", "in", mo.move_finished_ids]], ["product_id", "product_uom_qty", "quantity", "product_uom", "state", "value", "account_move_id", "cost_share", "byproduct_id"], { order: "id" })
       : [],
     mo.workorder_ids.length
       ? searchRead("mrp.workorder", [["id", "in", mo.workorder_ids]], ["name", "workcenter_id", "state", "duration_expected", "duration", "is_user_working"], { order: "sequence, id" })
@@ -358,7 +358,7 @@ async function renderForm(id, query) {
     .join("");
 
   const componentsLeft = open && mo.reservation_state !== "assigned";
-  const valuation = productionJournals(mo, raw, finished);
+  const valuation = await productionJournals(mo, raw, finished);
   const tracking = open && mo.product_tracking !== "none"
     ? `<div class="mt-4 pt-4 border-t border-gray-100">${mo.product_tracking === "serial"
         ? fieldBlock("Nomor Seri Barang Jadi (satu per baris, sebanyak jumlah diproduksi)", `<textarea data-prod="serials" rows="4" class="${INPUT} font-mono">${esc(prod.serials)}</textarea>`)
