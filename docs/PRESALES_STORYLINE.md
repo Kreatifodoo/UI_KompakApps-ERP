@@ -150,7 +150,7 @@ Prolog yang dibacakan: *"RSUD Kabupaten Karawang membutuhkan analyzer kimia klin
 
 **Kalimat kunci**: "Kita mulai dari satu peluang dan berakhir di laba rugi per lini produk. Tidak ada satu pun angka yang diketik dua kali."
 
-**Jika ditanya**: e-Faktur dan Coretax (modul lokalisasi ada di Odoo, belum diaktifkan di demo; dibahas pada fase implementasi); multi-company (ada di antrean keputusan); pencocokan bank dengan faktur dan jurnal (sebagian; lanjutan sedang diantrekan).
+**Jika ditanya**: e-Faktur dan Coretax (modul lokalisasi ada di Odoo, belum diaktifkan di demo; dibahas pada fase implementasi); multi-company (tersedia: General Setting > Perusahaan; transaksi antar perusahaan belum); pencocokan bank dengan faktur dan jurnal (sebagian; lanjutan sedang diantrekan).
 
 ### Penutup (2 menit)
 
@@ -176,7 +176,7 @@ Kembali ke peta: peluang di CRM, harga dan pajak di Sales, nomor seri dan lot di
 | Persetujuan bertingkat? | Belum tersedia untuk versi 19 di OCA; tersedia sebagai pengembangan khusus |
 | Hak akses per peran? | Ada pengguna dan grup; aturan akses per catatan masih dalam antrean keputusan |
 | Login SSO atau 2FA? | Belum; dalam antrean keputusan |
-| Banyak perusahaan? | Belum diaktifkan; dalam antrean keputusan |
+| Banyak perusahaan? | Bisa: perusahaan kedua dan seterusnya dengan COA Indonesia, pajak, gudang, dan nomor dokumen sendiri; mitra dan produk dibagi; pindah lewat pemilih di header (General Setting > Perusahaan). Transaksi antar perusahaan dan laporan konsolidasi belum ada |
 | Ponsel? | Tampilan menyesuaikan lebar layar, tetapi pemeriksaan menyeluruh di ponsel belum selesai |
 | Impor data awal? | Ada Import Data (CSV atau xlsx) untuk produk, mitra, kategori, harga pemasok, akun, stok, jurnal, dan BoM |
 | Jejak perubahan? | Audit Log mencatat siapa mengubah apa dan kapan |

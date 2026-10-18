@@ -223,6 +223,7 @@ def main():
     check_payment_receipt_create(api, vendor)
     check_journal_entry_create(api, vendor)
     check_activities(api)
+    check_multi_company(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -2450,6 +2451,55 @@ def check_activities(api):
         check(api.search("mail.activity", [["id", "=", second]], ["state"])[0]["state"] == "today", f"{model}: tenggat hari ini berstatus Hari ini")
         api.call("mail.activity", "unlink", ids=[second])
         check(not api.search("mail.activity", [["id", "=", second]], ["id"]), f"{model}: aktivitas dihapus")
+
+
+def check_multi_company(api):
+    """Multi-company (D62): perusahaan kedua dengan COA sendiri lewat panggilan yang sama dengan halaman Perusahaan, data terpisah per perusahaan aktif, mitra dibagi."""
+    step("Multi-company: perusahaan kedua, COA Indonesia sendiri, dan data terpisah")
+    name = "PT Uji Multi Perusahaan"
+    found = api.search("res.company", [["name", "=", name]], ["id", "chart_template"])
+    if found:
+        company = found[0]["id"]
+    else:
+        [company] = api.call("res.company", "create", vals_list=[{"name": name, "city": "Bandung"}])
+    me = api.search("res.users", [["login", "!=", False]], ["company_id", "company_ids"], limit=1)[0]
+    check(company in me["company_ids"], "perusahaan baru otomatis ditambahkan ke akses pembuatnya")
+    home = me["company_id"][0]
+    both = [company, home]
+    api.call("res.company", "nusara_setup_indonesia", ids=[company], context={"allowed_company_ids": both})
+    api.call("res.company", "nusara_setup_warehouse", ids=[company], context={"allowed_company_ids": both})
+    api.call("res.company", "nusara_setup_warehouse", ids=[company], context={"allowed_company_ids": both})  # aman diulang
+    record = api.read("res.company", company, ["chart_template", "currency_id", "country_id"])
+    check((record["chart_template"], record["currency_id"][1], record["country_id"][1]) == ("id", "IDR", "Indonesia"), "setup Indonesia: COA l10n_id, mata uang IDR, negara Indonesia")
+    ctx_b, ctx_a = {"allowed_company_ids": [company]}, {"allowed_company_ids": [home]}
+    for model, label in (("account.journal", "jurnal"), ("account.tax", "pajak"), ("account.account", "akun")):
+        domain = [["company_ids", "in", [company]]] if model == "account.account" else [["company_id", "=", company]]
+        ids_b = {r["id"] for r in api.search(model, domain, ["id"], limit=1000, context=ctx_b)}
+        ids_a = {r["id"] for r in api.search(model, [], ["id"], limit=2000, context=ctx_a)}
+        check(bool(ids_b) and not (ids_a & ids_b), f"{label}: perusahaan kedua punya data sendiri dan tidak muncul di perusahaan aktif lain")
+    warehouses = api.search("stock.warehouse", [["company_id", "=", company]], ["id", "in_type_id", "out_type_id", "lot_stock_id"], context=ctx_b)
+    check(len(warehouses) == 1 and all(warehouses[0][k] for k in ("in_type_id", "out_type_id", "lot_stock_id")), "setup gudang: satu gudang dengan lokasi stok dan tipe operasi, tidak dobel bila diulang")
+    vendor = api.search("res.partner", [["supplier_rank", ">", 0]], ["id"], limit=1)[0]["id"]
+    expense = api.search("account.account", [["account_type", "=", "expense"], ["company_ids", "in", [company]]], ["id"], limit=1, context=ctx_b)[0]["id"]
+    tax = api.search("account.tax", [["type_tax_use", "=", "purchase"], ["company_id", "=", company]], ["id"], limit=1, context=ctx_b)[0]["id"]
+    today = datetime.date.today().isoformat()
+    [bill] = api.call("account.move", "create", vals_list=[{"move_type": "in_invoice", "partner_id": vendor, "invoice_date": today, "invoice_line_ids": [
+        [0, 0, {"name": "Jasa cabang", "quantity": 1, "price_unit": 1_000_000, "account_id": expense, "tax_ids": [[6, 0, [tax]]]}]]}], context=ctx_b)
+    api.call("account.move", "action_post", ids=[bill], context=ctx_b)
+    row = api.search("account.move", [["id", "=", bill]], ["company_id", "state", "name", "amount_total"], context=ctx_b)[0]
+    check(row["company_id"][0] == company and row["state"] == "posted", "tagihan dibuat dan diposting atas nama perusahaan kedua")
+    check(abs(row["amount_total"] - 1_110_000) < 1, "PPN 11% pada tagihan perusahaan kedua dihitung dari pajaknya sendiri")
+    check(not api.search("account.move", [["id", "=", bill]], ["id"], context=ctx_a), "tagihan perusahaan kedua tidak terlihat dari perusahaan aktif lain")
+    check(bool(api.search("res.partner", [["id", "=", vendor]], ["id"], context=ctx_a)) and bool(api.search("res.partner", [["id", "=", vendor]], ["id"], context=ctx_b)), "mitra dipakai bersama oleh kedua perusahaan")
+    storable = api.search("product.product", [["is_storable", "=", True], ["purchase_ok", "=", True]], ["id"], limit=1, context=ctx_b)
+    if storable:
+        [po] = api.call("purchase.order", "create", vals_list=[{"partner_id": vendor, "order_line": [[0, 0, {"product_id": storable[0]["id"], "product_qty": 3, "price_unit": 50_000}]]}], context=ctx_b)
+        api.call("purchase.order", "button_confirm", ids=[po], context=ctx_b)
+        picking = api.call("purchase.order", "read", ids=[po], fields=["company_id", "picking_ids"], context=ctx_b)[0]
+        receipt = api.call("stock.picking", "read", ids=picking["picking_ids"], fields=["name", "state", "company_id", "picking_type_id"], context=ctx_b)
+        check(picking["company_id"][0] == company and len(receipt) == 1 and receipt[0]["company_id"][0] == company, "PO perusahaan kedua menghasilkan penerimaan di gudang perusahaan itu (nomor urut sendiri)")
+    api.call("res.company", "nusara_setup_indonesia", ids=[company], context={"allowed_company_ids": both})
+    check(api.search("account.move", [["id", "=", bill]], ["state"], context=ctx_b)[0]["state"] == "posted", "setup berulang pada perusahaan yang sudah bertransaksi tidak error dan tidak mengubah tagihan")
 
 
 def check_line_stock(api):

@@ -49,6 +49,33 @@ class ResCompany(models.Model):
             company.nusara_setup_inventory_valuation()
         return True
 
+    def nusara_setup_warehouse(self):
+        """Buat gudang utama (beserta lokasi stok dan tipe operasi) untuk perusahaan yang belum punya.
+
+        Odoo 19 hanya membuat gudang otomatis untuk perusahaan pertama (dan di dalam test). Perusahaan baru dari halaman
+        Perusahaan membutuhkannya sebelum bisa menerima, mengirim, atau memproduksi barang. Aman dijalankan ulang.
+        """
+        warehouses = self.env["stock.warehouse"].sudo().with_context(active_test=False)
+        for company in self:
+            if warehouses.search_count([("company_id", "=", company.id)]):
+                continue
+            used = set(warehouses.search([]).mapped("code"))
+            initials = "".join(word[0] for word in company.name.split() if word[:1].isalnum()).upper()
+            base = (initials or "WH")[:3]
+            code, number = base, 1
+            while code in used:
+                number += 1
+                code = f"{base}{number}"
+            warehouses.create(
+                {
+                    "name": f"Gudang Utama {company.name}",
+                    "code": code,
+                    "company_id": company.id,
+                    "partner_id": company.partner_id.id,
+                }
+            )
+        return True
+
     def nusara_setup_inventory_valuation(self):
         """Valuasi persediaan perpetual dengan biaya rata-rata (AVCO) untuk kategori Goods.
 

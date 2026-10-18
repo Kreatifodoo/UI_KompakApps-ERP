@@ -2,7 +2,7 @@
 //   render(sub, query), onClick(event, el), onInput(event, el), onChange(event, el),
 //   onSubmit(event, form, kind, button), leave().
 import {
-  OdooError, auth, closeLookup, closeModal, ctx, loadSession, modalOpen, postNote, renderConnect, renderSession,
+  OdooError, activeCompany, auth, closeLookup, closeModal, ctx, loadSession, modalOpen, postNote, renderConnect, renderSession,
   resetReferences, setReroute, toast, guarded,
 } from "./common.js";
 import {
@@ -70,6 +70,7 @@ import * as analysis from "./pages/analysis.js";
 import * as modsetting from "./pages/modsetting.js";
 import * as users from "./pages/users.js";
 import * as company from "./pages/company.js";
+import * as companies from "./pages/companies.js";
 import * as dataimport from "./pages/dataimport.js";
 import * as auditlog from "./pages/auditlog.js";
 import * as budgetplan from "./pages/budgetplan.js";
@@ -81,7 +82,7 @@ import { printDocument, printNow, printVariant } from "./print.js";
 import * as loyalty from "./pages/loyalty.js";
 import * as valuation from "./pages/valuation.js";
 
-const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, bank, stock, moves, count, scrap, orderpoint, replenish, warehouse, location: location_, uom, putaway, lot, bom, workcenter, mo, schedule, production, lead, opportunity, crmsetting, crmreport, posconfig, possession, posorder, kasir, salespricelist, acctreport, dashboard, account, tax, currency, analytic, analyticplan, assetprofile, asset, journalmaster, analysis, modsetting, users, company, dataimport, auditlog, budgetplan, budget, budgetreport, transfer, soon };
+const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, bank, stock, moves, count, scrap, orderpoint, replenish, warehouse, location: location_, uom, putaway, lot, bom, workcenter, mo, schedule, production, lead, opportunity, crmsetting, crmreport, posconfig, possession, posorder, kasir, salespricelist, acctreport, dashboard, account, tax, currency, analytic, analyticplan, assetprofile, asset, journalmaster, analysis, modsetting, users, company, companies, dataimport, auditlog, budgetplan, budget, budgetreport, transfer, soon };
 Object.assign(PAGES, { loyalty });
 Object.assign(PAGES, { valuation });
 let currentId = "pr";
@@ -206,6 +207,14 @@ document.addEventListener("input", (event) => {
 
 document.addEventListener("change", (event) => {
   const el = event.target;
+  if (el.dataset.change === "company") {
+    // ganti perusahaan aktif: semua halaman dimuat ulang dengan perusahaan baru, kembali ke daftar modul yang sedang dibuka
+    activeCompany.set(Number(el.value));
+    const base = location.hash.replace(/^#\/?/, "").split("?")[0].split("/")[0];
+    location.hash = base ? `#/${base}` : "";
+    location.reload();
+    return;
+  }
   if (el.dataset.change === "filter" || el.dataset.change === "search") {
     navigateWith(el.dataset.change === "filter" ? { state: el.value } : { q: el.value.trim() });
     return;
