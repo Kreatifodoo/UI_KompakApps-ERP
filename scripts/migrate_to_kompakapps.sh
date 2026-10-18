@@ -82,6 +82,9 @@ UPDATE ir_model_data SET module = '$NEW_MODULE' WHERE module = '$OLD_MODULE';
 UPDATE ir_model_data SET name = replace(name, 'nusara_mis_loader', 'kompakapps_mis_loader') WHERE name LIKE '%nusara_mis_loader%';
 UPDATE ir_model_fields SET model = 'kompakapps.mis.loader' WHERE model = 'nusara.mis.loader';
 UPDATE ir_model SET model = 'kompakapps.mis.loader' WHERE model = 'nusara.mis.loader';
+UPDATE ir_model_data SET name = 'module_$NEW_MODULE' WHERE module = 'base' AND name = 'module_$OLD_MODULE';
+UPDATE product_template SET name = jsonb_set(name, '{en_US}', to_jsonb(replace(name->>'en_US', 'Nusara', 'KompakApps'))) WHERE name->>'en_US' LIKE '%Nusara%';
+UPDATE product_category SET name = replace(name, 'Nusara', 'KompakApps') WHERE name LIKE '%Nusara%';
 COMMIT;
 SQL
 
