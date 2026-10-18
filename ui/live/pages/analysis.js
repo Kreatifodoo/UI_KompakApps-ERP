@@ -338,14 +338,14 @@ export function chartSvg(points, { line = false, format = num, title = "Grafik" 
   let marks;
   if (line) {
     const path = (get) => points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(get(p)).toFixed(1)}`).join("");
-    marks = `${hasPrior ? `<path d="${path((p) => p.prior ?? 0)}" fill="none" stroke="#9ca3af" stroke-width="2" stroke-dasharray="5 4"/>` : ""}<path d="${path((p) => p.value)}" fill="none" stroke="#4f46e5" stroke-width="2.5"/>${points.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="3.5" fill="#4f46e5">${tip(p)}</circle>`).join("")}`;
+    marks = `${hasPrior ? `<path d="${path((p) => p.prior ?? 0)}" fill="none" stroke="#9ca3af" stroke-width="2" stroke-dasharray="5 4"/>` : ""}<path d="${path((p) => p.value)}" fill="none" stroke="#0C87A0" stroke-width="2.5"/>${points.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="3.5" fill="#0C87A0">${tip(p)}</circle>`).join("")}`;
   } else {
     const gap = Math.min(step * 0.7, hasPrior ? 44 : 40);
     const bw = hasPrior ? gap / 2 : gap;
     const bar = (cx, v, fill, p) => `<rect x="${cx.toFixed(1)}" y="${Math.min(y(v), y(0)).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1, Math.abs(y(v) - y(0))).toFixed(1)}" rx="2" fill="${fill}">${tip(p)}</rect>`;
-    marks = points.map((p, i) => (hasPrior ? bar(x(i) - bw, p.prior ?? 0, "#9ca3af", p) + bar(x(i), p.value, p.value < 0 ? "#fb7185" : "#4f46e5", p) : bar(x(i) - bw / 2, p.value, p.value < 0 ? "#fb7185" : "#4f46e5", p))).join("");
+    marks = points.map((p, i) => (hasPrior ? bar(x(i) - bw, p.prior ?? 0, "#9ca3af", p) + bar(x(i), p.value, p.value < 0 ? "#fb7185" : "#0C87A0", p) : bar(x(i) - bw / 2, p.value, p.value < 0 ? "#fb7185" : "#0C87A0", p))).join("");
   }
-  const legend = hasPrior ? '<div class="mt-1 text-xs text-gray-500 flex gap-4"><span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:#4f46e5"></span> Periode ini</span><span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:#9ca3af"></span> Pembanding</span></div>' : "";
+  const legend = hasPrior ? '<div class="mt-1 text-xs text-gray-500 flex gap-4"><span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:#0C87A0"></span> Periode ini</span><span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:#9ca3af"></span> Pembanding</span></div>' : "";
   return `<figure data-chart class="bg-white rounded-xl shadow-sm border border-gray-200 px-4 py-3 mb-4"><figcaption class="text-sm font-semibold mb-1">${esc(title)}</figcaption>
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}" class="w-full h-auto" preserveAspectRatio="xMidYMid meet">${grid}<line x1="${L}" x2="${W - R}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}" stroke="#9ca3af"/>${marks}${labels}</svg>${legend}</figure>`;
 }

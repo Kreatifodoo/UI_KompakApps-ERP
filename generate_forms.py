@@ -41,7 +41,7 @@ def generate_html(filename, mode, data):
         
     # Update Title
     import re
-    html = re.sub(r"<title>.*?</title>", f"<title>{data['badge']} - Nusara ERP</title>", html)
+    html = re.sub(r"<title>.*?</title>", f"<title>{data['badge']} - KompakApps</title>", html)
     
     # Hide the mode switcher buttons so it looks like a dedicated page
     html = html.replace('id="btnModeTx"', 'id="btnModeTx" style="display:none;"')
@@ -224,7 +224,7 @@ master_forms = {
         ],
         "headerRight": [
             { "id": "bom_type", "label": "BOM Type", "type": "select", "options": ["Manufacture this product", "Kit"], "value": "Manufacture this product" },
-            { "id": "company", "label": "Company", "type": "text", "value": "Nusara ERP" }
+            { "id": "company", "label": "Company", "type": "text", "value": "KompakApps" }
         ],
         "linesTitle": "Components",
         "lines": [
@@ -263,7 +263,7 @@ master_forms = {
         "linkedDocs": [],
         "headerLeft": [
             { "id": "name", "label": "POS Name", "type": "text", "value": "" },
-            { "id": "company", "label": "Company", "type": "text", "value": "Nusara ERP" }
+            { "id": "company", "label": "Company", "type": "text", "value": "KompakApps" }
         ],
         "headerRight": [
             { "id": "pricelist", "label": "Pricelist", "type": "text", "value": "Public Pricelist" },
@@ -309,7 +309,7 @@ master_forms = {
             { "id": "currency", "label": "Currency", "type": "select", "options": ["IDR", "USD"], "value": "IDR" }
         ],
         "headerRight": [
-            { "id": "company", "label": "Company", "type": "text", "value": "Nusara ERP" }
+            { "id": "company", "label": "Company", "type": "text", "value": "KompakApps" }
         ],
         "linesTitle": "Pricelist Items",
         "lines": [],

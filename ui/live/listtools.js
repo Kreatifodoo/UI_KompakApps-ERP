@@ -33,9 +33,9 @@ css.textContent = `
   .lt-bar { position: sticky; left: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .5rem .75rem; border-bottom: 1px solid #e5e7eb; font-size: .8125rem; }
   .lt-btn { display: inline-flex; align-items: center; gap: .375rem; padding: .25rem .625rem; border: 1px solid #d1d5db; border-radius: .5rem; background: #fff; color: #374151; cursor: pointer; }
   .lt-btn:hover { background: #f9fafb; }
-  .lt-btn.on { border-color: #6366f1; color: #4338ca; background: #eef2ff; }
-  .lt-chip { display: inline-flex; align-items: center; gap: .375rem; padding: .125rem .5rem; border-radius: 9999px; background: #eef2ff; color: #3730a3; }
-  .lt-chip button { color: #6366f1; cursor: pointer; line-height: 1; }
+  .lt-btn.on { border-color: #0FA6C4; color: #0A6B80; background: #ECFBFE; }
+  .lt-chip { display: inline-flex; align-items: center; gap: .375rem; padding: .125rem .5rem; border-radius: 9999px; background: #ECFBFE; color: #08404A; }
+  .lt-chip button { color: #0FA6C4; cursor: pointer; line-height: 1; }
   .lt-group td { background: #f3f4f6; font-weight: 600; color: #111827; cursor: pointer; }
   .lt-group:hover td { background: #e5e7eb; }
   #lt-menu { position: fixed; z-index: 60; min-width: 14rem; max-width: 22rem; max-height: 22rem; overflow: auto; background: #fff; border: 1px solid #d1d5db; border-radius: .75rem; box-shadow: 0 10px 25px rgba(0,0,0,.15); padding: .375rem; font-size: .8125rem; }

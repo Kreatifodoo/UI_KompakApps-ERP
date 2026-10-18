@@ -1,4 +1,6 @@
-# Nusara ERP
+<p><img src="ui/live/brand/kompakapps-logo.png" alt="KompakApps" width="280"></p>
+
+# KompakApps
 
 ERP modular untuk bisnis Indonesia: pembelian, persediaan, manufaktur, CRM, POS, penjualan, dan akuntansi.
 
@@ -12,7 +14,7 @@ ERP modular untuk bisnis Indonesia: pembelian, persediaan, manufaktur, CRM, POS,
 | UI sekarang | HTML statis (React + Babel dari CDN) | Berfungsi sebagai spesifikasi UX, bukan kode produksi |
 | UI produksi | Web client Odoo dengan tema `nusara_theme` (jalur A), frontend headless via JSON-2 hanya untuk kasus khusus (jalur B) | Diputuskan di akhir Fase 2 |
 
-Peta lengkap menu Nusara ke modul Odoo ada di [docs/MODULE_MAP.md](docs/MODULE_MAP.md).
+Peta lengkap menu KompakApps ke modul Odoo ada di [docs/MODULE_MAP.md](docs/MODULE_MAP.md).
 
 ## Menjalankan prototipe
 
@@ -40,7 +42,7 @@ oca.lock                      # repo OCA 19.0 yang dipakai, dikunci ke commit
 docker/, docker-compose.yml   # image Odoo 19 + OCA dan lingkungan lokal
 config/odoo.conf              # konfigurasi Odoo
 deploy/                       # compose dan skrip update untuk server
-ui/                           # UI Nusara terhubung ke Odoo (nginx, sidebar, halaman P2P)
+ui/                           # UI KompakApps terhubung ke Odoo (nginx, sidebar, halaman P2P)
 scripts/                      # fetch-oca.sh, seed_demo.py, check_p2p_api.py (uji regresi)
                               # operasional: backup.sh, restore.sh, check_backup_restore.sh, healthcheck.py, loadtest.py (docs/OPERATIONS.md)
 .github/workflows/            # CI (lint + test) dan CD (image + deploy)
@@ -83,7 +85,7 @@ Menjalankan test modul `nusara_base` (di database terpisah, tidak menyentuh data
 docker compose run --rm --no-deps odoo odoo -d nusara_test -i nusara_base --test-enable --test-tags /nusara_base --without-demo=true --stop-after-init
 ```
 
-## UI Nusara yang terhubung ke Odoo
+## UI KompakApps yang terhubung ke Odoo
 
 Kerangka di `ui/live/` memakai **desain sidebar prototipe** (9 modul, menu bertingkat, pencarian menu) dan bertransaksi langsung ke Odoo lewat API JSON-2. Menu yang bertitik hijau sudah terhubung; sisanya membuka halaman "belum terhubung ke Odoo" yang menyebut model Odoo tujuannya (bukan data palsu).
 

@@ -1,6 +1,6 @@
 # Storyline presales PROLINE: satu pesanan dari peluang sampai uang masuk
 
-Dokumen ini adalah naskah presentasi untuk demo Nusara ERP kepada PROLINE (diagnostik laboratorium, proline.co.id). Urutan babnya mengikuti permintaan: **CRM, Sales, Inventory, Manufacturing, Purchase, Accounting**. Satu cerita dipakai dari awal sampai akhir: *RSUD Kabupaten Karawang membeli satu paket kimia klinik lewat e-Katalog*. Cerita itu menyentuh keenam modul, jadi penonton melihat satu data yang mengalir, bukan enam demo terpisah.
+Dokumen ini adalah naskah presentasi untuk demo KompakApps kepada PROLINE (diagnostik laboratorium, proline.co.id). Urutan babnya mengikuti permintaan: **CRM, Sales, Inventory, Manufacturing, Purchase, Accounting**. Satu cerita dipakai dari awal sampai akhir: *RSUD Kabupaten Karawang membeli satu paket kimia klinik lewat e-Katalog*. Cerita itu menyentuh keenam modul, jadi penonton melihat satu data yang mengalir, bukan enam demo terpisah.
 
 Data demo dibuat oleh skrip di `scripts/` (lihat "Persiapan"). Nama pelanggan, pemasok, harga, dan jumlah adalah **rekaan**; nama produk mengikuti katalog di proline.co.id. Nomor dokumen mengikuti urutan sistem pada basis data Anda, jadi naskah ini menyebut dokumen lewat nama pelanggannya.
 
@@ -171,7 +171,7 @@ Kembali ke peta: peluang di CRM, harga dan pajak di Sales, nomor seri dan lot di
 
 | Pertanyaan | Jawaban |
 |---|---|
-| Apakah ini Odoo? | Nusara memakai mesin Odoo Community dengan modul OCA dan tampilan sendiri. Lisensinya LGPL, tanpa biaya per pengguna |
+| Apakah ini Odoo? | KompakApps memakai mesin Odoo Community dengan modul OCA dan tampilan sendiri. Lisensinya LGPL, tanpa biaya per pengguna |
 | Bagaimana dengan e-Faktur dan Coretax? | Modul lokalisasi tersedia; diaktifkan pada fase implementasi |
 | Persetujuan bertingkat? | Belum tersedia untuk versi 19 di OCA; tersedia sebagai pengembangan khusus |
 | Hak akses per peran? | Ada pengguna dan grup; aturan akses per catatan masih dalam antrean keputusan |

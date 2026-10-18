@@ -1,4 +1,4 @@
-# Peta Jalan dan Antrian Kerja Nusara ERP
+# Peta Jalan dan Antrian Kerja KompakApps
 
 Dokumen ini mencatat posisi proyek dan antrian pekerjaan. Keputusan teknis rinci ada di [DECISIONS.md](DECISIONS.md) (D1 sampai D29 dan seterusnya), cara bekerja di [DEV_GUIDE.md](DEV_GUIDE.md).
 

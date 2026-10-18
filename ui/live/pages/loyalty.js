@@ -398,7 +398,7 @@ function mainFieldsHtml() {
   return `
     ${fieldBlock("Nama Program", `<input data-lf="name" value="${esc(v.name)}" placeholder="mis. Diskon 10% belanja di atas Rp100.000" class="${INPUT}">`)}
     <div>${fieldBlock("Tipe Program", typeSelect)}${info}</div>
-    <div>${fieldBlock("Tersedia di", where)}${gift && v.pos_ok ? '<div class="text-xs text-amber-700 mt-1">Kartu hadiah yang berlaku di POS mengharuskan template email dan laporan cetak kartu (diatur di Odoo) agar sesi kasir bisa dibuka; kasir Nusara belum memakainya.</div>' : ""}</div>
+    <div>${fieldBlock("Tersedia di", where)}${gift && v.pos_ok ? '<div class="text-xs text-amber-700 mt-1">Kartu hadiah yang berlaku di POS mengharuskan template email dan laporan cetak kartu (diatur di Odoo) agar sesi kasir bisa dibuka; kasir KompakApps belum memakainya.</div>' : ""}</div>
     ${v.pos_ok ? `<div>${fieldBlock("Stasiun POS", checks("pos_config_ids", refs.posConfigs, v.pos_config_ids, "Stasiun POS"))}<div class="text-xs text-gray-500 mt-1">Kosongkan agar berlaku di semua stasiun POS.</div></div>` : ""}
     ${fieldBlock("Mata Uang", `<select data-lf="currency_id" data-kind="id" data-rp="all" class="${INPUT}">${selectOptions(refs.currencies, v.currency_id)}</select>`)}
     ${!gift && refs.pricelistEnabled ? `<div>${fieldBlock("Daftar Harga", checks("pricelist_ids", refs.pricelists, v.pricelist_ids, "Daftar harga"))}<div class="text-xs text-gray-500 mt-1">Kosongkan agar berlaku untuk semua daftar harga.</div></div>` : ""}

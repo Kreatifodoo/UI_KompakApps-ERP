@@ -3,12 +3,37 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Nusara ERP - Enterprise System</title>
+  <title>KompakApps</title>
+  <meta name="theme-color" content="#0C87A0">
+  <link rel="icon" type="image/svg+xml" href="brand/favicon.svg">
+  <link rel="apple-touch-icon" href="brand/icon-192.png">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    /* Tema KompakApps (kompakapps.com): skala teal merek menggantikan indigo di seluruh UI, panel gelap memakai teal tua merek, bayangan kartu bernuansa teal. */
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            indigo: { 50: "#ECFBFE", 100: "#D0F4FB", 200: "#A6E9F6", 300: "#63DAEF", 400: "#1FC8E6", 500: "#0FA6C4", 600: "#0C87A0", 700: "#0A6B80", 800: "#085463", 900: "#08404A", 950: "#052A32" },
+            slate: { 700: "#116C7E", 800: "#0B5361", 900: "#08404A", 950: "#052A32" },
+          },
+          boxShadow: { sm: "0 1px 2px 0 rgba(8,64,74,.04), 0 1px 3px -1px rgba(8,64,74,.07)" },
+          fontFamily: { sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"], hand: ["Caveat", "cursive"] },
+        },
+      },
+    };
+  </script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@700&family=Inter:wght@300;400;500;600;700;800&display=swap">
   <style>
-    body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+    /* Tipografi dan warna mengikuti kompakapps.com: Inter, teks utama #102A33, judul teal tua #08404A dengan jarak huruf rapat, aksen tulisan tangan Caveat */
+    body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; background-color: #F4F8F9; color: #102A33; -webkit-font-smoothing: antialiased; }
+    h1, h2, h3 { letter-spacing: -0.025em; }
+    #app h1 { color: #08404A; font-weight: 800; }
+    #app h2 { color: #08404A; font-weight: 700; }
+    .font-hand { font-family: 'Caveat', cursive; font-weight: 700; }
+    ::selection { background: #D0F4FB; color: #08404A; }
     button:disabled { opacity: .55; cursor: not-allowed; }
     /* Scrollbar sidebar (dari prototipe) */
     .sidebar-scroll::-webkit-scrollbar { width: 4px; }
@@ -25,11 +50,8 @@
 
     <aside id="sidebar" class="fixed lg:static inset-y-0 left-0 z-30 w-72 bg-slate-900 text-white flex flex-col transition-transform duration-300 ease-in-out lg:translate-x-0 -translate-x-full">
       <div class="h-16 flex items-center justify-between px-6 bg-slate-950 border-b border-slate-800 shrink-0">
-        <a href="#/pr" class="flex items-center text-xl font-bold tracking-wide">
-          <span class="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center mr-3 shadow-lg shadow-indigo-500/30">
-            <i class="fas fa-layer-group text-white text-sm"></i>
-          </span>
-          Nusara <span class="text-indigo-400 ml-1">ERP</span>
+        <a href="#/pr" class="flex items-center" aria-label="KompakApps, beranda">
+          <img src="brand/kompakapps-logo-white.png" alt="KompakApps" class="h-9 w-auto">
         </a>
         <button data-action="sidebar-close" class="lg:hidden text-gray-400 hover:text-white" aria-label="Tutup menu"><i class="fas fa-times"></i></button>
       </div>

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pemeriksaan kesehatan Nusara ERP (tanpa dependensi luar; jalankan dengan `python3 -I`).
+"""Pemeriksaan kesehatan KompakApps (tanpa dependensi luar; jalankan dengan `python3 -I`).
 
 Memeriksa: Odoo (/web/health, versi, waktu respons), UI nginx beserta proxy JSON-2, JSON-2 dengan
 API key (opsional), ruang disk, dan umur backup terakhir. Hanya membaca; tidak mengubah apa pun.
@@ -276,7 +276,7 @@ def main():
         print(json.dumps({"status": worst, "exit_code": code, "timestamp": stamp, "host": socket.gethostname(), "summary": counts,
                           "checks": [r.as_dict() for r in results]}, ensure_ascii=False, indent=2))
     elif not (args.quiet and worst == OK):
-        print(f"Nusara health check {stamp} ({socket.gethostname()})")
+        print(f"KompakApps health check {stamp} ({socket.gethostname()})")
         for r in results:
             print(f"  {LABEL[r.status]:<10} {r.name.split(':')[0]:<7} {r.message}")
         print(f"Ringkasan: {LABEL[worst]} ({counts[OK]} sehat, {counts[WARN]} peringatan, {counts[CRIT]} kritis, {counts[SKIP]} dilewati); kode keluar {code}")

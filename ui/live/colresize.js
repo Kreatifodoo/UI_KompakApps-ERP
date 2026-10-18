@@ -24,7 +24,7 @@ css.textContent = `
   .cr-handle { position: absolute; top: 0; right: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 2; touch-action: none; user-select: none; }
   .cr-handle::after { content: ""; position: absolute; top: 22%; bottom: 22%; left: 3px; width: 2px; border-radius: 1px; background: currentColor; opacity: 0; transition: opacity .12s; }
   th:hover > .cr-handle::after, .cr-handle:hover::after, .cr-active::after { opacity: .35; }
-  .cr-active::after { opacity: .7 !important; background: #4f46e5; }
+  .cr-active::after { opacity: .7 !important; background: #0C87A0; }
   table[data-cr] th { position: relative; overflow: hidden; text-overflow: ellipsis; }
   body.cr-dragging, body.cr-dragging * { cursor: col-resize !important; user-select: none !important; }
 `;
