@@ -478,4 +478,3 @@ Format: satu entri per keputusan. Status: **Diputuskan**, **Terbuka**, atau **Pe
 - **Mekanisme umum**: pendaftaran `registerLookup` boleh memberi `pageSize`, dan `search` boleh mengembalikan `{ items, total }`; pendaftaran lain tidak berubah.
 - **Pengujian**: `check_product_search` (5 pemeriksaan api uji) dan uji di browser pada UI dari cabang terhadap salinan database pemilik: 30 dari 41 tampil, gulir memuat 41, "covid bpro" menemukan produknya, dan kotak saran produk di Quotation, PR, PO, tagihan, faktur, BoM, MO, Scrap, Transfer, Stock Count, Lot, Reordering Rule, Putaway, Pricelist beli, dan Loyalty mengembalikan hasil berhalaman tanpa galat konsol (nota kredit dan debit memakai kode faktur; Pricelist jual hanya diperiksa lewat kodenya).
 - **Belum**: kotak saran pelanggan, pemasok, dan akun masih memuat 10 baris tanpa halaman (mekanisme `pageSize` siap dipakai).
-
