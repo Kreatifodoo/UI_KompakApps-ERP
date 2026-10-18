@@ -27,6 +27,7 @@ Setiap menu pada sidebar prototipe sudah punya halaman kecuali tiga kelompok pad
 | 4.9 | Vendor Bill dan Customer Invoice: berdiri sendiri atau dari beberapa PO/SO satu mitra, tambah dokumen ke draf | Selesai (D48) | Hanya UI (`invoices.js`, `docbill.js`) dan skrip uji; Q27 (payment/receipt), Q28 (jurnal entry), Q29 (bank recon) menyusul; sisa: Buat berdiri sendiri untuk nota kredit/debit, uang muka dan seksi pada penambahan ke draf |
 | 4.10 | Payment vendor dan Receipt pelanggan: berdiri sendiri atau dari beberapa tagihan/faktur satu mitra (boleh sebagian), alokasi pembayaran berdiri sendiri | Selesai (D49) | Hanya UI (`payment.js`, `paydocs.js`) dan skrip uji; Q28 (jurnal entry) dan Q29 (bank recon) menyusul; sisa: kompensasi nota kredit/debit, diskon pembayaran dini dan cicilan syarat pembayaran, ubah draf pembayaran |
 | 4.11 | Jurnal Entry manual: buat, edit draf, posting, batalkan ke draf, duplikat, balik jurnal, cetak | Selesai (D50) | Hanya UI (`journal.js`, `jentry.js`, `print.js`, `taxpick.js`) dan skrip uji; Q29 (bank recon) menyusul; sisa: mata uang asing per baris, jurnal berulang (`auto_post`), baris seksi dan catatan, hapus draf permanen |
+| 4.12 | Rekonsiliasi bank dengan faktur, tagihan, nota, pembayaran, dan baris jurnal entry: saran, filter, banyak dokumen, sebagian, selisih ke akun | Selesai (D63) | Hanya UI (`bank.js`) dan skrip uji; sisa: aturan rekonsiliasi otomatis (`account.reconcile.model`), impor OFX/MT940, mutasi non-IDR |
 
 ## Antrian Fase 5 (pengerasan)
 

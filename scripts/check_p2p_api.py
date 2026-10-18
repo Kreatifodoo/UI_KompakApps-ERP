@@ -222,6 +222,7 @@ def main():
     check_bill_invoice_create(api, vendor)
     check_payment_receipt_create(api, vendor)
     check_journal_entry_create(api, vendor)
+    check_bank_match_docs(api, vendor)
     check_activities(api)
     check_multi_company(api)
 
@@ -3607,6 +3608,149 @@ def check_journal_entry_create(api, vendor):
     check(move(loose, "state")["state"] == "posted" and balanced_move(api, loose), "akun piutang tanpa mitra tetap bisa diposting (Odoo tidak mewajibkan mitra)")
     check(not api.search("account.payment", [["move_id", "=", loose]], ["id"]) and not api.search("stock.move", [["account_move_id", "=", loose]], ["id"]),
           "jurnal manual tidak punya pembayaran atau pergerakan stok sumber (dasar penentuan jurnal manual di UI)")
+
+
+def check_bank_match_docs(api, vendor):
+    """Rekonsiliasi bank dengan faktur, tagihan, dan baris jurnal entry (ui/live/pages/bank.js, D63): satu mutasi untuk satu atau banyak dokumen, pelunasan sebagian
+    oleh beberapa mutasi, selisih ke akun (alokasi dinaikkan ke sisa penuh), dan baris jurnal entry manual. Urutan panggilan sama dengan UI."""
+    step("Rekonsiliasi bank: faktur, tagihan, banyak dokumen, sebagian, selisih ke akun, jurnal entry")
+    today = datetime.date.today().isoformat()
+    partner = vendor["id"]
+    bank = api.search("account.journal", [["type", "=", "bank"]], ["id", "default_account_id"], limit=1)[0]
+    spec = {"reconcile_data_info": {}, "can_reconcile": {}, "add_account_move_line_id": {}}
+
+    def balance(account_id):
+        rows = api.call("account.move.line", "formatted_read_group", domain=[["account_id", "=", account_id], ["parent_state", "=", "posted"]], groupby=[], aggregates=["balance:sum"])
+        return rows[0].get("balance:sum") or 0.0
+
+    def document(move_type, amount):
+        [move_id] = api.call("account.move", "create", vals_list=[{
+            "move_type": move_type, "partner_id": partner, "invoice_date": today,
+            "invoice_line_ids": [[0, 0, {"name": "Uji pencocokan bank", "quantity": 1, "price_unit": amount, "tax_ids": [[6, 0, []]]}]]}])
+        api.call("account.move", "action_post", ids=[move_id])
+        return move_id
+
+    def open_line(move_id):
+        return api.search("account.move.line", [["move_id", "=", move_id], ["account_id.account_type", "in", ["asset_receivable", "liability_payable"]]], ["id", "amount_residual"])[0]
+
+    def statement_line(amount, label):
+        [statement] = api.call("account.bank.statement", "create", vals_list=[{
+            "name": label, "journal_id": bank["id"],
+            "line_ids": [[0, 0, {"journal_id": bank["id"], "date": today, "payment_ref": label, "amount": amount, "partner_id": partner}]]}])
+        line = api.search("account.bank.statement.line", [["statement_id", "=", statement]], ["id", "journal_id", "amount", "partner_id", "move_id"])[0]
+        api.call("account.bank.statement.line", "clean_reconcile", ids=[line["id"]])
+        return line
+
+    def change(line, info, fields, **values):
+        base = {"reconcile_data_info": info, "journal_id": line["journal_id"][0], "partner_id": line["partner_id"][0], "amount": line["amount"], "manual_reference": False}
+        return api.call("account.bank.statement.line", "onchange", ids=[line["id"]], field_names=fields, fields_spec=spec, values={**base, **values})["value"]["reconcile_data_info"]
+
+    def current(line):
+        return api.read("account.bank.statement.line", line["id"], ["reconcile_data_info"])["reconcile_data_info"]
+
+    def add(line, info, move_line_id):
+        return change(line, info, ["add_account_move_line_id"], add_account_move_line_id=move_line_id)
+
+    def set_amount(line, info, pair, signed):
+        return change(line, info, ["manual_amount"], manual_reference=pair["reference"], manual_account_id=pair["account_id"][0], manual_name=pair["name"], manual_amount=signed,
+                      manual_partner_id=pair["partner_id"][0] if pair.get("partner_id") else False, manual_currency_id=pair["currency_id"], manual_in_currency_id=pair.get("line_currency_id"),
+                      manual_in_currency=False, manual_amount_in_currency=signed, previous_manual_amount_in_currency=pair.get("currency_amount"), manual_kind=pair["kind"],
+                      manual_original_amount=pair.get("original_amount", 0.0), manual_exchange_counterpart=False, manual_delete=False, analytic_distribution={})
+
+    def set_account(line, info, account_id, label):
+        suspense = [d for d in info["data"] if d["kind"] == "suspense"][0]
+        return change(line, info, ["manual_account_id"], manual_reference=suspense["reference"], manual_account_id=account_id, manual_name=label, manual_amount=suspense["amount"],
+                      manual_partner_id=False, manual_currency_id=suspense["currency_id"], manual_in_currency_id=suspense.get("line_currency_id"), manual_in_currency=False,
+                      manual_amount_in_currency=suspense.get("currency_amount"), previous_manual_amount_in_currency=suspense.get("currency_amount"), manual_kind="suspense",
+                      manual_original_amount=0.0, manual_exchange_counterpart=False, manual_delete=False, analytic_distribution={})
+
+    def confirm(line, info):
+        api.call("account.bank.statement.line", "write", ids=[line["id"]], vals={"reconcile_data_info": info})
+        api.call("account.bank.statement.line", "reconcile_bank_line", ids=[line["id"]])
+        return api.read("account.bank.statement.line", line["id"], ["is_reconciled", "move_id"])
+
+    def state(move_id):
+        return api.read("account.move", move_id, ["payment_state", "amount_residual"])
+
+    def balanced(move_id):
+        items = api.search("account.move.line", [["move_id", "=", move_id]], ["debit", "credit"])
+        return bool(items) and abs(sum(i["debit"] for i in items) - sum(i["credit"] for i in items)) < 0.005
+
+    # 1. Mutasi masuk melunasi satu faktur pelanggan
+    invoice = document("out_invoice", 150_000.0)
+    line = statement_line(150_000.0, "TRF faktur uji")
+    info = add(line, current(line), open_line(invoice)["id"])
+    check(info["can_reconcile"] and not any(d["kind"] == "suspense" for d in info["data"]), "mutasi masuk dan faktur pelanggan seimbang tanpa sisa")
+    done = confirm(line, info)
+    check(done["is_reconciled"] and state(invoice)["payment_state"] in ("paid", "in_payment") and balanced(done["move_id"][0]), "faktur menjadi dibayar dan jurnal mutasi seimbang")
+
+    # 2. Mutasi keluar melunasi satu tagihan vendor
+    bill = document("in_invoice", 90_000.0)
+    line = statement_line(-90_000.0, "TRF tagihan uji")
+    info = add(line, current(line), open_line(bill)["id"])
+    done = confirm(line, info)
+    check(done["is_reconciled"] and state(bill)["payment_state"] in ("paid", "in_payment"), "mutasi keluar melunasi tagihan vendor")
+
+    # 3. Satu mutasi untuk dua faktur
+    first, second = document("out_invoice", 50_000.0), document("out_invoice", 30_000.0)
+    line = statement_line(80_000.0, "TRF dua faktur uji")
+    info = current(line)
+    for move_id in (first, second):
+        info = add(line, info, open_line(move_id)["id"])
+    check(info["can_reconcile"] and sum(1 for d in info["data"] if d["kind"] == "other") == 2, "satu mutasi menampung dua faktur sekaligus")
+    confirm(line, info)
+    check(all(state(m)["payment_state"] in ("paid", "in_payment") for m in (first, second)), "kedua faktur menjadi dibayar")
+
+    # 4. Pelunasan sebagian oleh dua mutasi (sebaliknya: satu dokumen untuk banyak mutasi)
+    target = document("out_invoice", 100_000.0)
+    line = statement_line(60_000.0, "TRF cicilan 1 uji")
+    info = add(line, current(line), open_line(target)["id"])
+    confirm(line, info)
+    check(state(target)["payment_state"] == "partial" and abs(state(target)["amount_residual"] - 40_000.0) < 0.005, "mutasi 60.000 membayar faktur sebagian (sisa 40.000)")
+    line = statement_line(40_000.0, "TRF cicilan 2 uji")
+    info = add(line, current(line), open_line(target)["id"])
+    check(abs(sum(d["amount"] for d in info["data"] if d["kind"] == "other") + 40_000.0) < 0.005, "mutasi kedua hanya mengalokasikan sisa 40.000")
+    confirm(line, info)
+    check(state(target)["payment_state"] in ("paid", "in_payment"), "faktur lunas oleh dua mutasi")
+
+    # 5. Mutasi lebih kecil dari faktur: alokasi dinaikkan ke sisa penuh dan selisih dicatat ke akun beban dengan label
+    short = document("out_invoice", 100_000.0)
+    fee_account = api.search("account.account", [["code", "=", "65110020"]], ["id"])[0]["id"]
+    before = balance(fee_account)
+    line = statement_line(99_000.0, "TRF kurang bayar uji")
+    info = add(line, current(line), open_line(short)["id"])
+    pair = [d for d in info["data"] if d["kind"] == "other"][0]
+    check(abs(abs(pair["amount"]) - 99_000.0) < 0.005 and abs(abs(pair["original_amount_unsigned"]) - 100_000.0) < 0.005, "alokasi awal dibatasi jumlah mutasi (99.000 dari 100.000)")
+    info = set_amount(line, info, pair, -100_000.0)
+    suspense = [d for d in info["data"] if d["kind"] == "suspense"]
+    check(len(suspense) == 1 and abs(suspense[0]["amount"] - 1_000.0) < 0.005, "alokasi penuh menyisakan selisih 1.000")
+    info = set_account(line, info, fee_account, "Potongan transfer uji")
+    check(info["can_reconcile"] and any(d["kind"] == "other" and d["name"] == "Potongan transfer uji" for d in info["data"]), "selisih dicatat ke akun beban dengan label")
+    done = confirm(line, info)
+    check(state(short)["payment_state"] in ("paid", "in_payment") and abs(state(short)["amount_residual"]) < 0.005, "faktur lunas penuh walau mutasi lebih kecil")
+    check(abs(balance(fee_account) - before - 1_000.0) < 0.005 and balanced(done["move_id"][0]), "selisih 1.000 tercatat di akun beban dan jurnal mutasi seimbang")
+
+    # 6. Baris jurnal entry manual (piutang mitra) dicocokkan dengan mutasi masuk
+    receivable = api.search("account.account", [["account_type", "=", "asset_receivable"]], ["id"], limit=1)[0]["id"]
+    income = api.search("account.account", [["account_type", "=", "income"]], ["id"], limit=1)[0]["id"]
+    journal = api.search("account.journal", [["type", "=", "general"]], ["id"], order="sequence, code", limit=1)[0]["id"]
+    [entry] = api.call("account.move", "create", vals_list=[{
+        "move_type": "entry", "date": today, "journal_id": journal, "ref": "JE-bank-uji",
+        "line_ids": [[0, 0, {"account_id": receivable, "name": "Piutang manual uji", "debit": 25_000.0, "credit": 0.0, "partner_id": partner}],
+                     [0, 0, {"account_id": income, "name": "Pendapatan manual uji", "debit": 0.0, "credit": 25_000.0}]]}])
+    api.call("account.move", "action_post", ids=[entry])
+    entry_line = api.search("account.move.line", [["move_id", "=", entry], ["account_id", "=", receivable]], ["id", "amount_residual"])[0]
+    domain = [["parent_state", "=", "posted"], ["reconciled", "=", False], ["account_id.reconcile", "=", True], ["move_type", "=", "entry"], ["payment_id", "=", False], ["id", "=", entry_line["id"]]]
+    check(len(api.search("account.move.line", domain, ["id"])) == 1, "baris jurnal entry manual muncul sebagai kandidat (tab Jurnal Entry)")
+    line = statement_line(25_000.0, "TRF jurnal manual uji")
+    info = add(line, current(line), entry_line["id"])
+    done = confirm(line, info)
+    entry_after = api.read("account.move.line", entry_line["id"], ["reconciled", "amount_residual"])
+    check(done["is_reconciled"] and entry_after["reconciled"] and balanced(done["move_id"][0]), "baris jurnal entry manual direkonsiliasi dengan mutasi dan jurnal seimbang")
+
+    # 7. Batalkan rekonsiliasi mengembalikan faktur ke terbuka
+    api.call("account.bank.statement.line", "unreconcile_bank_line", ids=[line["id"]])
+    check(not api.read("account.move.line", entry_line["id"], ["reconciled"])["reconciled"], "pembatalan rekonsiliasi membuka kembali baris jurnal entry")
 
 
 def bill_total(api, bill_id):

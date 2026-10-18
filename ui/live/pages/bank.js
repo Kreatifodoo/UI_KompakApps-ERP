@@ -13,6 +13,13 @@ const STATUS = {
 };
 const FILTERS = [["", "Semua"], ["todo", "Belum direkonsiliasi"], ["done", "Sudah direkonsiliasi"]];
 const KIND_LABEL = { liquidity: "Mutasi bank", other: "Pasangan", suspense: "Sisa belum dialokasikan" };
+const TABS = [
+  ["all", "Semua"], ["payment", "Pembayaran tertunda"], ["out_invoice", "Faktur pelanggan"], ["in_invoice", "Tagihan vendor"], ["refund", "Nota kredit/debit"],
+  ["entry", "Jurnal entry"],
+];
+const DOC_LABEL = { payment: "Pembayaran", out_invoice: "Faktur", in_invoice: "Tagihan", out_refund: "Nota Kredit", in_refund: "Nota Debit", entry: "Jurnal" };
+const WRITE_OFF_TYPES = { expense: ["expense", "expense_other", "expense_direct_cost"], income: ["income", "income_other"] };
+const EMPTY_FILTERS = () => ({ partner: "", min: "", max: "", from: "", to: "" });
 const ONCHANGE_SPEC = { reconcile_data_info: {}, can_reconcile: {}, add_account_move_line_id: {} };
 
 let form = null; // transaksi baru: { journal, name, lines: [{ date, label, partner, amount }] }
@@ -32,7 +39,7 @@ const todayText = () => {
 };
 
 registerLookup("bank-account", {
-  search: (q) => searchAccounts(q),
+  search: (q) => searchAccounts(q, rec?.accountTypes ?? null),
   sub: (r) => ACCOUNT_TYPE_LABELS[r.account_type] ?? "",
   isChosen: (input) => rec?.account?.display_name === input.value,
   choose: (input, item) => {
@@ -240,21 +247,48 @@ async function onchange(values, fieldNames) {
   return result.value.reconcile_data_info ?? rec.info;
 }
 
+const norm = (text) => String(text ?? "").toLowerCase();
+
 async function loadCandidates() {
   const { line, info } = rec;
   const taken = info?.counterparts ?? [];
-  const domain = [
-    ["parent_state", "=", "posted"], ["reconciled", "=", false], ["account_id.reconcile", "=", true], ["amount_residual", line.amount > 0 ? ">" : "<", 0],
-    ["move_id", "!=", line.move_id[0]],
-  ];
+  const f = rec.filters;
+  const domain = [["parent_state", "=", "posted"], ["reconciled", "=", false], ["account_id.reconcile", "=", true], ["move_id", "!=", line.move_id[0]]];
+  if (!rec.opposite) domain.push(["amount_residual", line.amount > 0 ? ">" : "<", 0]);
+  else domain.push(["amount_residual", "!=", 0]);
   if (taken.length) domain.push(["id", "not in", taken]);
   if (rec.onlyPartner && line.partner_id) domain.push(["partner_id", "=", line.partner_id[0]]);
   if (rec.search) domain.push("|", "|", ["move_id.name", "ilike", rec.search], ["name", "ilike", rec.search], ["partner_id.name", "ilike", rec.search]);
-  const rows = await searchRead("account.move.line", domain, ["date", "move_id", "account_id", "partner_id", "name", "amount_residual"], { order: "date desc, id desc", limit: 40 });
+  if (f.partner) domain.push(["partner_id.name", "ilike", f.partner]);
+  if (f.from) domain.push(["date", ">=", f.from]);
+  if (f.to) domain.push(["date", "<=", f.to]);
+  if (rec.tab === "payment") domain.push(["payment_id", "!=", false]);
+  else if (rec.tab === "refund") domain.push(["move_type", "in", ["out_refund", "in_refund"]]);
+  else if (rec.tab === "entry") domain.push(["move_type", "=", "entry"], ["payment_id", "=", false]);
+  else if (rec.tab !== "all") domain.push(["move_type", "=", rec.tab]);
+  const rows = await searchRead(
+    "account.move.line", domain,
+    ["date", "date_maturity", "move_id", "account_id", "partner_id", "name", "ref", "amount_residual", "move_type", "payment_id"],
+    { order: "date desc, id desc", limit: 200 },
+  );
   const target = Math.abs(line.amount);
+  const min = f.min === "" ? null : Number(f.min);
+  const max = f.max === "" ? null : Number(f.max);
+  const text = norm(line.payment_ref);
   rec.candidates = rows
-    .map((r) => ({ ...r, exact: Math.abs(Math.abs(r.amount_residual) - target) < 0.005 }))
-    .sort((a, b) => Number(b.exact) - Number(a.exact));
+    .filter((r) => (min === null || Math.abs(r.amount_residual) >= min) && (max === null || Math.abs(r.amount_residual) <= max))
+    .map((r) => {
+      const exact = Math.abs(Math.abs(r.amount_residual) - target) < 0.005;
+      const partnerMatch = Boolean(line.partner_id && r.partner_id && r.partner_id[0] === line.partner_id[0]);
+      const names = [r.move_id[1], r.ref].filter((n) => n && String(n).length >= 4).map(norm);
+      const refMatch = names.some((n) => text.includes(n));
+      const sameSign = r.amount_residual > 0 === line.amount > 0;
+      const score = (exact ? 4 : 0) + (partnerMatch ? 2 : 0) + (refMatch ? 3 : 0);
+      return { ...r, exact, partnerMatch, refMatch, sameSign, score };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 60);
+  rec.selected = new Set([...rec.selected].filter((id) => rec.candidates.some((c) => c.id === id)));
 }
 
 function proposalTable() {
@@ -262,13 +296,19 @@ function proposalTable() {
     .map((d) => {
       const removable = d.kind === "other";
       const manual = removable && !(d.counterpart_line_ids?.length);
+      const doc = removable && d.counterpart_line_ids?.length && d.id;
       const amount = d.amount;
+      const full = Math.abs(d.original_amount_unsigned ?? 0);
+      const amountCell = doc
+        ? `<input type="number" step="any" min="0" data-pair-amount="${esc(d.reference)}" value="${Math.abs(amount)}" aria-label="Jumlah dialokasikan" class="${INPUT} w-36 text-right inline-block">
+           ${full && Math.abs(amount) < full - 0.005 ? `<button type="button" data-action="pair-full" data-ref="${esc(d.reference)}" class="ml-1 text-xs text-indigo-600 hover:text-indigo-800" title="Alokasikan seluruh sisa dokumen (${esc(money(full))}); selisih jadi sisa mutasi">Penuh</button>` : ""}`
+        : esc(money(amount));
       return `<tr>
         <td class="py-2 px-4 text-sm"><span class="text-xs font-medium ${d.kind === "suspense" ? "text-amber-700" : "text-gray-500"}">${esc(KIND_LABEL[d.kind] ?? d.kind)}</span></td>
         <td class="py-2 px-4 text-sm">${esc(d.account_id?.[1] ?? "")}</td>
         <td class="py-2 px-4 text-sm">${esc(d.name || "")}${d.move ? ` <span class="text-gray-400">(${esc(d.move)})</span>` : ""}</td>
         <td class="py-2 px-4 text-sm">${esc(d.partner_id?.[1] || "")}</td>
-        <td class="py-2 px-4 text-sm text-right tabular-nums">${esc(money(amount))}</td>
+        <td class="py-2 px-4 text-sm text-right tabular-nums whitespace-nowrap">${amountCell}</td>
         <td class="py-2 px-4 text-sm text-right">${removable ? `<button type="button" data-action="remove-pair" data-ref="${esc(d.reference)}" data-line-id="${d.counterpart_line_ids?.[0] ?? ""}" data-manual="${manual ? 1 : 0}" class="text-gray-400 hover:text-rose-600" aria-label="Lepas"><i class="fas fa-times"></i></button>` : ""}</td></tr>`;
     })
     .join("");
@@ -277,20 +317,31 @@ function proposalTable() {
     <tbody class="divide-y divide-gray-100">${rows}</tbody></table></div>`;
 }
 
+function pickedTotal() {
+  return rec.candidates.filter((c) => rec.selected.has(c.id)).reduce((sum, c) => sum + Math.abs(c.amount_residual), 0);
+}
+
 function candidatesTable() {
-  if (!rec.candidates.length) return '<p class="py-6 text-center text-sm text-gray-500">Tidak ada item terbuka yang cocok. Coba cari lebih luas atau catat ke sebuah akun.</p>';
+  if (!rec.candidates.length) return '<p class="py-6 text-center text-sm text-gray-500">Tidak ada item terbuka yang cocok. Ganti jenis dokumen, longgarkan filter, atau catat ke sebuah akun.</p>';
   const rows = rec.candidates
-    .map(
-      (r) => `<tr class="${r.exact ? "bg-emerald-50" : ""}">
-        <td class="py-2 px-4 text-sm whitespace-nowrap">${esc(dateText(r.date))}</td>
-        <td class="py-2 px-4 text-sm">${esc(r.move_id[1])}${r.exact ? ' <span class="ml-1 text-xs font-medium text-emerald-700">jumlah cocok</span>' : ""}</td>
-        <td class="py-2 px-4 text-sm">${esc(r.account_id[1])}</td><td class="py-2 px-4 text-sm">${esc(r.partner_id?.[1] || "")}</td>
-        <td class="py-2 px-4 text-sm text-right tabular-nums">${esc(money(Math.abs(r.amount_residual)))}</td>
-        <td class="py-2 px-4 text-sm text-right"><button type="button" data-action="add-pair" data-line-id="${r.id}" class="px-3 py-1 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Tambah</button></td></tr>`,
-    )
+    .map((r) => {
+      const tags = [
+        r.exact ? '<span class="ml-1 text-xs font-medium text-emerald-700">jumlah cocok</span>' : "",
+        r.refMatch ? '<span class="ml-1 text-xs font-medium text-emerald-700">nomor cocok</span>' : "",
+        r.partnerMatch && !r.exact ? '<span class="ml-1 text-xs font-medium text-indigo-700">mitra sama</span>' : "",
+        r.sameSign ? "" : '<span class="ml-1 text-xs font-medium text-amber-700">arah berlawanan</span>',
+      ].join("");
+      return `<tr class="${r.score >= 4 ? "bg-emerald-50" : ""}">
+        <td class="py-2 pl-4 pr-1"><input type="checkbox" data-pick="${r.id}" ${rec.selected.has(r.id) ? "checked" : ""} aria-label="Pilih ${esc(r.move_id[1])}" class="rounded border-gray-300 text-indigo-600"></td>
+        <td class="py-2 px-3 text-sm whitespace-nowrap">${esc(dateText(r.date))}</td>
+        <td class="py-2 px-3 text-sm"><span class="text-xs text-gray-500">${esc(DOC_LABEL[r.payment_id ? "payment" : r.move_type] ?? "")}</span> ${esc(r.move_id[1])}${tags}</td>
+        <td class="py-2 px-3 text-sm">${esc(r.account_id[1])}</td><td class="py-2 px-3 text-sm">${esc(r.partner_id?.[1] || "")}</td>
+        <td class="py-2 px-3 text-sm text-right tabular-nums">${esc(money(r.amount_residual))}</td>
+        <td class="py-2 px-3 text-sm text-right"><button type="button" data-action="add-pair" data-line-id="${r.id}" class="px-3 py-1 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Tambah</button></td></tr>`;
+    })
     .join("");
-  return `<div class="overflow-x-auto"><table class="w-full text-left"><thead class="bg-gray-50"><tr>${["Tanggal", "Dokumen", "Akun", "Mitra", "Sisa", ""]
-    .map((h, i) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${i === 4 ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
+  return `<div class="overflow-x-auto"><table class="w-full text-left"><thead class="bg-gray-50"><tr><th class="py-2 pl-4 pr-1"></th>${["Tanggal", "Dokumen", "Akun", "Mitra", "Sisa", ""]
+    .map((h, i) => `<th class="py-2 px-3 text-xs font-semibold text-gray-600 uppercase ${i === 4 ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
     <tbody class="divide-y divide-gray-100">${rows}</tbody></table></div>`;
 }
 
@@ -332,7 +383,10 @@ async function renderLine(id) {
     // Mulai dari usulan bersih: data rekonsiliasi tersimpan dari sesi lama bisa memuat pasangan ganda.
     await call("account.bank.statement.line", "clean_reconcile", { ids: [id] });
     const fresh = await readOne("account.bank.statement.line", id, ["reconcile_data_info"]);
-    rec = { id, line, info: fresh.reconcile_data_info, search: "", onlyPartner: Boolean(line.partner_id), candidates: [], account: null };
+    rec = {
+      id, line, info: fresh.reconcile_data_info, search: "", onlyPartner: Boolean(line.partner_id), candidates: [], account: null, accountTypes: null, label: "",
+      tab: "all", filters: EMPTY_FILTERS(), opposite: false, selected: new Set(),
+    };
   }
   rec.header = header;
   await loadCandidates();
@@ -344,34 +398,60 @@ function paintReconcile() {
   const hasSuspense = info.data.some((d) => d.kind === "suspense");
   const suspense = info.data.find((d) => d.kind === "suspense");
   const partnerNote = hasSuspense && line.partner_id
-    ? `Sisa ${money(Math.abs(suspense.amount))} akan dicatat ke akun ${line.amount > 0 ? "piutang" : "hutang"} ${esc(line.partner_id[1])} (pembayaran di muka atau lebih bayar).`
+    ? `Selisih ${money(Math.abs(suspense.amount))} akan dicatat ke akun ${esc(suspense.account_id?.[1] ?? "mitra")} atas nama ${esc(line.partner_id[1])} (pembayaran di muka atau lebih bayar), atau catat ke akun lain di bawah.`
     : hasSuspense
-      ? "Sisa belum bisa dicatat: pilih mitra pada mutasi, cocokkan sisa dengan dokumen, atau catat ke sebuah akun di bawah."
+      ? "Selisih belum bisa dicatat: pilih mitra pada mutasi, cocokkan dengan dokumen lain, atau catat ke sebuah akun di bawah."
       : "Jumlah sudah seimbang.";
+  const f = rec.filters;
+  const chip = (action, label, extra = "") => `<button type="button" data-action="${action}" ${extra} class="px-2 py-1 bg-white border border-gray-300 rounded-full text-xs hover:bg-gray-50">${label}</button>`;
   const html = `${header}
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 p-4" id="proposal">
       <div class="text-sm font-semibold mb-3">Rekonsiliasi</div>
       ${proposalTable()}
       <p class="mt-3 text-sm ${hasSuspense && !info.can_reconcile ? "text-amber-800" : "text-gray-600"}">${partnerNote}</p>
       ${hasSuspense
-        ? `<div class="mt-3 flex flex-wrap items-end gap-3 border-t border-gray-100 pt-3">
-             <label class="text-xs font-medium text-gray-500 uppercase">Catat sisa ke akun<input data-lookup="bank-account" autocomplete="off" role="combobox" aria-autocomplete="list" value="${esc(rec.account?.display_name ?? "")}" placeholder="mis. Biaya administrasi bank" class="${INPUT} mt-1 w-72"></label>
-             <button type="button" data-action="apply-account" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Terapkan</button></div>`
+        ? `<div class="mt-3 border-t border-gray-100 pt-3">
+             <div class="text-xs font-medium text-gray-500 uppercase mb-2">Catat selisih ke akun (${esc(money(Math.abs(suspense.amount)))})</div>
+             <div class="flex flex-wrap gap-2 mb-2">${chip("wo-types", "Beban", 'data-kind="expense"')}${chip("wo-types", "Pendapatan", 'data-kind="income"')}${chip("wo-fx", "Selisih kurs")}
+               ${rec.accountTypes ? chip("wo-types", "Semua akun", 'data-kind=""') : ""}</div>
+             <div class="flex flex-wrap items-end gap-3">
+               <label class="text-xs font-medium text-gray-500 uppercase">Akun<input data-lookup="bank-account" autocomplete="off" role="combobox" aria-autocomplete="list" value="${esc(rec.account?.display_name ?? "")}" placeholder="mis. Biaya administrasi bank" class="${INPUT} mt-1 w-72"></label>
+               <label class="text-xs font-medium text-gray-500 uppercase">Label<input data-wo-label value="${esc(rec.label)}" placeholder="mis. Biaya transfer" class="${INPUT} mt-1 w-56"></label>
+               <button type="button" data-action="apply-account" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Terapkan</button></div></div>`
         : ""}
       <div class="flex gap-2 mt-4">
-        <button data-action="reconcile" class="px-4 py-2 rounded-lg text-sm font-medium ${info.can_reconcile ? "bg-indigo-600 text-white hover:bg-indigo-700" : "bg-gray-200 text-gray-500 cursor-not-allowed"}" ${info.can_reconcile ? "" : "disabled"}>Rekonsiliasi</button>
+        <button data-action="reconcile" class="px-4 py-2 rounded-lg text-sm font-medium ${info.can_reconcile ? "bg-indigo-600 text-white hover:bg-indigo-700" : "bg-gray-200 text-gray-500 cursor-not-allowed"}" ${info.can_reconcile ? "" : "disabled"}>Konfirmasi</button>
         <button data-action="reset-reconcile" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Atur Ulang</button>
       </div>
     </section>
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 p-4">
-      <div class="flex flex-wrap items-end justify-between gap-3 mb-3"><div class="text-sm font-semibold">Item terbuka yang bisa dicocokkan</div>
-        <form data-form="candidates" class="flex flex-wrap items-center gap-3">
-          <input data-search value="${esc(rec.search)}" placeholder="Cari dokumen, label, mitra" class="${INPUT} w-60">
-          ${line.partner_id ? `<label class="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" data-only-partner ${rec.onlyPartner ? "checked" : ""} class="rounded border-gray-300 text-indigo-600"> Hanya ${esc(line.partner_id[1])}</label>` : ""}
-          <button type="submit" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cari</button></form></div>
+      <div class="text-sm font-semibold mb-3">Cocokkan dengan faktur, tagihan, pembayaran, atau jurnal entry</div>
+      <div class="flex flex-wrap gap-2 mb-3" role="tablist">${TABS.map(
+        ([key, label]) => `<button type="button" role="tab" aria-selected="${rec.tab === key}" data-action="cand-tab" data-tab="${key}" class="px-3 py-1.5 rounded-lg text-sm ${rec.tab === key ? "bg-indigo-600 text-white" : "bg-white border border-gray-300 hover:bg-gray-50"}">${label}</button>`,
+      ).join("")}</div>
+      <form data-form="candidates" class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+        <label class="text-xs font-medium text-gray-500 uppercase">Cari<input data-search value="${esc(rec.search)}" placeholder="Dokumen, label, mitra" class="${INPUT} mt-1"></label>
+        <label class="text-xs font-medium text-gray-500 uppercase">Mitra<input data-f="partner" value="${esc(f.partner)}" placeholder="Nama mitra" class="${INPUT} mt-1"></label>
+        <label class="text-xs font-medium text-gray-500 uppercase">Jumlah dari<input type="number" step="any" data-f="min" value="${esc(f.min)}" class="${INPUT} mt-1 text-right"></label>
+        <label class="text-xs font-medium text-gray-500 uppercase">Jumlah sampai<input type="number" step="any" data-f="max" value="${esc(f.max)}" class="${INPUT} mt-1 text-right"></label>
+        <label class="text-xs font-medium text-gray-500 uppercase">Tanggal dari<input type="date" data-f="from" value="${esc(f.from)}" class="${INPUT} mt-1"></label>
+        <label class="text-xs font-medium text-gray-500 uppercase">Tanggal sampai<input type="date" data-f="to" value="${esc(f.to)}" class="${INPUT} mt-1"></label>
+        <div class="flex flex-col justify-end gap-1 text-sm text-gray-700">
+          ${line.partner_id ? `<label class="flex items-center gap-2"><input type="checkbox" data-only-partner ${rec.onlyPartner ? "checked" : ""} class="rounded border-gray-300 text-indigo-600"> Hanya ${esc(line.partner_id[1])}</label>` : ""}
+          <label class="flex items-center gap-2"><input type="checkbox" data-opposite ${rec.opposite ? "checked" : ""} class="rounded border-gray-300 text-indigo-600"> Sertakan arah berlawanan (nota kredit)</label></div>
+        <div class="flex items-end"><button type="submit" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cari</button></div></form>
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-2 text-sm">
+        <span class="text-gray-600" id="pick-total">${pickText()}</span>
+        <button type="button" data-action="add-picked" id="add-picked" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700" ${rec.selected.size ? "" : "disabled"}>Tambah yang dipilih</button></div>
       <div id="candidates">${candidatesTable()}</div>
+      <p class="mt-2 text-xs text-gray-500">Baris hijau = saran (jumlah, nomor, atau mitra cocok). Satu mutasi bisa untuk banyak dokumen; satu dokumen bisa dibayar beberapa mutasi (sisanya muncul lagi di mutasi berikutnya).</p>
     </section>`;
   app.innerHTML = html;
+}
+
+function pickText() {
+  if (!rec.selected.size) return "Centang beberapa dokumen untuk dicocokkan sekaligus.";
+  return `${rec.selected.size} dokumen dipilih, total sisa ${money(pickedTotal())}; mutasi ${money(Math.abs(rec.line.amount))}.`;
 }
 
 /* ---------- Aksi ---------- */
@@ -410,7 +490,7 @@ async function applyAccount(button) {
   const info = await guarded(button, () =>
     onchange(
       {
-        reconcile_data_info: rec.info, manual_reference: suspense.reference, manual_account_id: rec.account.id, manual_name: suspense.name,
+        reconcile_data_info: rec.info, manual_reference: suspense.reference, manual_account_id: rec.account.id, manual_name: rec.label.trim() || suspense.name,
         manual_amount: suspense.amount, manual_partner_id: suspense.partner_id?.[0] ?? false, manual_currency_id: suspense.currency_id,
         manual_in_currency_id: suspense.line_currency_id, manual_in_currency: false, manual_amount_in_currency: suspense.currency_amount,
         previous_manual_amount_in_currency: suspense.currency_amount, manual_kind: "suspense", manual_original_amount: 0.0,
@@ -422,7 +502,61 @@ async function applyAccount(button) {
   if (!info) return;
   rec.info = info;
   rec.account = null;
+  rec.label = "";
   await refreshProposal();
+}
+
+async function addPicked(button) {
+  const ids = [...rec.selected];
+  if (!ids.length) return;
+  const info = await guarded(button, async () => {
+    let current = rec.info;
+    for (const id of ids) current = await onchange({ reconcile_data_info: current, add_account_move_line_id: id }, ["add_account_move_line_id"]);
+    return current;
+  });
+  if (!info) return;
+  rec.info = info;
+  rec.selected = new Set();
+  await refreshProposal();
+}
+
+// Ubah jumlah yang dialokasikan ke satu dokumen (sebagian, atau penuh agar selisihnya menjadi sisa mutasi).
+async function setPairAmount(el, value) {
+  const pair = rec.info.data.find((d) => d.reference === el.dataset.pairAmount);
+  if (!pair) return;
+  const target = Number(value);
+  if (!(target >= 0) || !Number.isFinite(target)) {
+    toast("Jumlah tidak valid.", "error");
+    return;
+  }
+  const signed = (pair.amount < 0 ? -1 : 1) * target;
+  const info = await guarded(el, () =>
+    onchange(
+      {
+        reconcile_data_info: rec.info, manual_reference: pair.reference, manual_account_id: pair.account_id[0], manual_name: pair.name,
+        manual_amount: signed, manual_partner_id: pair.partner_id?.[0] ?? false, manual_currency_id: pair.currency_id, manual_in_currency_id: pair.line_currency_id,
+        manual_in_currency: false, manual_amount_in_currency: signed, previous_manual_amount_in_currency: pair.currency_amount, manual_kind: pair.kind,
+        manual_original_amount: pair.original_amount ?? 0.0, manual_exchange_counterpart: false, manual_delete: false, analytic_distribution: pair.analytic_distribution ?? {},
+      },
+      ["manual_amount"],
+    ),
+  );
+  if (info) rec.info = info;
+  await refreshProposal();
+}
+
+async function writeOffFx(button) {
+  const suspense = rec.info.data.find((d) => d.kind === "suspense");
+  if (!suspense) return;
+  const [company] = await searchRead("res.company", [], ["expense_currency_exchange_account_id", "income_currency_exchange_account_id"], { limit: 1 });
+  const account = suspense.amount > 0 ? company?.expense_currency_exchange_account_id : company?.income_currency_exchange_account_id;
+  if (!account) {
+    toast("Akun selisih kurs perusahaan belum diatur.", "error");
+    return;
+  }
+  rec.account = { id: account[0], display_name: account[1] };
+  rec.label ||= "Selisih kurs";
+  await applyAccount(button);
 }
 
 async function reconcile(button) {
@@ -475,6 +609,20 @@ export async function onClick(event, el) {
   } else if (action === "add-pair") await addPair(el, Number(el.dataset.lineId));
   else if (action === "remove-pair") await removePair(el, el);
   else if (action === "apply-account") await applyAccount(el);
+  else if (action === "add-picked") await addPicked(el);
+  else if (action === "cand-tab") {
+    rec.tab = el.dataset.tab;
+    rec.selected = new Set();
+    await refreshProposal();
+  } else if (action === "wo-types") {
+    rec.accountTypes = WRITE_OFF_TYPES[el.dataset.kind] ?? null;
+    paintReconcile();
+    document.querySelector('[data-lookup="bank-account"]')?.focus();
+  } else if (action === "wo-fx") await writeOffFx(el);
+  else if (action === "pair-full") {
+    const pair = rec.info.data.find((d) => d.reference === el.dataset.ref);
+    if (pair) await setPairAmount({ dataset: { pairAmount: pair.reference } }, Math.abs(pair.original_amount_unsigned));
+  }
   else if (action === "reconcile") await reconcile(el);
   else if (action === "reset-reconcile") await resetReconcile(el);
   else if (action === "unreconcile") await unreconcile(el, Number(el.dataset.id));
@@ -483,6 +631,7 @@ export async function onClick(event, el) {
 export function onInput(event, el) {
   if (el.dataset.bankLine !== undefined && form) form.lines[Number(el.dataset.bankLine)][el.dataset.field] = el.value;
   else if (el.dataset.bank && form) form[el.dataset.bank] = el.dataset.bank === "journal" ? Number(el.value) : el.value;
+  else if (el.dataset.woLabel !== undefined && rec) rec.label = el.value;
   else if (el.dataset.lookup === "bank-account" && rec) {
     rec.account = null;
     runLookup(el, 250);
@@ -495,6 +644,20 @@ export async function onChange(event, el) {
     if (el.value) params.set("journal", el.value);
     else params.delete("journal");
     location.hash = `#/bank${params.toString() ? `?${params}` : ""}`;
+    return;
+  }
+  if (el.dataset.pick !== undefined && rec) {
+    const id = Number(el.dataset.pick);
+    if (el.checked) rec.selected.add(id);
+    else rec.selected.delete(id);
+    const total = document.getElementById("pick-total");
+    if (total) total.textContent = pickText();
+    const add = document.getElementById("add-picked");
+    if (add) add.disabled = !rec.selected.size;
+    return;
+  }
+  if (el.dataset.pairAmount !== undefined && rec) {
+    await setPairAmount(el, el.value);
     return;
   }
   if (el.dataset.bankCsv !== undefined && el.files?.[0]) {
@@ -514,5 +677,7 @@ export async function onSubmit(event, formEl, kind) {
   if (kind !== "candidates" || !rec) return;
   rec.search = document.querySelector("[data-search]").value.trim();
   rec.onlyPartner = document.querySelector("[data-only-partner]")?.checked ?? false;
+  rec.opposite = document.querySelector("[data-opposite]")?.checked ?? false;
+  for (const input of document.querySelectorAll("[data-f]")) rec.filters[input.dataset.f] = input.value.trim();
   await refreshProposal();
 }
