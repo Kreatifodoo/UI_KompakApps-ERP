@@ -190,6 +190,7 @@ def main():
     check_master_data(api)
     check_order_to_cash(api, product)
     check_financial_reports(api)
+    check_report_groups(api)
     check_bank_reconciliation(api)
     check_inventory(api, product)
     check_warehouse_master(api, product)
@@ -2663,6 +2664,61 @@ def check_financial_reports(api):
     check(abs(total[1]["val"] - total[2]["val"]) < 0.005 and total[1]["val"] > 0, "neraca saldo: total debit sama dengan total kredit")
     ledger = api.call("account.move.line", "formatted_read_group", domain=[["parent_state", "=", "posted"], ["date", ">=", start], ["date", "<=", end]], groupby=[], aggregates=["debit:sum", "credit:sum"])[0]
     check(abs(ledger["debit:sum"] - total[1]["val"]) < 0.005, "neraca saldo: total debit sama dengan buku besar")
+
+
+def check_report_groups(api):
+    """Pos Laporan per akun (D67): akun baru dengan kode di luar semua awalan lama muncul di Laba Rugi dan Neraca beserta uraiannya,
+    pos bisa dipindah, dikosongkan menjadi otomatis, dan Tidak dilaporkan menyalakan baris pemeriksaan."""
+    import random
+
+    step("Pos Laporan per akun: akun baru otomatis muncul di laporan")
+    tag = f"{random.randint(0, 99999):05d}"
+    today = datetime.date.today()
+    start, end = today.replace(month=1, day=1).isoformat(), today.isoformat()
+    [expense] = api.call("account.account", "create", vals_list=[{"code": f"71{tag}", "name": f"Beban Riset Uji {tag}", "account_type": "expense"}])
+    [asset] = api.call("account.account", "create", vals_list=[{"code": f"19{tag}", "name": f"Uang Muka Uji {tag}", "account_type": "asset_current"}])
+    groups = {a["id"]: a["kompakapps_report_group"] for a in api.search("account.account", [["id", "in", [expense, asset]]], ["kompakapps_report_group"])}
+    check(groups[expense] == "beban_lain_operasional" and groups[asset] == "aset_lancar_lain", "pos otomatis menurut jenis akun untuk kode yang tidak dikenal")
+    num = lambda values, label: values.get(label) or 0  # noqa: E731  (baris tanpa saldo bernilai kosong)
+    before_pl, _ = mis_values(api, "Laba Rugi", start, end)
+    before_bs, _ = mis_values(api, "Neraca", "2000-01-01", end)  # kumulatif seperti UI
+    cash = api.search("account.account", [["account_type", "=", "asset_cash"]], ["id"], limit=1)[0]["id"]
+
+    def post(debit, credit, amount):
+        [move] = api.call("account.move", "create", vals_list=[{"move_type": "entry", "date": today.isoformat(), "line_ids": [
+            [0, 0, {"account_id": debit, "debit": amount, "name": "Uji pos laporan"}], [0, 0, {"account_id": credit, "credit": amount, "name": "Uji pos laporan"}]]}])
+        api.call("account.move", "action_post", ids=[move])
+
+    post(expense, cash, 250_000)
+    post(asset, cash, 400_000)
+    after_pl, result = mis_values(api, "Laba Rugi", start, end)
+    labels = [row["label"] for row in result["body"]]
+    check(abs(num(after_pl, "Beban Operasional Lain") - num(before_pl, "Beban Operasional Lain") - 250_000) < 0.005, "laba rugi: akun baru masuk Beban Operasional Lain")
+    check(abs(num(before_pl, "LABA BERSIH") - num(after_pl, "LABA BERSIH") - 250_000) < 0.005, "laba rugi: laba bersih memuat beban akun baru")
+    check(any(label.endswith(f"Beban Riset Uji {tag}") for label in labels), "laba rugi: uraian per akun menampilkan akun baru")
+    check(abs(num(after_pl, "Akun laba rugi belum terpetakan (harus 0)")) < 0.005, "laba rugi: baris pemeriksaan tetap 0")
+    after_bs, _ = mis_values(api, "Neraca", "2000-01-01", end)  # kumulatif seperti UI
+    check(abs(num(after_bs, "Aset Lancar Lain") - num(before_bs, "Aset Lancar Lain") - 400_000) < 0.005, "neraca: aset baru masuk Aset Lancar Lain")
+    check(abs(after_bs["Selisih aset dan liabilitas + ekuitas (harus 0)"] or 0) < 0.005, "neraca: tetap seimbang dengan akun baru")
+    cash_flow, _ = mis_values(api, "Arus Kas", start, end)
+    check(abs(cash_flow["Selisih saldo kas (harus 0)"] or 0) < 0.005, "arus kas: tetap cocok dengan saldo kas dan bank")
+    # pindah pos, kosongkan menjadi otomatis, dan tidak dilaporkan
+    api.call("account.account", "write", ids=[expense], vals={"kompakapps_report_group": "beban_gaji"})
+    moved, _ = mis_values(api, "Laba Rugi", start, end)
+    check(abs(num(moved, "Gaji dan Tunjangan") - num(before_pl, "Gaji dan Tunjangan") - 250_000) < 0.005, "pindah pos: nilai pindah ke baris yang dipilih")
+    check(abs(num(moved, "LABA BERSIH") - num(after_pl, "LABA BERSIH")) < 0.005, "pindah pos: laba bersih tidak berubah")
+    api.call("account.account", "write", ids=[expense], vals={"kompakapps_report_group": False})
+    check(api.read("account.account", expense, ["kompakapps_report_group"])["kompakapps_report_group"] == "beban_lain_operasional", "dikosongkan: kembali ke pos otomatis")
+    api.call("account.account", "write", ids=[expense], vals={"kompakapps_report_group": "none"})
+    hidden, _ = mis_values(api, "Laba Rugi", start, end)
+    check(abs(num(hidden, "Akun laba rugi belum terpetakan (harus 0)") + 250_000) < 0.005, "tidak dilaporkan: baris pemeriksaan menyala sebesar saldo akun")
+    api.call("account.account", "write", ids=[expense], vals={"kompakapps_report_group": False})
+    try:
+        api.call("account.account", "write", ids=[expense], vals={"kompakapps_report_group": "kas_bank"})
+        rejected = False
+    except RuntimeError:
+        rejected = True
+    check(rejected, "pos Neraca ditolak untuk akun Laba Rugi")
 
 
 def check_inventory_valuation(api, vendor):

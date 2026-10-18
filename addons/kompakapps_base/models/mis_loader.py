@@ -5,7 +5,7 @@ from .mis_templates import INSTANCES, REPORTS
 STYLES = {
     "header": {"name": "KompakApps - Judul bagian", "font_weight": "bold", "background_color": "#f3f4f6", "color": "#374151"},
     "sub": {"name": "KompakApps - Subtotal", "font_weight": "bold"},
-    "total": {"name": "KompakApps - Total", "font_weight": "bold", "background_color": "#e0e7ff", "color": "#1e1b4b"},
+    "total": {"name": "KompakApps - Total", "font_weight": "bold", "background_color": "#D0F4FB", "color": "#08404A"},
     "check": {"name": "KompakApps - Pemeriksaan", "font_style": "italic", "color": "#b45309"},
 }
 
