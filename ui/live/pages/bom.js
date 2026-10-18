@@ -6,6 +6,7 @@ import {
   money, pageHeader, readOne, readonlyValue, referenceUoms, registerLookup, rowLink, runLookup, searchBox, searchRead, selectOptions, statTiles, table,
   toast, button,
 } from "../common.js";
+import { compareAction, compareBadge, compareChange, renderCompare } from "./bomcompare.js";
 
 const TYPES = { normal: "Produksi (manufacture)", phantom: "Kit" };
 const CONSUMPTION = { flexible: "Boleh", warning: "Boleh dengan peringatan", strict: "Diblokir" };
@@ -75,6 +76,7 @@ async function loadFeatures() {
 export async function render(sub, query) {
   last = { sub, query };
   if (sub === "") return renderList(query);
+  if (sub === "compare") return renderCompare(query);
   return renderForm(sub === "new" ? null : Number(sub), query);
 }
 
@@ -90,10 +92,12 @@ async function renderList(query) {
   const rows = await searchRead("mrp.bom", domain, ["code", "product_tmpl_id", "product_qty", "product_uom_id", "type", "bom_line_ids", "operation_ids", "active"], {
     order: "product_tmpl_id, sequence, id", limit: 100, context: { active_test: filter === "active" },
   });
+  const perProduct = new Map();
+  rows.forEach((r) => perProduct.set(r.product_tmpl_id[0], (perProduct.get(r.product_tmpl_id[0]) ?? 0) + 1));
   const body = rows
     .map((r) =>
       rowLink(`#/bom/${r.id}`, [
-        cell(r.product_tmpl_id[1], { strong: true }),
+        cell(`${esc(r.product_tmpl_id[1])} ${compareBadge(perProduct.get(r.product_tmpl_id[0]), r.product_tmpl_id[0])}`, { strong: true, raw: true }),
         cell(r.code || "-"),
         cell(TYPES[r.type] ?? r.type),
         cell(`${nf.format(r.product_qty)} ${r.product_uom_id?.[1] ?? ""}`, { right: true }),
@@ -107,6 +111,7 @@ async function renderList(query) {
     pageHeader(
       "Bill of Material",
       `${searchBox(text, "Cari produk, kode, komponen")}${filterSelect(FILTERS, filter)}
+       ${product && rows.length > 1 ? `<a href="#/bom/compare?product=${product}" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50"><i class="fas fa-code-compare mr-2"></i>Bandingkan ${rows.length} BoM</a>` : ""}
        <a href="#/bom/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>BoM Baru</a>`,
     ) +
     table(
@@ -322,6 +327,7 @@ async function persist() {
 export async function onClick(event, el) {
   const { action } = el.dataset;
   const id = Number(el.dataset.id) || null;
+  if (compareAction(action, el)) return;
   if (action === "refresh") reload();
   else if (action === "discard") form = null;
   else if (action === "add-row") {
@@ -354,6 +360,10 @@ export async function onClick(event, el) {
       reload();
     }
   }
+}
+
+export function onChange(event, el) {
+  compareChange(el, reload);
 }
 
 export function onInput(event, el) {
