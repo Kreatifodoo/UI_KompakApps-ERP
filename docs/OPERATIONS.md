@@ -1,6 +1,6 @@
-# Operasional Nusara ERP
+# Operasional KompakApps
 
-Panduan menjalankan Nusara ERP dengan aman: backup terjadwal, pemulihan, pemantauan, upgrade modul, pemecahan masalah, rahasia yang harus dijaga, dan perkiraan kapasitas. Keputusan di baliknya ada di [DECISIONS.md](DECISIONS.md) (D32); cara pengembangan ada di [DEV_GUIDE.md](DEV_GUIDE.md); alur CI/CD dan penyiapan server ada di [CICD.md](CICD.md).
+Panduan menjalankan KompakApps dengan aman: backup terjadwal, pemulihan, pemantauan, upgrade modul, pemecahan masalah, rahasia yang harus dijaga, dan perkiraan kapasitas. Keputusan di baliknya ada di [DECISIONS.md](DECISIONS.md) (D32); cara pengembangan ada di [DEV_GUIDE.md](DEV_GUIDE.md); alur CI/CD dan penyiapan server ada di [CICD.md](CICD.md).
 
 Semua angka di dokumen ini hasil pengukuran nyata pada stack uji (lihat bagian "Kapasitas" untuk spesifikasi mesin dan data). Angka itu bukan janji untuk server Anda; ulangi pengukuran di mesin tujuan dengan skrip yang sama.
 
@@ -229,7 +229,7 @@ python3 -I scripts/healthcheck.py \
 Keluaran (nyata, pada stack uji):
 
 ```
-Nusara health check 2026-10-11T16:56:47+07:00 (host)
+KompakApps health check 2026-10-11T16:56:47+07:00 (host)
   OK         odoo    sehat, versi 19.0-20260926, koneksi database baik, 464 ms
   OK         ui      nginx hidup (99 ms); proxy JSON-2 sampai ke Odoo (122 ms)
   OK         json2   JSON-2 menjawab dengan API key, nusara_base 19.0.1.0.0 terpasang, 212 ms

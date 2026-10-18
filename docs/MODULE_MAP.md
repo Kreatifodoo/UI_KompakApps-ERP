@@ -1,4 +1,4 @@
-# Peta Modul: Menu Nusara ke Odoo
+# Peta Modul: Menu KompakApps ke Odoo
 
 Sumber: `menuData` dan `formMapping` di [index.html](../index.html) (dihitung 2026-10-09).
 
@@ -59,7 +59,7 @@ Odoo inti tidak punya Purchase Request. Pakai OCA `purchase_request`.
 | Manufacturing Order | `mrp.production` | C | Form |
 | Reporting > Production Analisis | `mrp.production` (pivot) | C | Tabel palsu |
 
-Subcontracting (`mrp_subcontracting`) belum ada di menu Nusara tetapi sudah ada di Kompak; pertimbangkan menambahkannya.
+Subcontracting (`mrp_subcontracting`) belum ada di menu KompakApps tetapi sudah ada di Kompak; pertimbangkan menambahkannya.
 
 ## 5. CRM (10 menu)
 

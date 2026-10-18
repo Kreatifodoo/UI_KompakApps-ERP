@@ -327,9 +327,11 @@ export function renderSession() {
 
 export function renderConnect() {
   app.innerHTML = `
-    <section class="bg-white border border-gray-200 rounded-xl shadow-sm p-6 max-w-xl mx-auto mt-8">
-      <h1 class="text-xl font-bold text-gray-900">Hubungkan ke Odoo</h1>
-      <p class="text-sm text-gray-600 mt-2">Halaman ini bertransaksi langsung ke Odoo memakai API key milik Anda sendiri.</p>
+    <section class="bg-white border border-gray-200 rounded-2xl shadow-sm p-8 max-w-xl mx-auto mt-8">
+      <img src="brand/kompakapps-logo.png" alt="KompakApps" class="h-10 w-auto mb-5">
+      <div class="font-hand text-2xl text-indigo-600 leading-none">Selamat datang</div>
+      <h1 class="text-2xl font-extrabold text-indigo-900 mt-1">Hubungkan ke KompakApps</h1>
+      <p class="text-sm text-gray-600 mt-2">Halaman ini bertransaksi langsung ke server KompakApps memakai API key milik Anda sendiri.</p>
       <ol class="text-sm text-gray-600 mt-4 list-decimal ml-5 space-y-1">
         <li>Di Odoo, klik nama Anda di pojok kanan atas, lalu <b>Preferences</b>.</li>
         <li>Buka tab <b>Account Security</b>, klik <b>New API Key</b>, beri nama bebas.</li>

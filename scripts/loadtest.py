@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Uji beban sederhana untuk Nusara ERP lewat API JSON-2 (tanpa dependensi luar; jalankan dengan `python3 -I`).
+"""Uji beban sederhana untuk KompakApps lewat API JSON-2 (tanpa dependensi luar; jalankan dengan `python3 -I`).
 
 N pengguna paralel (thread, tiap thread satu koneksi HTTP tetap) menjalankan skenario selama durasi tertentu:
   baca   daftar produk, daftar Sales Order dan Purchase Order, laporan grup (Purchase Report per bulan,

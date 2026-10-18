@@ -1,4 +1,4 @@
-# Panduan Pengembangan Nusara ERP
+# Panduan Pengembangan KompakApps
 
 ## Bentuk proyek
 

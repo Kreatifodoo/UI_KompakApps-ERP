@@ -1,4 +1,4 @@
-# CI/CD Nusara ERP
+# CI/CD KompakApps
 
 ## Alur
 
@@ -26,7 +26,7 @@ Dependensi Python OCA **tidak** dipasang otomatis. Beberapa repo OCA mencantumka
 
 ## Menyiapkan server staging
 
-Pakai server khusus Nusara (bukan server bersama yang menjalankan sistem lain). Odoo + PostgreSQL butuh minimal 2 vCPU / 4 GB RAM untuk staging.
+Pakai server khusus KompakApps (bukan server bersama yang menjalankan sistem lain). Odoo + PostgreSQL butuh minimal 2 vCPU / 4 GB RAM untuk staging.
 
 1. Pasang Docker dan Docker Compose plugin, nginx, curl.
 2. Buat user `nusara-deploy` dan masukkan ke grup `docker`. Catatan: anggota grup `docker` setara root di server itu, jadi jangan gunakan server bersama.
