@@ -2,6 +2,7 @@
 // ini daftar harga jual pelanggan dengan aturan per produk, kategori, atau semua produk, dengan jumlah minimum, periode,
 // dan cara hitung (diskon persen, harga tetap, atau rumus dari harga jual atau biaya).
 import {
+  PRODUCT_PAGE, searchProducts,
   INPUT, app, badge, button, call, cell, changedValues, chatterHtml, closeLookup, ctx, esc, fieldBlock, filterSelect, fromInputDateTime, guarded, hasGroup, loadMessages, money,
   pageHeader, readOne, referenceCategories, referenceCurrencies, registerLookup, resetReferences, rowLink, runLookup, searchBox, searchRead, selectOptions, statTiles, table,
   toInputDateTime, toast,
@@ -22,7 +23,8 @@ export const leave = () => {
 const reload = () => render(last.sub, last.query);
 
 registerLookup("sp-product", {
-  search: (q) => searchRead("product.template", [["sale_ok", "=", true], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name", "list_price"], { limit: 10, order: "name" }),
+  pageSize: PRODUCT_PAGE,
+  search: (q, _input, page) => searchProducts(q, page, { model: "product.template", domain: [["sale_ok", "=", true]], fields: ["display_name", "list_price"] }),
   sub: (r) => money(r.list_price),
   isChosen: (input) => {
     const item = form?.items[Number(input.dataset.row)];

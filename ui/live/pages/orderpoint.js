@@ -1,6 +1,7 @@
 // Reorder Level (stock.warehouse.orderpoint): aturan stok minimum dan maksimum per produk dan lokasi, dasar
 // Replenishment. Dipakai juga sebagai kerangka halaman Replenishment (replenish.js).
 import {
+  PRODUCT_PAGE, searchProducts,
   INPUT, app, badge, call, cell, esc, fieldBlock, guarded, pageHeader, readOne, registerLookup, rowLink, runLookup, searchBox, searchRead,
   selectOptions, table, toast, button,
 } from "../common.js";
@@ -24,7 +25,8 @@ export const leave = () => {
 const reload = () => render(last.sub, last.query);
 
 registerLookup("op-product", {
-  search: (q) => searchRead("product.product", [["is_storable", "=", true], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name", "uom_id", "product_tmpl_id"], { limit: 10, order: "name" }),
+  pageSize: PRODUCT_PAGE,
+  search: (q, _input, page) => searchProducts(q, page, { domain: [["is_storable", "=", true]], fields: ["display_name", "uom_id", "product_tmpl_id"] }),
   sub: (r) => r.uom_id?.[1] ?? "",
   isChosen: (input) => form?.product?.display_name === input.value,
   choose: (input, item) => {

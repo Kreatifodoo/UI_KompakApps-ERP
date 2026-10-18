@@ -3,6 +3,7 @@
 // Invoices, field yang dapat diedit selama quotation, tabel barang (dikirim, ditagih, harga, diskon, pajak,
 // jumlah), dialog Buat Faktur (wizard sale.advance.payment.inv), dan total.
 import {
+  PRODUCT_PAGE, searchProducts,
   INPUT, actionBar, app, badge, call, cell, chatterHtml, closeLookup, closeModal, ctx, dateText, esc, fieldBlock, filterSelect, fromInputDateTime,
   guarded, loadMessages, money, openModal, pageHeader, readOne, readonlyValue, referencePricelists, referenceTerms, referenceUsers, referenceWarehouses, registerLookup,
   rowLink, runLookup, searchBox, searchRead, selectOptions, statTiles, statusbar, table, toInputDateTime, toast, dateTimeText,
@@ -99,15 +100,11 @@ async function refreshStock() {
 }
 
 registerLookup("sale-product", {
-  search: async (q) => {
-    const items = await searchRead(
-      "product.product",
-      [["sale_ok", "=", true], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])],
-      ["display_name", "uom_id", "description_sale", "list_price"],
-      { limit: 10, order: "name" },
-    );
+  pageSize: PRODUCT_PAGE,
+  search: async (q, _input, page) => {
+    const { items, total } = await searchProducts(q, page, { domain: [["sale_ok", "=", true]], fields: ["display_name", "uom_id", "description_sale", "list_price"] });
     const stock = await storableStock(items.map((i) => i.id), docStockLocation());
-    return items.map((i) => ({ ...i, stock: stock.get(i.id) ?? null }));
+    return { items: items.map((i) => ({ ...i, stock: stock.get(i.id) ?? null })), total };
   },
   sub: (r) => `${money(r.list_price)} / ${r.uom_id?.[1] ?? ""}${r.stock ? ` · ${stockText(r.stock)}` : ""}`,
   isChosen: (input) => {
