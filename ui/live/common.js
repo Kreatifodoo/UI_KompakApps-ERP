@@ -1,4 +1,4 @@
-// Bagian bersama UI Nusara: pembantu tampilan, sesi, kotak saran, dialog, dan chatter.
+// Bagian bersama UI KompakApps: pembantu tampilan, sesi, kotak saran, dialog, dan chatter.
 import { OdooError, activeCompany, auth, call, readOne, searchRead } from "./odoo.js";
 
 export const app = document.querySelector("#app");

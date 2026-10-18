@@ -3,7 +3,7 @@ from odoo.addons.account.tests.common import AccountTestInvoicingCommon
 from odoo.tests import tagged
 
 
-@tagged("post_install", "-at_install", "nusara")
+@tagged("post_install", "-at_install", "kompakapps")
 class TestBankReconciliation(AccountTestInvoicingCommon):
     """Rekonsiliasi bank (OCA account_reconcile_oca): pembayaran tertunda berpindah ke akun bank (D16)."""
 

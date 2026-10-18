@@ -12,8 +12,8 @@ const companyContext = (id) => ({ allowed_company_ids: [id, ...activeCompany.all
 
 /** COA Indonesia, pajak, dan valuasi, lalu gudang utama (Odoo hanya membuat gudang otomatis untuk perusahaan pertama). */
 async function setupIndonesia(id) {
-  await call("res.company", "nusara_setup_indonesia", { ids: [id], context: companyContext(id) });
-  await call("res.company", "nusara_setup_warehouse", { ids: [id], context: companyContext(id) });
+  await call("res.company", "kompakapps_setup_indonesia", { ids: [id], context: companyContext(id) });
+  await call("res.company", "kompakapps_setup_warehouse", { ids: [id], context: companyContext(id) });
 }
 
 const page = createMasterPage({
@@ -80,7 +80,7 @@ const page = createMasterPage({
       location.hash = "#/companies";
       location.reload();
     } else if (action === "company-warehouse") {
-      const ok = await guarded(el, () => call("res.company", "nusara_setup_warehouse", { ids: [id], context: companyContext(id) }));
+      const ok = await guarded(el, () => call("res.company", "kompakapps_setup_warehouse", { ids: [id], context: companyContext(id) }));
       if (ok !== undefined) {
         toast("Gudang utama dibuat.");
         resetReferences();

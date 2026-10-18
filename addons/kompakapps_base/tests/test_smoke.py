@@ -1,8 +1,8 @@
 from odoo.tests import TransactionCase, tagged
 
 
-@tagged("post_install", "-at_install", "nusara")
-class TestNusaraBaseSmoke(TransactionCase):
+@tagged("post_install", "-at_install", "kompakapps")
+class TestKompakAppsBaseSmoke(TransactionCase):
     """Memastikan modul inti dan OCA yang dibutuhkan alur Procure-to-Pay terpasang.
 
     Test alur lengkap (Purchase Request sampai Payment) ditambahkan setelah

@@ -5,7 +5,7 @@ from odoo.addons.account.tests.common import AccountTestInvoicingCommon
 from odoo.tests import tagged
 
 
-@tagged("post_install", "-at_install", "nusara")
+@tagged("post_install", "-at_install", "kompakapps")
 class TestPointOfSale(AccountTestInvoicingCommon):
     """Sesi kasir, penjualan tunai dengan kembalian, pembayaran campuran, faktur, dan jurnal saat sesi ditutup (D23)."""
 
@@ -23,7 +23,7 @@ class TestPointOfSale(AccountTestInvoicingCommon):
             }
         )
         cls.company = cls.env.company
-        cls.company.nusara_setup_inventory_valuation()
+        cls.company.kompakapps_setup_inventory_valuation()
         cls.goods = cls.env.ref("product.product_category_goods").with_company(cls.company)
         cls.tax = cls.company_data["default_tax_sale"]
         cls.product = cls._create_product(

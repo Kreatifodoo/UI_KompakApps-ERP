@@ -1,4 +1,4 @@
-// Router dan penyalur acara UI Nusara. Setiap halaman (pages/*.js) mengekspor:
+// Router dan penyalur acara UI KompakApps. Setiap halaman (pages/*.js) mengekspor:
 //   render(sub, query), onClick(event, el), onInput(event, el), onChange(event, el),
 //   onSubmit(event, form, kind, button), leave().
 import {

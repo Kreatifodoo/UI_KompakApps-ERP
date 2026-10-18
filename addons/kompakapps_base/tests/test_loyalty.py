@@ -8,11 +8,11 @@ from odoo.tools import mute_logger
 PROGRAM_FIELDS = ["program_type", "applies_on", "trigger", "portal_visible", "portal_point_name"]
 
 
-@tagged("post_install", "-at_install", "nusara")
+@tagged("post_install", "-at_install", "kompakapps")
 class TestLoyalty(AccountTestInvoicingCommon):
     """Promotion & Loyalty (D30): program, aturan, hadiah, dan penerapannya pada Sales Order.
 
-    Memakai panggilan yang sama dengan UI Nusara (wizard `sale.loyalty.coupon.wizard` dan
+    Memakai panggilan yang sama dengan UI KompakApps (wizard `sale.loyalty.coupon.wizard` dan
     `sale.loyalty.reward.wizard`, tombol `action_open_reward_wizard`), karena metode privat seperti
     `_try_apply_code` tidak bisa dipanggil lewat JSON-2.
     """
@@ -25,7 +25,7 @@ class TestLoyalty(AccountTestInvoicingCommon):
             {"group_ids": [Command.link(cls.env.ref("sales_team.group_sale_manager").id)]}
         )
         cls.company = cls.env.company
-        cls.company.nusara_setup_inventory_valuation()
+        cls.company.kompakapps_setup_inventory_valuation()
         cls.goods = cls.env.ref("product.product_category_goods").with_company(cls.company)
         cls.warehouse = cls.env["stock.warehouse"].search(
             [("company_id", "=", cls.company.id)], limit=1
@@ -549,7 +549,7 @@ class TestLoyalty(AccountTestInvoicingCommon):
         self.assertEqual(global_code.order_count, 0)
 
 
-@tagged("post_install", "-at_install", "nusara")
+@tagged("post_install", "-at_install", "kompakapps")
 class TestLoyaltyPos(AccountTestInvoicingCommon):
     """Program di kasir POS (D30): program mana yang berlaku untuk stasiun, dan pesanan dengan baris hadiah seperti yang dikirim UI kasir."""
 
@@ -567,7 +567,7 @@ class TestLoyaltyPos(AccountTestInvoicingCommon):
             }
         )
         cls.company = cls.env.company
-        cls.company.nusara_setup_inventory_valuation()
+        cls.company.kompakapps_setup_inventory_valuation()
         cls.goods = cls.env.ref("product.product_category_goods").with_company(cls.company)
         cls.tax = cls.company_data["default_tax_sale"]
         cls.product = cls._create_product(

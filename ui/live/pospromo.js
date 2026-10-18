@@ -1,5 +1,5 @@
 // Promosi di kasir POS (best effort, lihat D30). Klien web POS Odoo menghitung promosi di JavaScript-nya sendiri dan server tidak
-// punya metode publik untuk itu, jadi kasir Nusara menghitungnya di sini dari program, aturan, dan hadiah yang sama (loyalty.*),
+// punya metode publik untuk itu, jadi kasir KompakApps menghitungnya di sini dari program, aturan, dan hadiah yang sama (loyalty.*),
 // lalu mengirim baris hadiah (is_reward_line, reward_id, points_cost) pada pesanan POS lewat sync_from_ui.
 // Didukung: promosi otomatis, kode promo, dan beli X gratis Y (program yang berlaku untuk pesanan ini saja). Kupon, kartu loyalti, kartu
 // hadiah, e-wallet, dan kupon pesanan berikutnya belum didukung di kasir. Diskon "seluruh pesanan" hanya satu yang terbaik yang dipakai;

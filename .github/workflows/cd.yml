@@ -13,7 +13,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE: ghcr.io/kreatifodoo/nusara-erp
+  IMAGE: ghcr.io/kreatifodoo/kompakapps
   ODOO_VERSION: "19.0"
 
 jobs:
@@ -72,6 +72,6 @@ jobs:
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           scp -i ~/.ssh/id_deploy -o IdentitiesOnly=yes \
             deploy/docker-compose.prod.yml deploy/update.sh \
-            "$DEPLOY_USER@$DEPLOY_HOST:/opt/nusara/"
+            "$DEPLOY_USER@$DEPLOY_HOST:/opt/kompakapps/"
           ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes "$DEPLOY_USER@$DEPLOY_HOST" \
-            "cd /opt/nusara && chmod +x update.sh && IMAGE_TAG=$IMAGE_TAG ./update.sh"
+            "cd /opt/kompakapps && chmod +x update.sh && IMAGE_TAG=$IMAGE_TAG ./update.sh"

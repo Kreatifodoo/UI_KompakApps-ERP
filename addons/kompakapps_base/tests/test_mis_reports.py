@@ -3,7 +3,7 @@ from odoo.addons.account.tests.common import AccountTestInvoicingCommon
 from odoo.tests import tagged
 
 
-@tagged("post_install", "-at_install", "nusara")
+@tagged("post_install", "-at_install", "kompakapps")
 class TestMisReports(AccountTestInvoicingCommon):
     """Template laporan keuangan MIS (D15) dihitung benar pada COA Indonesia dan lolos pemeriksaannya."""
 
@@ -68,7 +68,7 @@ class TestMisReports(AccountTestInvoicingCommon):
         instance = self.env["mis.report.instance"].create(
             {
                 "name": "Uji",
-                "report_id": self.env.ref(f"nusara_base.{key}").id,
+                "report_id": self.env.ref(f"kompakapps_base.{key}").id,
                 "company_id": self.company.id,
                 "temporary": True,
                 "target_move": "posted",
@@ -87,12 +87,12 @@ class TestMisReports(AccountTestInvoicingCommon):
         return {row["label"]: row["cells"][0].get("val") for row in instance.compute()["body"]}
 
     def test_templates_are_loaded_once(self):
-        loader = self.env["nusara.mis.loader"]
+        loader = self.env["kompakapps.mis.loader"]
         before = self.env["mis.report"].search_count([])
         loader.load_templates()
         self.assertEqual(self.env["mis.report"].search_count([]), before, "Memuat ulang tidak boleh menggandakan laporan")
         for key in ("mis_laba_rugi", "mis_neraca", "mis_arus_kas", "mis_neraca_saldo", "mis_ringkasan"):
-            self.assertTrue(self.env.ref(f"nusara_base.{key}").kpi_ids, key)
+            self.assertTrue(self.env.ref(f"kompakapps_base.{key}").kpi_ids, key)
 
     def test_profit_and_loss(self):
         values = self._report("mis_laba_rugi")
@@ -126,7 +126,7 @@ class TestMisReports(AccountTestInvoicingCommon):
 
     def test_trial_balance_is_balanced(self):
         # Baris pertama hasil compute adalah total semua akun; kolom: saldo awal, debit, kredit, saldo akhir.
-        report = self.env.ref("nusara_base.mis_neraca_saldo")
+        report = self.env.ref("kompakapps_base.mis_neraca_saldo")
         instance = self.env["mis.report.instance"].create(
             {
                 "name": "Uji TB",

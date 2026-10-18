@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Uji regresi alur Procure-to-Pay dan Order-to-Cash lewat API JSON-2, dengan panggilan yang sama seperti UI Nusara.
+"""Uji regresi alur Procure-to-Pay dan Order-to-Cash lewat API JSON-2, dengan panggilan yang sama seperti UI KompakApps.
 
 Procure-to-Pay: Purchase Request -> RFQ (wizard) -> PO -> penerimaan sebagian + backorder -> penerimaan sisa ->
 tagihan vendor -> bayar sebagian -> bayar sisa. Juga menjaga jebakan harga manual PO (lihat
@@ -9,7 +9,7 @@ pelanggan -> pembayaran -> nota kredit, termasuk jurnal di tiap tahap.
 Skrip ini MENULIS data (PR, PO, SO, tagihan, faktur, pembayaran), jadi hanya jalankan pada database uji.
 Butuh data contoh dari scripts/seed_demo.py dan API key milik pengguna uji.
 
-    NUSARA_API_KEY=... python3 scripts/check_p2p_api.py --yes [--url http://127.0.0.1:8080]
+    KOMPAKAPPS_API_KEY=... python3 scripts/check_p2p_api.py --yes [--url http://127.0.0.1:8080]
 """
 
 import argparse
@@ -69,15 +69,15 @@ def step(title):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--url", default=os.environ.get("NUSARA_URL", "http://127.0.0.1:8080"))
+    parser.add_argument("--url", default=os.environ.get("KOMPAKAPPS_URL", "http://127.0.0.1:8080"))
     parser.add_argument("--yes", action="store_true", help="konfirmasi bahwa database tujuan adalah database uji")
     args = parser.parse_args()
-    key = os.environ.get("NUSARA_API_KEY", "")
+    key = os.environ.get("KOMPAKAPPS_API_KEY", "")
     if not key or not args.yes:
-        sys.exit("Isi NUSARA_API_KEY dan tambahkan --yes. Skrip ini menulis data; pakai database uji.")
+        sys.exit("Isi KOMPAKAPPS_API_KEY dan tambahkan --yes. Skrip ini menulis data; pakai database uji.")
     api = Api(args.url, key)
 
-    product = (api.search("product.product", [["name", "=", "Bahan Baku Nusara"]], ["uom_id", "categ_id"], limit=1) or [None])[0]
+    product = (api.search("product.product", [["name", "=", "Bahan Baku KompakApps"]], ["uom_id", "categ_id"], limit=1) or [None])[0]
     vendor = (api.search("res.partner", [["name", "=", "PT Pemasok Nusantara"]], ["id"], limit=1) or [None])[0]
     if not product or not vendor:
         sys.exit("Data contoh belum ada. Jalankan scripts/seed_demo.py dulu.")
@@ -86,7 +86,7 @@ def main():
     step("Purchase Request -> RFQ lewat wizard")
     [request_id] = api.call("purchase.request", "create", vals_list=[{
         "description": "Uji regresi P2P",
-        "line_ids": [[0, 0, {"product_id": product["id"], "product_uom_id": uom, "product_qty": 10.0, "name": "Bahan Baku Nusara"}]],
+        "line_ids": [[0, 0, {"product_id": product["id"], "product_uom_id": uom, "product_qty": 10.0, "name": "Bahan Baku KompakApps"}]],
     }])
     api.call("purchase.request", "button_to_approve", ids=[request_id])
     api.call("purchase.request", "button_approved", ids=[request_id])
@@ -1365,7 +1365,7 @@ def check_analysis_drill(api):
     """Drill-down dan perbandingan periode di laporan analisis (D37): angka kelompok, pembanding, dan baris rincian dihitung ulang dari dokumen."""
     step("Analisis: drill-down dan perbandingan periode (dihitung ulang dari baris dokumen)")
     tag = datetime.datetime.now().strftime("%H%M%S")
-    base = api.search("product.product", [["name", "=", "Bahan Baku Nusara"]], ["uom_id", "categ_id"], limit=1)[0]
+    base = api.search("product.product", [["name", "=", "Bahan Baku KompakApps"]], ["uom_id", "categ_id"], limit=1)[0]
     vendors = {n: api.call("res.partner", "create", vals_list=[{"name": f"Vendor Drill {n} {tag}", "is_company": True, "supplier_rank": 1}])[0] for n in "ABC"}
     customers = {n: api.call("res.partner", "create", vals_list=[{"name": f"Pelanggan Drill {n} {tag}", "is_company": True, "customer_rank": 1}])[0] for n in "AB"}
     [product] = api.call("product.product", "create", vals_list=[{
@@ -1626,8 +1626,8 @@ def make_xlsx(sheets):
 
 
 def import_xlsx(api, model, content, dryrun, sheet=None, context=None):
-    """Impor .xlsx seperti halaman Import Data: unggah base64 lewat nusara_create_from_file, baca lembar, petakan kolom, lalu jalankan."""
-    upload = api.call("base_import.import", "nusara_create_from_file", res_model=model, file_name="regresi.xlsx", file_type=XLSX_TYPE, data=base64.b64encode(content).decode())
+    """Impor .xlsx seperti halaman Import Data: unggah base64 lewat kompakapps_create_from_file, baca lembar, petakan kolom, lalu jalankan."""
+    upload = api.call("base_import.import", "kompakapps_create_from_file", res_model=model, file_name="regresi.xlsx", file_type=XLSX_TYPE, data=base64.b64encode(content).decode())
     options = {"quoting": '"', "separator": ",", "has_headers": True, "date_format": "", "datetime_format": ""}
     if sheet:
         options["sheet"] = sheet
@@ -1642,7 +1642,7 @@ def import_xlsx(api, model, content, dryrun, sheet=None, context=None):
 
 
 def check_data_import_xlsx(api):
-    """Impor Excel (D36): berkas biner dikirim sebagai base64 lewat nusara_create_from_file, daftar lembar kembali, lembar dipilih, angka desimal, teks khusus, dan tanggal sel terbaca."""
+    """Impor Excel (D36): berkas biner dikirim sebagai base64 lewat kompakapps_create_from_file, daftar lembar kembali, lembar dipilih, angka desimal, teks khusus, dan tanggal sel terbaca."""
     step("Impor data Excel (.xlsx): lembar, angka, teks khusus, tanggal")
     tag = datetime.datetime.now().strftime("%H%M%S")
     products = [
@@ -1676,7 +1676,7 @@ def check_data_import_xlsx(api):
     check(len(moves["ids"]) == 1 and move["date"] == "2026-03-05" and move["amount_total"] == 250000 and move["state"] == "draft", "sel tanggal Excel menjadi tanggal jurnal yang benar (2026-03-05) dan baris kedua dilanjutkan")
     api.call("account.move", "unlink", ids=moves["ids"])
 
-    check(fails_with(lambda: api.call("base_import.import", "nusara_create_from_file", res_model="product.template", file_name="x.xlsx", file_type=XLSX_TYPE, data="bukan base64!!"), "base64"), "isi yang bukan base64 ditolak dengan pesan jelas")
+    check(fails_with(lambda: api.call("base_import.import", "kompakapps_create_from_file", res_model="product.template", file_name="x.xlsx", file_type=XLSX_TYPE, data="bukan base64!!"), "base64"), "isi yang bukan base64 ditolak dengan pesan jelas")
     _, broken, _ = import_xlsx(api, "product.template", b"ini bukan berkas excel", dryrun=True)
     check(bool(broken.get("error")), "berkas yang bukan Excel dilaporkan sebagai galat baca")
 
@@ -1747,7 +1747,7 @@ def budget_report(api, plan_id, template, date_from, date_to, analytic_id=None, 
 
     Mengembalikan ({label atau kode akun: (anggaran, realisasi)}, {(kode akun, kolom): hasil drilldown}).
     """
-    [key] = api.search("ir.model.data", [["module", "=", "nusara_base"], ["name", "=", template]], ["res_id"], limit=1)
+    [key] = api.search("ir.model.data", [["module", "=", "kompakapps_base"], ["name", "=", template]], ["res_id"], limit=1)
     [instance] = api.call("mis.report.instance", "create", vals_list=[{
         "name": "Anggaran vs Realisasi (regresi)", "report_id": key["res_id"], "temporary": True, "target_move": moves,
         "analytic_domain": json.dumps([["analytic_distribution", "in", [analytic_id]]]) if analytic_id else "[]",
@@ -1928,7 +1928,7 @@ def check_budget(api):
     check(not api.read("mis.budget.by.account", copy_id, ["active"])["active"], "rencana diarsipkan")
     api.call("mis.budget.by.account", "action_unarchive", ids=[copy_id])
     check(api.read("mis.budget.by.account", copy_id, ["active"])["active"], "rencana diaktifkan kembali")
-    template = api.search("ir.model.data", [["module", "=", "nusara_base"], ["name", "=", "mis_anggaran"]], ["res_id"])
+    template = api.search("ir.model.data", [["module", "=", "kompakapps_base"], ["name", "=", "mis_anggaran"]], ["res_id"])
     kpis = api.search("mis.report.kpi", [["report_id", "=", template[0]["res_id"]]], ["description", "auto_expand_accounts"], order="sequence")
     check([k["description"] for k in kpis] == ["Pendapatan", "Harga Pokok", "Beban", "LABA (RUGI) BERSIH"] and [k["auto_expand_accounts"] for k in kpis] == [True, True, True, False], "template Anggaran per Akun: 4 baris, tiga diperluas per akun (label dipakai UI)")
 
@@ -2467,9 +2467,9 @@ def check_multi_company(api):
     check(company in me["company_ids"], "perusahaan baru otomatis ditambahkan ke akses pembuatnya")
     home = me["company_id"][0]
     both = [company, home]
-    api.call("res.company", "nusara_setup_indonesia", ids=[company], context={"allowed_company_ids": both})
-    api.call("res.company", "nusara_setup_warehouse", ids=[company], context={"allowed_company_ids": both})
-    api.call("res.company", "nusara_setup_warehouse", ids=[company], context={"allowed_company_ids": both})  # aman diulang
+    api.call("res.company", "kompakapps_setup_indonesia", ids=[company], context={"allowed_company_ids": both})
+    api.call("res.company", "kompakapps_setup_warehouse", ids=[company], context={"allowed_company_ids": both})
+    api.call("res.company", "kompakapps_setup_warehouse", ids=[company], context={"allowed_company_ids": both})  # aman diulang
     record = api.read("res.company", company, ["chart_template", "currency_id", "country_id"])
     check((record["chart_template"], record["currency_id"][1], record["country_id"][1]) == ("id", "IDR", "Indonesia"), "setup Indonesia: COA l10n_id, mata uang IDR, negara Indonesia")
     ctx_b, ctx_a = {"allowed_company_ids": [company]}, {"allowed_company_ids": [home]}
@@ -2499,7 +2499,7 @@ def check_multi_company(api):
         picking = api.call("purchase.order", "read", ids=[po], fields=["company_id", "picking_ids"], context=ctx_b)[0]
         receipt = api.call("stock.picking", "read", ids=picking["picking_ids"], fields=["name", "state", "company_id", "picking_type_id"], context=ctx_b)
         check(picking["company_id"][0] == company and len(receipt) == 1 and receipt[0]["company_id"][0] == company, "PO perusahaan kedua menghasilkan penerimaan di gudang perusahaan itu (nomor urut sendiri)")
-    api.call("res.company", "nusara_setup_indonesia", ids=[company], context={"allowed_company_ids": both})
+    api.call("res.company", "kompakapps_setup_indonesia", ids=[company], context={"allowed_company_ids": both})
     check(api.search("account.move", [["id", "=", bill]], ["state"], context=ctx_b)[0]["state"] == "posted", "setup berulang pada perusahaan yang sudah bertransaksi tidak error dan tidak mengubah tagihan")
 
 

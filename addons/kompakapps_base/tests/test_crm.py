@@ -3,7 +3,7 @@ from odoo.addons.account.tests.common import AccountTestInvoicingCommon
 from odoo.tests import tagged
 
 
-@tagged("post_install", "-at_install", "nusara")
+@tagged("post_install", "-at_install", "kompakapps")
 class TestCrmPipeline(AccountTestInvoicingCommon):
     """Lead, opportunity, tahap pipeline, menang dan kalah, quotation, dan aktivitas (D21)."""
 

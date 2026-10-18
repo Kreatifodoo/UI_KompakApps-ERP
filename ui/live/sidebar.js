@@ -1,4 +1,4 @@
-// Sidebar Nusara: mengikuti desain prototipe (index.html): panel gelap slate-900 lebar 288px, modul
+// Sidebar KompakApps: mengikuti desain prototipe (index.html): panel gelap slate-900 lebar 288px, modul
 // bertingkat sebagai accordion, warna aktif indigo, dan pencarian menu. Menu yang sudah terhubung ke Odoo
 // diberi titik hijau kecil.
 import { LEAVES, MENU, findLeaf } from "./menu.js";

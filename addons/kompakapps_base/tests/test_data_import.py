@@ -10,9 +10,9 @@ from odoo.tests import TransactionCase, tagged
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
-@tagged("post_install", "-at_install", "nusara")
+@tagged("post_install", "-at_install", "kompakapps")
 class TestImportXlsx(TransactionCase):
-    """Impor Excel (D36): berkas biner masuk sebagai base64 lewat nusara_create_from_file dan dibaca mesin impor Odoo."""
+    """Impor Excel (D36): berkas biner masuk sebagai base64 lewat kompakapps_create_from_file dan dibaca mesin impor Odoo."""
 
     @staticmethod
     def _book():
@@ -27,7 +27,7 @@ class TestImportXlsx(TransactionCase):
         return out.getvalue()
 
     def _upload(self, content):
-        return self.env["base_import.import"].nusara_create_from_file("res.partner", "uji.xlsx", XLSX, base64.b64encode(content).decode())
+        return self.env["base_import.import"].kompakapps_create_from_file("res.partner", "uji.xlsx", XLSX, base64.b64encode(content).decode())
 
     def test_upload_returns_sheets_and_preview_reads_chosen_sheet(self):
         upload = self._upload(self._book())
@@ -51,6 +51,6 @@ class TestImportXlsx(TransactionCase):
     def test_invalid_payloads_are_rejected(self):
         imports = self.env["base_import.import"]
         with self.assertRaises(UserError):
-            imports.nusara_create_from_file("res.partner", "x.xlsx", XLSX, "bukan base64!!")
+            imports.kompakapps_create_from_file("res.partner", "x.xlsx", XLSX, "bukan base64!!")
         with self.assertRaises(UserError):
-            imports.nusara_create_from_file("res.partner", "x.xlsx", XLSX, "")
+            imports.kompakapps_create_from_file("res.partner", "x.xlsx", XLSX, "")

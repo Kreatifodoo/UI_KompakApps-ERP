@@ -3,7 +3,7 @@ from odoo.addons.account.tests.common import AccountTestInvoicingCommon
 from odoo.tests import tagged
 
 
-@tagged("post_install", "-at_install", "nusara")
+@tagged("post_install", "-at_install", "kompakapps")
 class TestProcureToPay(AccountTestInvoicingCommon):
     """Alur Procure-to-Pay pada perusahaan Indonesia (IDR, COA l10n_id).
 
@@ -32,7 +32,7 @@ class TestProcureToPay(AccountTestInvoicingCommon):
             {"name": "PT Pemasok Nusantara", "is_company": True}
         )
         cls.material = cls._create_product(
-            name="Bahan Baku Nusara",
+            name="Bahan Baku KompakApps",
             type="consu",
             is_storable=True,
             standard_price=100000.0,
@@ -241,8 +241,8 @@ class TestProcureToPay(AccountTestInvoicingCommon):
         return result
 
     def test_bill_debits_inventory_under_perpetual_valuation(self):
-        """Setup Nusara: barang stok masuk ke akun Persediaan, bukan langsung ke beban."""
-        self.company.nusara_setup_inventory_valuation()
+        """Setup KompakApps: barang stok masuk ke akun Persediaan, bukan langsung ke beban."""
+        self.company.kompakapps_setup_inventory_valuation()
         goods = self.env.ref("product.product_category_goods").with_company(self.company)
         self.assertEqual(goods.property_valuation, "real_time")
         self.assertEqual(goods.property_cost_method, "average")

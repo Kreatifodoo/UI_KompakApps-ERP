@@ -6,7 +6,7 @@ from odoo.exceptions import UserError
 from odoo.tests import tagged
 
 
-@tagged("post_install", "-at_install", "nusara")
+@tagged("post_install", "-at_install", "kompakapps")
 class TestLotTracking(AccountTestInvoicingCommon):
     """Lot, nomor seri, dan tanggal kedaluwarsa pada penerimaan, pengiriman, retur, scrap, dan hitung fisik (D19)."""
 
@@ -25,7 +25,7 @@ class TestLotTracking(AccountTestInvoicingCommon):
             }
         )
         cls.company = cls.env.company
-        cls.company.nusara_setup_inventory_valuation()
+        cls.company.kompakapps_setup_inventory_valuation()
         cls.goods = cls.env.ref("product.product_category_goods").with_company(cls.company)
         cls.warehouse = cls.env["stock.warehouse"].search([("company_id", "=", cls.company.id)], limit=1)
         cls.stock_location = cls.warehouse.lot_stock_id
@@ -78,7 +78,7 @@ class TestLotTracking(AccountTestInvoicingCommon):
         return self.env["stock.lot"].search([("product_id", "=", product.id), ("name", "=", name)])
 
     def test_receipt_requires_lot_then_creates_lots(self):
-        product = self._tracked_product("Obat Lot Nusara")
+        product = self._tracked_product("Obat Lot KompakApps")
         po = self.env["purchase.order"].create(
             {"partner_id": self.partner_a.id, "order_line": [Command.create({"product_id": product.id, "product_qty": 10.0, "price_unit": 50000.0})]}
         )
@@ -162,7 +162,7 @@ class TestLotTracking(AccountTestInvoicingCommon):
         self.assertEqual(self._on_hand(product, self._lot(product, "LOT-A")), 5.0)
 
     def test_serial_numbers_one_unit_each(self):
-        product = self._tracked_product("Laptop Seri Nusara", tracking="serial")
+        product = self._tracked_product("Laptop Seri KompakApps", tracking="serial")
         po = self.env["purchase.order"].create(
             {"partner_id": self.partner_a.id, "order_line": [Command.create({"product_id": product.id, "product_qty": 3.0, "price_unit": 50000.0})]}
         )
@@ -254,7 +254,7 @@ class TestLotTracking(AccountTestInvoicingCommon):
         lot_a, lot_b = self._lot(product, "LOT-A"), self._lot(product, "LOT-B")
         values = {"product_id": product.id, "scrap_qty": 2.0, "product_uom_id": product.uom_id.id, "location_id": self.stock_location.id}
         # Tanpa lot, Odoo tidak menolak lewat error tetapi mengembalikan wizard "stok tidak cukup" (stok tanpa lot nol),
-        # dan scrap tetap draft. Halaman Scrap Nusara mewajibkan lot untuk produk berlacak sehingga wizard itu tidak muncul.
+        # dan scrap tetap draft. Halaman Scrap KompakApps mewajibkan lot untuk produk berlacak sehingga wizard itu tidak muncul.
         unscrapped = self.env["stock.scrap"].create(values)
         result = unscrapped.action_validate()
         self.assertEqual(result["res_model"], "stock.warn.insufficient.qty.scrap")

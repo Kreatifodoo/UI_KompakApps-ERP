@@ -187,7 +187,7 @@ REPORTS = [
     },
 ]
 
-# Instance bawaan untuk klien web Odoo (Akuntansi > Laporan MIS); UI Nusara membuat instance sementara sendiri.
+# Instance bawaan untuk klien web Odoo (Akuntansi > Laporan MIS); UI KompakApps membuat instance sementara sendiri.
 INSTANCES = [
     {"key": "mis_laba_rugi_ytd", "name": "Laba Rugi - tahun berjalan dan tahun lalu", "report": "mis_laba_rugi", "periods": [("Tahun berjalan", 0), ("Tahun lalu", -1)]},
     {"key": "mis_neraca_ytd", "name": "Neraca - tahun berjalan dan tahun lalu", "report": "mis_neraca", "periods": [("Tahun berjalan", 0), ("Tahun lalu", -1)]},

@@ -1,10 +1,10 @@
 # ruff: noqa: F821
-"""Data presales bertema PROLINE (produk diagnostik: instrumen, reagen, strip urin, tes cepat) untuk demo seluruh alur Nusara.
+"""Data presales bertema PROLINE (produk diagnostik: instrumen, reagen, strip urin, tes cepat) untuk demo seluruh alur KompakApps.
 
-Dijalankan lewat `odoo shell` (variabel `env` disediakan oleh shell). Database harus sudah memasang nusara_base dan menjalankan seed_demo.py
+Dijalankan lewat `odoo shell` (variabel `env` disediakan oleh shell). Database harus sudah memasang kompakapps_base dan menjalankan seed_demo.py
 (setup Indonesia). Aman dijalankan ulang: bila produk PRL-XI800 sudah ada, skrip berhenti tanpa mengubah apa pun.
 
-    docker compose run --rm -T --no-deps odoo odoo shell -d nusara --no-http < scripts/seed_presales.py
+    docker compose run --rm -T --no-deps odoo odoo shell -d kompakapps --no-http < scripts/seed_presales.py
 
 Alur yang dibuat (tanggal relatif terhadap hari ini): Purchase Request -> Purchase Order -> Goods Receive -> Vendor Bill -> Payment;
 transfer internal antar rak; Manufacturing (BoM strip urin dan reagen glukosa, MO selesai dan MO berjalan); CRM (peluang berbagai tahap,

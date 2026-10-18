@@ -1,7 +1,7 @@
 // Lebar kolom tabel bisa diubah dengan menarik garis di tepi kanan judul kolom (baris pesanan, daftar, laporan). Lebar disimpan per jenis
 // tabel (halaman dan judul kolomnya) di browser; klik ganda pada garis mengembalikan lebar bawaan. Berlaku otomatis untuk semua tabel
 // yang punya judul kolom, juga setelah halaman menggambar ulang tabelnya. Tabel yang tidak ingin ikut diberi atribut data-resizable="off".
-const STORAGE_KEY = "nusara.colwidths";
+const STORAGE_KEY = "kompakapps.colwidths";
 const MIN_WIDTH = 56;
 
 const read = () => {

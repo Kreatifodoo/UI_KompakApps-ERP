@@ -9,7 +9,7 @@ class BaseImport(models.TransientModel):
     _inherit = "base_import.import"
 
     @api.model
-    def nusara_create_from_file(self, res_model, file_name, file_type, data):
+    def kompakapps_create_from_file(self, res_model, file_name, file_type, data):
         """Buat sesi impor dari berkas biner (xlsx, xls, ods) yang dikirim sebagai teks base64.
 
         Kolom `file` menyimpan teks yang dikirim lewat `create` apa adanya (UTF-8), sedangkan JSON-2 tidak bisa

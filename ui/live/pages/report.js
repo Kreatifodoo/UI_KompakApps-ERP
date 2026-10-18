@@ -1,5 +1,5 @@
 // Laporan keuangan (MIS Builder): Laba Rugi, Neraca, Arus Kas, Neraca Saldo, dan Ringkasan Eksekutif.
-// Template ada di Odoo (nusara_base, models/mis_templates.py). Halaman ini membuat instance sementara,
+// Template ada di Odoo (kompakapps_base, models/mis_templates.py). Halaman ini membuat instance sementara,
 // menjalankan compute(), menampilkan hasilnya, lalu menghapus instance. Angka bisa diklik untuk melihat
 // item jurnal pembentuknya (drilldown MIS).
 import {
@@ -124,9 +124,9 @@ async function renderReport(sub, def, query) {
   app.innerHTML = '<p class="text-sm text-gray-500">Menghitung laporan...</p>';
   const p = await periods(def, query);
   const moves = query.get("moves") === "all" ? "all" : "posted";
-  const [template] = await searchRead("ir.model.data", [["module", "=", "nusara_base"], ["name", "=", def.name]], ["res_id"], { limit: 1 });
+  const [template] = await searchRead("ir.model.data", [["module", "=", "kompakapps_base"], ["name", "=", def.name]], ["res_id"], { limit: 1 });
   if (!template) {
-    app.innerHTML = '<p class="text-sm text-rose-600">Template laporan belum dimuat. Perbarui modul nusara_base di Odoo.</p>';
+    app.innerHTML = '<p class="text-sm text-rose-600">Template laporan belum dimuat. Perbarui modul kompakapps_base di Odoo.</p>';
     return;
   }
   // saring per akun analitik: hanya item jurnal yang distribusi analitiknya memuat akun itu (sama seperti Budget Report)

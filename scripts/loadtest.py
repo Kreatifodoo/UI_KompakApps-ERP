@@ -4,7 +4,7 @@
 N pengguna paralel (thread, tiap thread satu koneksi HTTP tetap) menjalankan skenario selama durasi tertentu:
   baca   daftar produk, daftar Sales Order dan Purchase Order, laporan grup (Purchase Report per bulan,
          buku besar per akun)
-  tulis  membuat draf Purchase Order atau Sales Order lalu membatalkannya (data uji "Bahan Baku Nusara",
+  tulis  membuat draf Purchase Order atau Sales Order lalu membatalkannya (data uji "Bahan Baku KompakApps",
          "PT Pemasok Nusantara", "PT Pelanggan Nusantara" dari scripts/seed_demo.py); rekaman yang dibuat
          diberi penanda LOADTEST-<id> dan dihapus di akhir (tidak diukur), kecuali --no-purge
 
@@ -12,8 +12,8 @@ Melaporkan throughput, p50/p95/p99 (peringkat terdekat), dan galat per operasi s
 Skrip ini MENULIS data bila skenario mengandung tulis, jadi pakai database uji; wajib --yes untuk itu.
 Menolak URL non-loopback tanpa --yes-remote.
 
-    NUSARA_API_KEY=... python3 -I scripts/loadtest.py --url http://127.0.0.1:8480 --users 10 --duration 30
-    NUSARA_API_KEY=... python3 -I scripts/loadtest.py --url http://127.0.0.1:8480 --scenario mix --yes --json
+    KOMPAKAPPS_API_KEY=... python3 -I scripts/loadtest.py --url http://127.0.0.1:8480 --users 10 --duration 30
+    KOMPAKAPPS_API_KEY=... python3 -I scripts/loadtest.py --url http://127.0.0.1:8480 --scenario mix --yes --json
 
 Kode keluar: 0 selesai dan galat di bawah batas, 1 galat di atas --max-error-rate (atau p95 di atas
 --max-p95-ms), 2 salah pemakaian atau penolakan keamanan.
@@ -277,9 +277,9 @@ def main():
         fail("--users harus antara 1 dan 500")
     if args.duration <= 0 or args.warmup < 0 or not 0 <= args.write_ratio <= 1:
         fail("--duration harus positif, --warmup tidak negatif, --write-ratio antara 0 dan 1")
-    key = os.environ.get("NUSARA_API_KEY", "")
+    key = os.environ.get("KOMPAKAPPS_API_KEY", "")
     if not key:
-        fail("isi NUSARA_API_KEY (sengaja bukan argumen agar tidak terlihat di daftar proses)")
+        fail("isi KOMPAKAPPS_API_KEY (sengaja bukan argumen agar tidak terlihat di daftar proses)")
     args.run_id = datetime.now().strftime("%Y%m%d%H%M%S")
 
     # Pra-pemeriksaan (tidak diukur): kunci berlaku dan data uji tersedia.
@@ -288,7 +288,7 @@ def main():
     try:
         probe.call("res.users", "context_get")
         if args.scenario != "read":
-            product, _ = probe.call("product.product", "search_read", domain=[["name", "=", "Bahan Baku Nusara"]], fields=["uom_id"], limit=1)
+            product, _ = probe.call("product.product", "search_read", domain=[["name", "=", "Bahan Baku KompakApps"]], fields=["uom_id"], limit=1)
             vendor, _ = probe.call("res.partner", "search", domain=[["name", "=", "PT Pemasok Nusantara"]], limit=1)
             customer, _ = probe.call("res.partner", "search", domain=[["name", "=", "PT Pelanggan Nusantara"]], limit=1)
             if not (product and vendor and customer):

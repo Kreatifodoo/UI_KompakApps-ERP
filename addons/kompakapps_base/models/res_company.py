@@ -9,7 +9,7 @@ _logger = logging.getLogger(__name__)
 class ResCompany(models.Model):
     _inherit = "res.company"
 
-    def nusara_setup_indonesia(self):
+    def kompakapps_setup_indonesia(self):
         """Terapkan setup dasar Indonesia: negara, mata uang IDR, dan COA l10n_id.
 
         Dijalankan eksplisit (bukan otomatis saat instalasi modul) karena memuat COA
@@ -46,10 +46,10 @@ class ResCompany(models.Model):
                     ("currency_id", "!=", idr.id),
                 ]
             ).write({"currency_id": idr.id})
-            company.nusara_setup_inventory_valuation()
+            company.kompakapps_setup_inventory_valuation()
         return True
 
-    def nusara_setup_warehouse(self):
+    def kompakapps_setup_warehouse(self):
         """Buat gudang utama (beserta lokasi stok dan tipe operasi) untuk perusahaan yang belum punya.
 
         Odoo 19 hanya membuat gudang otomatis untuk perusahaan pertama (dan di dalam test). Perusahaan baru dari halaman
@@ -76,7 +76,7 @@ class ResCompany(models.Model):
             )
         return True
 
-    def nusara_setup_inventory_valuation(self):
+    def kompakapps_setup_inventory_valuation(self):
         """Valuasi persediaan perpetual dengan biaya rata-rata (AVCO) untuk kategori Goods.
 
         Bawaan Odoo 19 adalah periodik dengan harga standar: tagihan vendor atas barang stok

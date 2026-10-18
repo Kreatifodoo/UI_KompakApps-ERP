@@ -56,7 +56,7 @@ jobs:
           context: .
           file: docker/Dockerfile
           load: true
-          tags: nusara-erp:ci
+          tags: kompakapps:ci
           build-args: ODOO_VERSION=${{ env.ODOO_VERSION }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -66,9 +66,9 @@ jobs:
           rc=0
           docker run --rm --network host \
             -e HOST=localhost -e USER=odoo -e PASSWORD=odoo \
-            nusara-erp:ci \
-            odoo -d nusara_ci -i nusara_base \
-              --test-enable --test-tags /nusara_base \
+            kompakapps:ci \
+            odoo -d kompakapps_ci -i kompakapps_base \
+              --test-enable --test-tags /kompakapps_base \
               --without-demo=true --stop-after-init --log-level=test \
             2>&1 | tee odoo-test.log || rc=$?
           # Ringkasan di halaman run (terbaca tanpa login ke GitHub).
@@ -76,7 +76,7 @@ jobs:
             echo "### Hasil test Odoo"
             echo
             echo '```'
-            grep -E "nusara_base|test_smoke|queries" odoo-test.log | tail -20 || true
+            grep -E "kompakapps_base|test_smoke|queries" odoo-test.log | tail -20 || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$rc" -ne 0 ]; then
@@ -89,7 +89,7 @@ jobs:
             exit 1
           fi
           # Pastikan test benar-benar berjalan, bukan modul yang tidak ditemukan lalu diabaikan.
-          if ! grep -qE "test_smoke|nusara_base: [0-9]+ tests" odoo-test.log; then
-            echo "Tidak ada jejak test nusara_base di log; test mungkin tidak berjalan." >&2
+          if ! grep -qE "test_smoke|kompakapps_base: [0-9]+ tests" odoo-test.log; then
+            echo "Tidak ada jejak test kompakapps_base di log; test mungkin tidak berjalan." >&2
             exit 1
           fi

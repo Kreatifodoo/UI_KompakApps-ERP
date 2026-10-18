@@ -3,7 +3,7 @@ from odoo.addons.account.tests.common import AccountTestInvoicingCommon
 from odoo.tests import tagged
 
 
-@tagged("post_install", "-at_install", "nusara")
+@tagged("post_install", "-at_install", "kompakapps")
 class TestOrderToCash(AccountTestInvoicingCommon):
     """Alur Order-to-Cash pada perusahaan Indonesia dengan valuasi perpetual (D13).
 
@@ -19,7 +19,7 @@ class TestOrderToCash(AccountTestInvoicingCommon):
             {"group_ids": [Command.link(cls.env.ref("sales_team.group_sale_manager").id)]}
         )
         cls.company = cls.env.company
-        cls.company.nusara_setup_inventory_valuation()
+        cls.company.kompakapps_setup_inventory_valuation()
         cls.goods = cls.env.ref("product.product_category_goods").with_company(cls.company)
         cls.warehouse = cls.env["stock.warehouse"].search(
             [("company_id", "=", cls.company.id)], limit=1
@@ -28,7 +28,7 @@ class TestOrderToCash(AccountTestInvoicingCommon):
             {"name": "PT Pelanggan Nusantara", "is_company": True, "customer_rank": 1}
         )
         cls.product = cls._create_product(
-            name="Barang Dagang Nusara",
+            name="Barang Dagang KompakApps",
             type="consu",
             is_storable=True,
             categ_id=cls.goods.id,

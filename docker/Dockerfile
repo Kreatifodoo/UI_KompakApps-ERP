@@ -9,7 +9,7 @@ COPY scripts/fetch-oca.sh /work/fetch-oca.sh
 RUN sh /work/fetch-oca.sh /work/oca.lock /oca \
     && find /oca -mindepth 2 -maxdepth 2 -name .git -exec rm -rf {} +
 
-# Tahap 2: image Odoo + modul OCA + modul Nusara
+# Tahap 2: image Odoo + modul OCA + modul KompakApps
 FROM odoo:${ODOO_VERSION}
 USER root
 COPY --from=oca /oca /opt/oca
@@ -22,10 +22,10 @@ RUN set -eu; \
     fi
 COPY config/odoo.conf /etc/odoo/odoo.conf
 COPY addons /mnt/extra-addons
-COPY docker/entrypoint.sh /usr/local/bin/nusara-entrypoint.sh
-RUN chmod 755 /usr/local/bin/nusara-entrypoint.sh \
+COPY docker/entrypoint.sh /usr/local/bin/kompakapps-entrypoint.sh
+RUN chmod 755 /usr/local/bin/kompakapps-entrypoint.sh \
     && chown -R odoo:odoo /etc/odoo /mnt/extra-addons
 USER odoo
 # Menyuntikkan admin_passwd dari ADMIN_PASSWD, lalu meneruskan ke entrypoint bawaan image.
-ENTRYPOINT ["/usr/local/bin/nusara-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/kompakapps-entrypoint.sh"]
 CMD ["odoo"]

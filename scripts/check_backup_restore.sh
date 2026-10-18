@@ -28,7 +28,7 @@ Opsi:
       --keep          jangan hapus database hasil pemulihan dan folder kerja di akhir
   -h, --help          tampilkan bantuan ini
 
-Prasyarat: stack berjalan, database sudah berisi nusara_base dan data contoh (scripts/seed_demo.py).
+Prasyarat: stack berjalan, database sudah berisi kompakapps_base dan data contoh (scripts/seed_demo.py).
 Kode keluar: 0 semua cocok, 1 ada yang berbeda atau gagal, 2 salah pemakaian.
 EOF
 }
@@ -68,7 +68,7 @@ if ops_db_exists "$RESTORE_DB"; then
     ops_die "database '$RESTORE_DB' sudah ada (sisa uji sebelumnya?). Hapus dulu bila tidak dipakai: docker compose -p $COMPOSE_PROJECT exec -T $OPS_DB_SERVICE dropdb -U $OPS_DB_USER $RESTORE_DB"
 fi
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/nusara-check-backup.XXXXXX")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/kompakapps-check-backup.XXXXXX")"
 BACKUPS="$WORK/backups"
 TAG="$(date '+%Y%m%d%H%M%S')"
 PASS=0
@@ -125,7 +125,7 @@ company = env["res.company"].browse(1)
 partner = env["res.partner"].create({"name": "Uji Backup " + tag, "is_company": True, "customer_rank": 1})
 vendor = env["res.partner"].search([("name", "=", "PT Pemasok Nusantara")], limit=1) or env["res.partner"].create(
     {"name": "Pemasok Uji Backup " + tag, "is_company": True, "supplier_rank": 1})
-product = env["product.product"].search([("name", "=", "Bahan Baku Nusara")], limit=1)
+product = env["product.product"].search([("name", "=", "Bahan Baku KompakApps")], limit=1)
 if not product:
     raise SystemExit("CHECK_ERROR=produk contoh tidak ada; jalankan scripts/seed_demo.py dulu")
 
@@ -163,7 +163,7 @@ cat >"$WORK/mutate.py" <<'PY'
 import datetime, os
 
 partner = env["res.partner"].browse(int(os.environ["CHECK_PARTNER_ID"]))
-product = env["product.product"].search([("name", "=", "Bahan Baku Nusara")], limit=1)
+product = env["product.product"].search([("name", "=", "Bahan Baku KompakApps")], limit=1)
 # Hapus lampiran uji, ubah mitra, dan tambah satu faktur terposting setelah backup.
 env["ir.attachment"].browse(int(os.environ["CHECK_ATT_ID"])).unlink()
 partner.name = partner.name + " (DIUBAH)"

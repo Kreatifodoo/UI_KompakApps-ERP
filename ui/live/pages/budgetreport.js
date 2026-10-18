@@ -1,6 +1,6 @@
 // Budget Report: anggaran dibandingkan dengan realisasi, lengkap dengan selisih dan persentase pencapaian (D31). Halaman ini membuat
 // instance laporan MIS sementara dengan dua kolom: Anggaran (sumber mis_budget_by_account dari mis_builder_budget, dibagi per hari
-// terhadap periode laporan) dan Realisasi (jurnal terposting). Tampilan "Per Akun" memakai template Nusara mis_anggaran; tampilan
+// terhadap periode laporan) dan Realisasi (jurnal terposting). Tampilan "Per Akun" memakai template KompakApps mis_anggaran; tampilan
 // "Laba Rugi" memakai template laba rugi yang sama dengan Accounting > Reporting. Angka bisa diklik sampai baris anggaran atau item jurnal.
 import {
   INPUT, app, call, closeModal, dateText, esc, guarded, money, openModal, pageHeader, readOne, searchRead, selectOptions, today, toast,
@@ -109,9 +109,9 @@ export async function render(sub, query) {
     app.innerHTML = `${header}<p class="text-sm text-rose-600">Tanggal dari tidak boleh sesudah tanggal sampai.</p>`;
     return;
   }
-  const [template] = await searchRead("ir.model.data", [["module", "=", "nusara_base"], ["name", "=", VIEWS[view].key]], ["res_id"], { limit: 1 });
+  const [template] = await searchRead("ir.model.data", [["module", "=", "kompakapps_base"], ["name", "=", VIEWS[view].key]], ["res_id"], { limit: 1 });
   if (!template) {
-    app.innerHTML = `${header}<p class="text-sm text-rose-600">Template laporan belum dimuat. Perbarui modul nusara_base di Odoo.</p>`;
+    app.innerHTML = `${header}<p class="text-sm text-rose-600">Template laporan belum dimuat. Perbarui modul kompakapps_base di Odoo.</p>`;
     return;
   }
   const [instanceId] = await call("mis.report.instance", "create", {
