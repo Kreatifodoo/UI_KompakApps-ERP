@@ -94,7 +94,7 @@ Kerangka di `ui/live/` memakai **desain sidebar prototipe** (9 modul, menu berti
 | Purchase › Master › Vendor Master, Accounting › Master › Vendor Master | Daftar dan form pemasok (alamat, NPWP/PKP, syarat bayar), arsip | `res.partner` |
 | Purchase › Master › Vendor Price list | Harga vendor per produk (tingkat jumlah, diskon, masa berlaku) | `product.supplierinfo` |
 | Purchase, Purchase Request, Inventory, Sales, Accounting › Master › Product Master | Daftar dan form produk, pajak, vendor, arsip | `product.template` |
-| Inventory › Master › Product Category, Accounting › Master › Product Category | Metode biaya, valuasi persediaan, akun persediaan/beban/pendapatan | `product.category` |
+| Inventory › Master › Product Category, Accounting › Master › Product Category | Metode biaya, valuasi persediaan, akun persediaan/beban/pendapatan, akun Barang Diterima dan Barang Terkirim Belum Ditagih (jurnal pada setiap transaksi inventori, D69), Jurnal Stok | `product.category` |
 | Accounting › Jurnal Entry | Daftar jurnal dengan item jurnal dan dokumen sumber; tombol Buat: jurnal entry manual (jurnal umum, tanggal, referensi, catatan, baris akun, mitra, label, debit, kredit, pajak multi-tag, analitik, indikator selisih dan baris penyeimbang), simpan draf (juga yang belum seimbang), edit draf, Posting (menolak jurnal tak seimbang atau bertanggal di periode terkunci dengan pesan Indonesia), Batalkan ke Draf, Duplikat, Balik Jurnal, dan Cetak; jurnal dari dokumen lain tetap baca-saja (D50) | `account.move`, `account.move.line`, `account.move.reversal` |
 | Inventory › Report › Stock, Location, Move History; Operation › Inventory Loss | Laporan stok dengan nilai terhadap buku besar, riwayat pergerakan | `stock.quant`, `stock.move.line` |
 | Inventory › Operation › Physical Inventory, Scrap; Master › Reorder Level; Operation › Replenishment | Hitung fisik, scrap, aturan stok minimum, dan pengisian ulang ke RFQ | `stock.quant`, `stock.scrap`, `stock.warehouse.orderpoint` |
@@ -135,7 +135,7 @@ Kerangka di `ui/live/` memakai **desain sidebar prototipe** (9 modul, menu berti
 
 Data master Purchase (vendor, produk, harga vendor) bisa dibuat, diubah, dan diarsipkan dari UI; harga vendor langsung menggerakkan harga baris RFQ.
 
-Tagihan dan pembayaran menampilkan item jurnal yang tercipta; Jurnal Entry memperlihatkan semuanya. Barang stok dicatat dengan valuasi perpetual dan biaya rata-rata (D13).
+Tagihan dan pembayaran menampilkan item jurnal yang tercipta; Jurnal Entry memperlihatkan semuanya. Barang stok dicatat dengan valuasi perpetual dan biaya rata-rata (D13), dan setiap transaksi inventori dijurnal saat terjadi dengan akun dari Product Category: penerimaan Dr Persediaan, Cr Barang Diterima Belum Ditagih (dibersihkan tagihan vendor); pengiriman Dr Barang Terkirim Belum Ditagih, Cr Persediaan (dibersihkan faktur dengan HPP); opname, scrap, dan produksi lewat akun lokasi virtual (D69).
 
 Laporan keuangan (D15) dihitung dari transaksi di atas dan bisa dibuka di Accounting › Reporting. Pembayaran dicocokkan dengan mutasi bank di Accounting › Bank Transaction (D16), sehingga Kas dan Bank di laporan terisi.
 

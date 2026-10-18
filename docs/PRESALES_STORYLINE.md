@@ -142,7 +142,7 @@ Prolog yang dibacakan: *"RSUD Kabupaten Karawang membutuhkan analyzer kimia klin
 | 3 | Reporting > **Aged Receivable** | Piutang Karawang masuk kelompok terlambat; faktur Dinas Kesehatan Kota Bekasi lunas |
 | 4 | Vendors > Vendor Bills | Tagihan pemasok dari PO dengan **VAT In 11%**; tagihan jasa rantai dingin dengan **PPh 23 -2%** (dipotong dari pemasok). Sebagian belum dibayar |
 | 5 | Reporting > Aged Payable | Utang yang jatuh tempo per pemasok |
-| 6 | Delivery atau Good Receive selesai, panel **Jurnal terkait** | Penjelasan: jurnal persediaan tercipta saat tagihan dan faktur diposting, bukan saat barang bergerak; panel menunjukkan jurnal sungguhan atau menjelaskan bila belum ada |
+| 6 | Delivery atau Good Receive selesai, panel **Jurnal terkait** | Jurnal tercipta saat barang bergerak: penerimaan Dr Persediaan, Cr Barang Diterima Belum Ditagih; pengiriman Dr Barang Terkirim, Cr Persediaan; tagihan dan faktur membersihkan akun perantara itu (HPP pada faktur). Panel menampilkan jurnal sungguhan masing-masing dengan akun dari Product Category |
 | 7 | Reporting > **Profit and Loss** dengan pilihan **Akun analitik** | Laba rugi per **Segmen Produk** (Kimia Klinik, Hematologi, dan seterusnya), per Lini Produk, dan per Departemen; **Analytic Report** membandingkan semua |
 | 8 | Reporting > Balance Sheet, Cash Flow, Tax Report | Neraca seimbang, arus kas, laporan PPN dan PPh |
 | 9 | Accounting > Asset dan Asset Model | Empat model aset dan jadwal penyusutan peralatan laboratorium, kendaraan, kantor, dan renovasi gudang |
