@@ -384,4 +384,3 @@ bash scripts/migrate_to_kompakapps.sh
 ```
 
 Skrip membuat backup di `./backups`, menghentikan stack lama, menyalin volume ke project `kompakapps`, mengganti nama database dan folder filestore, mengganti nama modul di database, meng-upgrade modul, lalu menyalakan stack baru. Kontainer dan volume `nusaraerp_*` tidak dihapus: bila ada masalah, kembalikan `.env` dari `.env.sebelum-kompakapps-*`, checkout komit sebelum D66, dan `docker start nusaraerp-db-1 nusaraerp-odoo-1 nusaraerp-ui-1`. Hapus volume lama (`docker volume rm nusaraerp_db-data nusaraerp_odoo-data`) hanya setelah yakin.
-
