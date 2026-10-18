@@ -1,6 +1,7 @@
 // Put away Rules (stock.putaway.rule): menentukan ke lokasi mana barang disimpan saat diterima, per produk atau
 // per kategori produk. Aturan dengan urutan terkecil yang cocok dipakai lebih dulu.
 import {
+  PRODUCT_PAGE, searchProducts,
   INPUT, app, call, cell, esc, fieldBlock, guarded, pageHeader, readOne, referenceCategories, registerLookup, rowLink, runLookup, searchRead, selectOptions, table,
   toast, button,
 } from "../common.js";
@@ -14,7 +15,8 @@ export const leave = () => {
 const reload = () => render(last.sub, last.query);
 
 registerLookup("putaway-product", {
-  search: (q) => searchRead("product.product", q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [], ["display_name"], { limit: 10, order: "name" }),
+  pageSize: PRODUCT_PAGE,
+  search: (q, _input, page) => searchProducts(q, page, {}),
   isChosen: (input) => form?.product?.display_name === input.value,
   choose: (input, item) => {
     form.product = item;

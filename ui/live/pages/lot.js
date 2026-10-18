@@ -2,6 +2,7 @@
 // Detail menampilkan stok per lokasi dan riwayat pergerakan (penelusuran dari penerimaan sampai pengiriman), serta
 // tanggal kedaluwarsa bila produk memakainya (modul product_expiry).
 import {
+  PRODUCT_PAGE, searchProducts,
   INPUT, app, badge, call, cell, changedValues, dateText, dateTimeText, esc, fieldBlock, filterSelect, fromInputDateTime, guarded, hasGroup,
   pageHeader, parseOdooDate, plain, readOne, readonlyValue, registerLookup, rowLink, runLookup, searchBox, searchRead, statTiles, table, toast,
   toInputDateTime, chatterHtml, loadMessages,
@@ -24,10 +25,9 @@ export const leave = () => {
 const reload = () => render(last.sub, last.query);
 
 registerLookup("lot-product", {
-  search: (q) =>
-    searchRead("product.product", [["is_storable", "=", true], ["tracking", "!=", "none"], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name", "tracking", "uom_id", "use_expiration_date"], {
-      limit: 10, order: "name",
-    }),
+  pageSize: PRODUCT_PAGE,
+  search: (q, _input, page) =>
+    searchProducts(q, page, { domain: [["is_storable", "=", true], ["tracking", "!=", "none"]], fields: ["display_name", "tracking", "uom_id", "use_expiration_date"] }),
   sub: (r) => TRACKING[r.tracking] ?? "",
   isChosen: (input) => form?.product?.display_name === input.value,
   choose: (input, item) => {

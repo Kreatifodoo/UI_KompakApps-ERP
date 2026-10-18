@@ -1,6 +1,7 @@
 // Physical Inventory (stock.quant mode inventaris): isi jumlah hasil hitung per produk dan lokasi, lalu terapkan
 // untuk membuat penyesuaian stok. Penyesuaian dinilai pada pergerakan stok (Odoo 19 tidak menjurnalnya otomatis).
 import {
+  PRODUCT_PAGE, searchProducts,
   INPUT, app, call, esc, guarded, pageHeader, registerLookup, runLookup, searchBox, searchRead, selectOptions, toast,
 } from "../common.js";
 
@@ -18,7 +19,8 @@ export const leave = () => {
 const reload = () => render(last.sub, last.query);
 
 registerLookup("count-product", {
-  search: (q) => searchRead("product.product", [["is_storable", "=", true], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name", "uom_id", "tracking"], { limit: 10, order: "name" }),
+  pageSize: PRODUCT_PAGE,
+  search: (q, _input, page) => searchProducts(q, page, { domain: [["is_storable", "=", true]], fields: ["display_name", "uom_id", "tracking"] }),
   sub: (r) => (r.tracking === "lot" ? "Lot" : r.tracking === "serial" ? "Nomor seri" : r.uom_id?.[1] ?? ""),
   isChosen: (input) => draft?.product?.display_name === input.value,
   choose: (input, item) => {

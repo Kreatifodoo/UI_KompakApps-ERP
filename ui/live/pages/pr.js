@@ -2,6 +2,7 @@
 // status dan hak manager, bilah status, tombol statistik, field yang hanya bisa diedit saat draft
 // (is_editable), kolom barang, total estimasi, dan chatter.
 import {
+  PRODUCT_PAGE, searchProducts,
   INPUT, app, actionBar, badge, call, cell, chatterHtml, closeLookup, ctx, dateText, esc, fieldBlock, filterSelect, guarded, loadMessages,
   money, pageHeader, readOne, readonlyValue, registerLookup, rowLink, runLookup, searchRead, selectOptions, statTiles, statusbar, table,
   toast, today, referenceUsers,
@@ -61,13 +62,8 @@ const reload = () => render(last.sub, last.query);
 /* ---------- Kotak saran ---------- */
 
 registerLookup("pr-product", {
-  search: (q) =>
-    searchRead(
-      "product.product",
-      [["purchase_ok", "=", true], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])],
-      ["display_name", "uom_id", "description_purchase"],
-      { limit: 10, order: "name" },
-    ),
+  pageSize: PRODUCT_PAGE,
+  search: (q, _input, page) => searchProducts(q, page, { domain: [["purchase_ok", "=", true]], fields: ["display_name", "uom_id", "description_purchase"] }),
   sub: (r) => r.uom_id?.[1] ?? "",
   isChosen: (input) => {
     const line = form?.lines[Number(input.dataset.line)];

@@ -211,6 +211,9 @@ class TestManufacturing(AccountTestInvoicingCommon):
         self.assertEqual(workorder.state, "progress")
         self.assertEqual(mo.state, "progress")
         workorder.button_finish()
+        # Uji berjalan dalam hitungan detik: bila jam berdetik di antara mulai dan selesai, durasi nyata menjadi 0,02 menit (bukan 0) dan uji ini
+        # gagal acak. Nolkan lini waktu agar yang diuji murni aturan "tanpa waktu nyata".
+        workorder.time_ids.write({"date_end": workorder.time_ids[0].date_start})
         self.assertEqual((workorder.state, mo.state), ("done", "to_close"))
         self._produce(mo, 2.0)
         self.assertEqual(mo.state, "done")

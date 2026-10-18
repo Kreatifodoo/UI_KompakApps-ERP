@@ -1,6 +1,7 @@
 // Scrap (stock.scrap): membuang barang dari stok. Draft bisa diubah atau dihapus; Validasi memindahkan stok ke
 // lokasi Inventory Loss. Odoo 19 mencatat nilainya pada pergerakan stok tanpa jurnal otomatis.
 import {
+  PRODUCT_PAGE, searchProducts,
   INPUT, app, badge, call, cell, dateTimeText, esc, fieldBlock, guarded, pageHeader, readOne, readonlyValue, registerLookup, rowLink, runLookup,
   searchBox, searchRead, selectOptions, statusbar, table, toast, button, filterSelect, chatterHtml, loadMessages,
 } from "../common.js";
@@ -18,7 +19,8 @@ export const leave = () => {
 const reload = () => render(last.sub, last.query);
 
 registerLookup("scrap-product", {
-  search: (q) => searchRead("product.product", [["is_storable", "=", true], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name", "uom_id", "tracking"], { limit: 10, order: "name" }),
+  pageSize: PRODUCT_PAGE,
+  search: (q, _input, page) => searchProducts(q, page, { domain: [["is_storable", "=", true]], fields: ["display_name", "uom_id", "tracking"] }),
   sub: (r) => (r.tracking === "lot" ? "Lot" : r.tracking === "serial" ? "Nomor seri" : r.uom_id?.[1] ?? ""),
   isChosen: (input) => form?.product?.display_name === input.value,
   choose: (input, item) => {

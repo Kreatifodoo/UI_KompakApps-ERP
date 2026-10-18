@@ -2,6 +2,7 @@
 // Dokumen yang sudah ada memakai kerangka pickings.js; halaman ini menambahkan formulir transfer baru.
 // Butuh fitur Storage Locations (aktifkan di Warehouse & Location Master).
 import {
+  PRODUCT_PAGE, searchProducts,
   INPUT, app, call, esc, fieldBlock, guarded, pageHeader, registerLookup, runLookup, searchRead, selectOptions, toast,
 } from "../common.js";
 import { createPickingPage } from "./pickings.js";
@@ -21,10 +22,11 @@ export const leave = () => {
 };
 
 registerLookup("transfer-product", {
-  search: async (q) => {
-    const items = await searchRead("product.product", [["is_storable", "=", true], ...(q ? ["|", ["name", "ilike", q], ["default_code", "ilike", q]] : [])], ["display_name", "uom_id"], { limit: 10, order: "name" });
+  pageSize: PRODUCT_PAGE,
+  search: async (q, _input, page) => {
+    const { items, total } = await searchProducts(q, page, { domain: [["is_storable", "=", true]], fields: ["display_name", "uom_id"] });
     const stock = await stockAt(items.map((i) => i.id), form?.src);
-    return items.map((i) => ({ ...i, stock: stock.get(i.id) ?? { onhand: 0, available: 0 } }));
+    return { items: items.map((i) => ({ ...i, stock: stock.get(i.id) ?? { onhand: 0, available: 0 } })), total };
   },
   sub: (r) => stockText(r.stock, r.uom_id?.[1]),
   isChosen: (input) => form?.lines[Number(input.dataset.line)]?.product?.display_name === input.value,

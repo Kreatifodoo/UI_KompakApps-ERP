@@ -196,6 +196,7 @@ def main():
     check_warehouse_master(api, product)
     check_multi_warehouse(api)
     check_stock_picker(api)
+    check_product_search(api)
     check_line_stock(api)
     check_product_smart_buttons(api)
     check_lots(api, vendor)
@@ -2417,6 +2418,26 @@ def check_stock_picker(api):
     check(got == expected, f"on hand dan tersedia per produk ({len(expected)} produk) sama dengan hitungan quant langsung")
     other = api.call("stock.quant", "formatted_read_group", domain=[["location_id", "child_of", location], ["product_id", "=", -1]], groupby=["product_id"], aggregates=["quantity:sum"])
     check(other == [], "produk tanpa stok di lokasi itu tidak muncul (dianggap 0)")
+
+
+def check_product_search(api):
+    """Pencarian produk di kotak saran (ui/live/common.js searchProducts, D68): tiap kata harus cocok dengan kode atau nama dengan urutan bebas,
+    jumlah seluruh yang cocok diketahui, dan halaman kedua melengkapi halaman pertama tanpa tumpang tindih."""
+    import random
+
+    step("Pencarian produk di kotak saran: kata bebas urutan dan halaman")
+    tag = f"{random.randint(0, 99999):05d}"
+    names = [f"Zeta Pencarian {tag} Merah", f"Zeta Pencarian {tag} Biru"]
+    api.call("product.product", "create", vals_list=[{"name": n, "default_code": f"ZP{tag}{i}", "sale_ok": True} for i, n in enumerate(names)])
+    page = lambda words, **extra: api.search("product.product", [["sale_ok", "=", True]] + [["display_name", "ilike", w] for w in words], ["display_name"], order="name", **extra)  # noqa: E731
+    check(len(page([tag])) == 2, "satu kata yang ada di kode dan nama menemukan kedua produk")
+    check(len(page(["merah", "zeta"])) == 1 and len(page(["zeta", "merah"])) == 1, "dua kata dalam urutan terbalik tetap menemukan produk yang sama")
+    check(len(page([f"ZP{tag}1"])) == 1, "kode produk menemukan produk itu")
+    check(page(["tidak-ada-" + tag]) == [], "kata yang tidak cocok menghasilkan daftar kosong")
+    total = api.call("product.product", "search_count", domain=[["sale_ok", "=", True]])
+    first = page([], limit=1)
+    second = api.search("product.product", [["sale_ok", "=", True]], ["display_name"], order="name", limit=2)
+    check(total >= 3 and len(first) == 1 and len(second) == 2 and second[0]["display_name"] == first[0]["display_name"], f"halaman diperbesar menyertakan halaman sebelumnya ({total} produk dijual)")
 
 
 ACTIVITY_MODELS = [
