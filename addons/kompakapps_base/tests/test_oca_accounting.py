@@ -11,7 +11,7 @@ OCA_ACCOUNTING_MODULES = (
 )
 
 
-@tagged("post_install", "-at_install", "nusara")
+@tagged("post_install", "-at_install", "kompakapps")
 class TestOcaAccounting(AccountTestInvoicingCommon):
     """Modul akuntansi OCA yang melengkapi Community terpasang dan berfungsi pada data Indonesia."""
 

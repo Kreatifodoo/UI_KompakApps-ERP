@@ -1,9 +1,9 @@
 {
-    "name": "Nusara Base",
+    "name": "KompakApps Base",
     "summary": "Fondasi KompakApps: dependensi modul inti, OCA, dan lokalisasi Indonesia",
     "version": "19.0.1.0.0",
     "category": "Uncategorized",
-    "author": "Nusara",
+    "author": "KompakApps",
     "license": "LGPL-3",
     "depends": [
         "base_import",  # mesin impor data (CSV, xlsx) yang dipakai halaman Import Data (D33, D36)

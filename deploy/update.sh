@@ -18,8 +18,8 @@ PREV="$(cat .last_good 2>/dev/null || echo latest)"
 $COMPOSE pull odoo
 $COMPOSE up -d db
 
-# Update modul Nusara pada database (migrasi skema/data). Database harus sudah diinisialisasi.
-$COMPOSE run --rm odoo odoo -d "$ODOO_DB" -u nusara_base --stop-after-init
+# Update modul KompakApps pada database (migrasi skema/data). Database harus sudah diinisialisasi.
+$COMPOSE run --rm odoo odoo -d "$ODOO_DB" -u kompakapps_base --stop-after-init
 
 $COMPOSE up -d
 

@@ -35,7 +35,7 @@ Setiap menu pada sidebar prototipe sudah punya halaman kecuali tiga kelompok pad
 |---|---|---|---|
 | 5.1 | Backup dan restore terjadwal, pemantauan, uji beban | Selesai (D32) | Skrip di `scripts/` dan panduan [OPERATIONS.md](OPERATIONS.md); sisa: backup dari `deploy/update.sh`, arsip WAL (PITR), enkripsi dan salinan luar otomatis |
 | 5.2 | Cetak dokumen berlogo: faktur, PO, SO, pengiriman, pembayaran, PR, struk POS, Perintah Produksi | Selesai (D34, D36) | Dibangun di klien dari data JSON-2; struk POS A4 atau 80 mm, MO dengan komponen dan work order |
-| 5.3 | Impor data master dari CSV atau Excel (produk, mitra, saldo awal) | Selesai (D33, D36) | Halaman Import Data memakai mesin impor Odoo; Excel (.xlsx) lewat metode `nusara_create_from_file` (butuh restart Odoo) |
+| 5.3 | Impor data master dari CSV atau Excel (produk, mitra, saldo awal) | Selesai (D33, D36) | Halaman Import Data memakai mesin impor Odoo; Excel (.xlsx) lewat metode `kompakapps_create_from_file` (butuh restart Odoo) |
 | 5.4 | Persetujuan bertingkat | Tertahan | OCA `base_tier_validation` belum ada di cabang 19.0 (dicek 2026-10-11); pilihan: tunggu port OCA atau bangun persetujuan ringan sendiri (aturan per model, ambang, grup penyetuju). Persetujuan PO per nominal sudah ada di Purchase Setting |
 | 5.5 | Audit log (OCA `auditlog`) dan aturan akses per rekaman | Audit log selesai (D35); aturan akses per rekaman menunggu | Jurnal, faktur, dan pembayaran tidak bisa diaudit (merusak rekonsiliasi) |
 | 5.6 | Autentikasi dua langkah, SSO, kebijakan kata sandi | Menunggu | |
@@ -46,5 +46,5 @@ Setiap menu pada sidebar prototipe sudah punya halaman kecuali tiga kelompok pad
 - Satu pekerjaan satu branch dan satu PR; branch dari `main` terbaru dan di-squash saat digabung.
 - Pekerjaan yang berjalan bersamaan memakai worktree dan stack Docker sendiri (lihat DEV_GUIDE), agar tidak saling menimpa data uji.
 - Berkas yang sering disentuh bersamaan (`main.js`, `menu.js`, `README.md`, `DECISIONS.md`, `check_p2p_api.py`) hanya ditambah di akhir; konflik saat rebase diselesaikan dengan mempertahankan kedua sisi. Nomor keputusan baru dicadangkan di tabel di atas: Agen A memakai D30, Agen B memakai D31, Agen C memakai D32, Agen E memakai D37, Agen I memakai D42, Q21 memakai D43, Q23 memakai D47, Q26 memakai D48, Q27 memakai D49, Q28 memakai D50.
-- Setelah sebuah PR digabung, database `nusara` milik pemilik di-upgrade (dengan backup) oleh orang yang menggabungkannya, bukan oleh pekerja paralel.
+- Setelah sebuah PR digabung, database `kompakapps` milik pemilik di-upgrade (dengan backup) oleh orang yang menggabungkannya, bukan oleh pekerja paralel.
 - Bukan bagian antrian pekerjaan teknis, tetapi menunggu pemilik: proteksi branch `main` (ruleset) dan pencabutan token GitHub lama.

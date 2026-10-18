@@ -1,9 +1,9 @@
-// Klien JSON-2 Odoo 19 minimal untuk uji kelayakan UI Nusara.
+// Klien JSON-2 Odoo 19 minimal untuk uji kelayakan UI KompakApps.
 // Semua permintaan ke /json/2/<model>/<metode> pada alamat yang sama (diteruskan oleh nginx),
 // dengan API key pengguna sebagai bearer. API key hanya disimpan di sessionStorage tab ini.
 
-const STORAGE_KEY = "nusara.odoo.apikey";
-const COMPANY_KEY = "nusara.odoo.company";
+const STORAGE_KEY = "kompakapps.odoo.apikey";
+const COMPANY_KEY = "kompakapps.odoo.company";
 
 function store() {
   try {

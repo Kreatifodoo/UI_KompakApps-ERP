@@ -3,7 +3,7 @@ from odoo.addons.account.tests.common import AccountTestInvoicingCommon
 from odoo.tests import tagged
 
 
-@tagged("post_install", "-at_install", "nusara")
+@tagged("post_install", "-at_install", "kompakapps")
 class TestInventoryOperations(AccountTestInvoicingCommon):
     """Hitung fisik, scrap, dan aturan stok minimum (D17)."""
 
@@ -20,12 +20,12 @@ class TestInventoryOperations(AccountTestInvoicingCommon):
             }
         )
         cls.company = cls.env.company
-        cls.company.nusara_setup_inventory_valuation()
+        cls.company.kompakapps_setup_inventory_valuation()
         cls.goods = cls.env.ref("product.product_category_goods").with_company(cls.company)
         cls.warehouse = cls.env["stock.warehouse"].search([("company_id", "=", cls.company.id)], limit=1)
         cls.stock_location = cls.warehouse.lot_stock_id
         cls.product = cls._create_product(
-            name="Barang Gudang Nusara",
+            name="Barang Gudang KompakApps",
             type="consu",
             is_storable=True,
             categ_id=cls.goods.id,

@@ -13,7 +13,7 @@ YEAR = 2030  # tahun tetap agar angka tidak bercampur dengan transaksi lain
 REVENUE, ELECTRICITY, COGS = "41000010", "63110080", "51000010"
 
 
-@tagged("post_install", "-at_install", "nusara")
+@tagged("post_install", "-at_install", "kompakapps")
 class TestBudget(AccountTestInvoicingCommon):
     """Anggaran per akun (mis_builder_budget, D31) dibandingkan dengan realisasi dari jurnal nyata."""
 
@@ -114,7 +114,7 @@ class TestBudget(AccountTestInvoicingCommon):
         instance = self.env["mis.report.instance"].create(
             {
                 "name": "Uji anggaran",
-                "report_id": self.env.ref(f"nusara_base.{key}").id,
+                "report_id": self.env.ref(f"kompakapps_base.{key}").id,
                 "company_id": self.company.id,
                 "temporary": True,
                 "target_move": target_move,
@@ -165,7 +165,7 @@ class TestBudget(AccountTestInvoicingCommon):
     def test_module_and_template_loaded(self):
         installed = self.env["ir.module.module"].search([("name", "=", "mis_builder_budget"), ("state", "=", "installed")])
         self.assertTrue(installed, "mis_builder_budget harus terpasang")
-        template = self.env.ref("nusara_base.mis_anggaran")
+        template = self.env.ref("kompakapps_base.mis_anggaran")
         kpis = {kpi.name: kpi for kpi in template.kpi_ids}
         self.assertEqual(set(kpis), {"pendapatan", "harga_pokok", "beban", "laba_bersih"})
         self.assertTrue(all(kpis[name].auto_expand_accounts for name in ("pendapatan", "harga_pokok", "beban")))
@@ -175,7 +175,7 @@ class TestBudget(AccountTestInvoicingCommon):
             "UI (budgetreport.js) mengenali baris menurut label ini",
         )
         before = self.env["mis.report"].search_count([])
-        self.env["nusara.mis.loader"].load_templates()
+        self.env["kompakapps.mis.loader"].load_templates()
         self.assertEqual(self.env["mis.report"].search_count([]), before, "Memuat ulang tidak boleh menggandakan template")
 
     def test_item_sides_and_balance(self):

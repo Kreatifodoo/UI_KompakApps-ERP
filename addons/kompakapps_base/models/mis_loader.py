@@ -3,25 +3,25 @@ from odoo import api, models
 from .mis_templates import INSTANCES, REPORTS
 
 STYLES = {
-    "header": {"name": "Nusara - Judul bagian", "font_weight": "bold", "background_color": "#f3f4f6", "color": "#374151"},
-    "sub": {"name": "Nusara - Subtotal", "font_weight": "bold"},
-    "total": {"name": "Nusara - Total", "font_weight": "bold", "background_color": "#e0e7ff", "color": "#1e1b4b"},
-    "check": {"name": "Nusara - Pemeriksaan", "font_style": "italic", "color": "#b45309"},
+    "header": {"name": "KompakApps - Judul bagian", "font_weight": "bold", "background_color": "#f3f4f6", "color": "#374151"},
+    "sub": {"name": "KompakApps - Subtotal", "font_weight": "bold"},
+    "total": {"name": "KompakApps - Total", "font_weight": "bold", "background_color": "#e0e7ff", "color": "#1e1b4b"},
+    "check": {"name": "KompakApps - Pemeriksaan", "font_style": "italic", "color": "#b45309"},
 }
 
 
-class NusaraMisLoader(models.AbstractModel):
-    """Memuat (membuat atau memperbarui) template laporan MIS Nusara dari mis_templates.py.
+class KompakAppsMisLoader(models.AbstractModel):
+    """Memuat (membuat atau memperbarui) template laporan MIS KompakApps dari mis_templates.py.
 
     Dipanggil dari data/mis_reports.xml setiap modul dipasang atau diperbarui. Laporan yang sudah ada
     ditimpa menurut definisi di kode; salin laporan lebih dulu bila ingin mengubahnya sendiri.
     """
 
-    _name = "nusara.mis.loader"
-    _description = "Pemuat template laporan MIS Nusara"
+    _name = "kompakapps.mis.loader"
+    _description = "Pemuat template laporan MIS KompakApps"
 
     def _upsert(self, model, key, vals):
-        xmlid = f"nusara_base.{key}"
+        xmlid = f"kompakapps_base.{key}"
         record = self.env.ref(xmlid, raise_if_not_found=False)
         if record:
             record.write(vals)
@@ -29,7 +29,7 @@ class NusaraMisLoader(models.AbstractModel):
         record = self.env[model].create(vals)
         self.env["ir.model.data"].create(
             # noupdate: tanpa ini Odoo menghapus xmlid yang tidak ada di berkas data saat akhir pembaruan modul.
-            {"module": "nusara_base", "name": key, "model": model, "res_id": record.id, "noupdate": True}
+            {"module": "kompakapps_base", "name": key, "model": model, "res_id": record.id, "noupdate": True}
         )
         return record
 

@@ -10,7 +10,7 @@ ACTIVITY_MODELS = [
 ]
 
 
-@tagged("post_install", "-at_install", "nusara")
+@tagged("post_install", "-at_install", "kompakapps")
 class TestScheduledActivities(AccountTestInvoicingCommon):
     """Aktivitas terjadwal (mail.activity) bisa dibuat, dilihat, diselesaikan, dan dihapus pada formulir dokumen dan master (D59)."""
 

@@ -1,7 +1,7 @@
 // Impor Data (CSV dan Excel .xlsx): memasukkan data master dan saldo awal dari berkas lewat mesin impor bawaan Odoo (model base_import.import).
 // Alurnya sama dengan impor Odoo: baca berkas dan petakan kolom (parse_preview), uji tanpa menyimpan (execute_import dengan dryrun),
 // lalu impor sungguhan. Uji tanpa simpan dan impor memakai pemetaan yang sama, dan galat apa pun membatalkan seluruh impor.
-// CSV dikirim sebagai teks UTF-8. Excel (.xlsx) dikirim sebagai base64 lewat nusara_create_from_file (addons/nusara_base/models/base_import.py)
+// CSV dikirim sebagai teks UTF-8. Excel (.xlsx) dikirim sebagai base64 lewat kompakapps_create_from_file (addons/kompakapps_base/models/base_import.py)
 // karena JSON-2 tidak membawa byte mentah; pembacaan lembar, angka, dan tanggal dikerjakan pembaca xlsx Odoo (openpyxl), D36.
 import { INPUT, app, call, esc, guarded, pageHeader, toast } from "../common.js";
 import { buildXlsx } from "../xlsx.js";
@@ -461,7 +461,7 @@ async function readFile(btn) {
     let id;
     let sheets = [];
     if (excel) {
-      ({ id, sheets } = await call("base_import.import", "nusara_create_from_file", { res_model: target.model, file_name: st.fileName, file_type: XLSX_TYPE, data: toBase64(st.bytes) }));
+      ({ id, sheets } = await call("base_import.import", "kompakapps_create_from_file", { res_model: target.model, file_name: st.fileName, file_type: XLSX_TYPE, data: toBase64(st.bytes) }));
     } else {
       [id] = await call("base_import.import", "create", { vals_list: [{ res_model: target.model, file: text, file_type: "text/csv", file_name: st.fileName || "impor.csv" }] });
     }

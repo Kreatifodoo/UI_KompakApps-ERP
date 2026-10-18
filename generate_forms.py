@@ -327,7 +327,7 @@ transaction_forms = {
         "stages": ["Draft", "Submitted", "Approved", "Done"],
         "linkedDocs": [],
         "headerLeft": [
-            { "id": "requester", "label": "Requester", "type": "text", "value": "Admin Nusara" },
+            { "id": "requester", "label": "Requester", "type": "text", "value": "Admin KompakApps" },
             { "id": "date", "label": "Request Date", "type": "date", "value": "2026-10-09" }
         ],
         "headerRight": [

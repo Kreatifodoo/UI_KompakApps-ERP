@@ -3,7 +3,7 @@
 Data contoh bertema PROLINE (produk diagnostik: instrumen, reagen, strip urin, tes cepat) dibuat oleh `scripts/seed_presales.py`. Nama perusahaan, harga, dan jumlah adalah rekaan untuk demo. Skrip aman dijalankan ulang (berhenti bila produk `PRL-XI800` sudah ada) dan tidak menghapus data lain.
 
 ```bash
-docker compose run --rm -T --no-deps odoo odoo shell -d nusara --no-http < scripts/seed_presales.py
+docker compose run --rm -T --no-deps odoo odoo shell -d kompakapps --no-http < scripts/seed_presales.py
 ```
 
 Jalankan lebih dulu `scripts/setup_tax_id.py` (pajak Indonesia: VAT Out 11%, VAT In 11%, PPh 23 -2%; lihat bagian Pajak). Skrip seed juga mengaktifkan fitur Storage Locations (transfer antar rak) dan Leads di CRM bila belum aktif. Buka UI di http://127.0.0.1:8080 dan masuk dengan API key.
@@ -48,5 +48,5 @@ Tips: lakukan satu aksi langsung saat demo (validasi WH/OUT/00008, atau Buat fak
 `scripts/seed_presales_proline.py` (jalankan paling akhir) menambah katalog PROLINE yang lengkap (kimia klinik, hematologi, imunologi, urinalisis, tes cepat, biomolekuler), produk ber-lot dengan kedaluwarsa dan instrumen ber-nomor seri, daftar harga e-Katalog INAPROC dan distributor, rak dingin, dan transaksi baru dari CRM sampai pembayaran. Naskah presentasi enam bab (CRM, Sales, Inventory, Manufacturing, Purchase, Accounting) ada di [PRESALES_STORYLINE.md](PRESALES_STORYLINE.md).
 
 ```bash
-docker compose run --rm -T --no-deps odoo odoo shell -d nusara --no-http < scripts/seed_presales_proline.py
+docker compose run --rm -T --no-deps odoo odoo shell -d kompakapps --no-http < scripts/seed_presales_proline.py
 ```

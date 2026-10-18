@@ -3,7 +3,7 @@
 
 Jalankan SETELAH setup_tax_id.py, seed_presales.py, dan seed_presales_extra.py lewat `odoo shell`. Aman dijalankan ulang (berhenti bila produk PRL-BC240 sudah ada).
 
-    docker compose run --rm -T --no-deps odoo odoo shell -d nusara --no-http < scripts/seed_presales_proline.py
+    docker compose run --rm -T --no-deps odoo odoo shell -d kompakapps --no-http < scripts/seed_presales_proline.py
 
 Yang dibuat: identitas perusahaan demo (PROLINE (Demo), gudang di Jababeka, Cikarang), kategori produk per lini dengan penarikan FEFO, 24 produk
 (instrumen ber-nomor seri; reagen, kontrol, dan tes cepat ber-lot dengan tanggal kedaluwarsa), daftar harga e-Katalog INAPROC dan distributor, tim

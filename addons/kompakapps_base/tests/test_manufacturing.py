@@ -4,7 +4,7 @@ from odoo.exceptions import UserError
 from odoo.tests import tagged
 
 
-@tagged("post_install", "-at_install", "nusara")
+@tagged("post_install", "-at_install", "kompakapps")
 class TestManufacturing(AccountTestInvoicingCommon):
     """BoM, Manufacturing Order, produksi sebagian, konsumsi berlebih, unbuild, work order, dan biaya (D20)."""
 
@@ -22,14 +22,14 @@ class TestManufacturing(AccountTestInvoicingCommon):
             }
         )
         cls.company = cls.env.company
-        cls.company.nusara_setup_inventory_valuation()
+        cls.company.kompakapps_setup_inventory_valuation()
         cls.goods = cls.env.ref("product.product_category_goods").with_company(cls.company)
         cls.warehouse = cls.env["stock.warehouse"].search([("company_id", "=", cls.company.id)], limit=1)
         cls.stock_location = cls.warehouse.lot_stock_id
         common = {"type": "consu", "is_storable": True, "categ_id": cls.goods.id}
-        cls.flour = cls._create_product(name="Tepung Nusara", standard_price=10000.0, **common)
-        cls.sugar = cls._create_product(name="Gula Nusara", standard_price=5000.0, **common)
-        cls.cake = cls._create_product(name="Kue Nusara", standard_price=0.0, **common)
+        cls.flour = cls._create_product(name="Tepung KompakApps", standard_price=10000.0, **common)
+        cls.sugar = cls._create_product(name="Gula KompakApps", standard_price=5000.0, **common)
+        cls.cake = cls._create_product(name="Kue KompakApps", standard_price=0.0, **common)
         for product, qty in ((cls.flour, 100.0), (cls.sugar, 100.0)):
             cls._count(product, qty)
         cls.bom = cls.env["mrp.bom"].create(
@@ -144,8 +144,8 @@ class TestManufacturing(AccountTestInvoicingCommon):
         self.assertEqual((self._on_hand(self.cake), self._on_hand(self.flour), self._on_hand(self.sugar)), (1.0, 98.0, 99.0))
 
     def test_lot_tracked_product_and_byproduct_cost_share(self):
-        syrup = self._create_product(name="Sirup Nusara", type="consu", is_storable=True, tracking="lot", categ_id=self.goods.id)
-        pulp = self._create_product(name="Ampas Nusara", type="consu", is_storable=True, categ_id=self.goods.id)
+        syrup = self._create_product(name="Sirup KompakApps", type="consu", is_storable=True, tracking="lot", categ_id=self.goods.id)
+        pulp = self._create_product(name="Ampas KompakApps", type="consu", is_storable=True, categ_id=self.goods.id)
         self.env["res.config.settings"].create({"group_mrp_byproducts": True}).execute()
         bom = self.env["mrp.bom"].create(
             {
@@ -186,7 +186,7 @@ class TestManufacturing(AccountTestInvoicingCommon):
 
     def test_work_orders_and_bom_cost_report(self):
         self.env["res.config.settings"].create({"group_mrp_routings": True}).execute()
-        center = self.env["mrp.workcenter"].create({"name": "Oven Nusara", "code": "OVN", "costs_hour": 60000.0, "time_efficiency": 100.0})
+        center = self.env["mrp.workcenter"].create({"name": "Oven KompakApps", "code": "OVN", "costs_hour": 60000.0, "time_efficiency": 100.0})
         bom = self.env["mrp.bom"].create(
             {
                 "product_tmpl_id": self.cake.product_tmpl_id.id,

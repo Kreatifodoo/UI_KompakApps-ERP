@@ -5,13 +5,13 @@ from odoo.exceptions import UserError
 from odoo.tests import TransactionCase, tagged
 
 
-@tagged("post_install", "-at_install", "nusara")
+@tagged("post_install", "-at_install", "kompakapps")
 class TestCompanySetupIndonesia(TransactionCase):
     def test_setup_bare_company(self):
         company = self.env["res.company"].create({"name": "PT Uji Setup"})
         self.assertFalse(company.chart_template)
 
-        company.nusara_setup_indonesia()
+        company.kompakapps_setup_indonesia()
 
         self.assertEqual(company.country_id.code, "ID")
         self.assertEqual(company.currency_id.name, "IDR")
@@ -53,19 +53,19 @@ class TestCompanySetupIndonesia(TransactionCase):
             }
         )
 
-        company.nusara_setup_indonesia()
+        company.kompakapps_setup_indonesia()
 
         self.assertEqual(default_list.currency_id.name, "IDR")
         self.assertEqual(custom_list.currency_id.name, "USD", "Aturan harga tidak boleh diubah")
 
     def test_setup_is_idempotent(self):
         company = self.env["res.company"].create({"name": "PT Uji Idempoten"})
-        company.nusara_setup_indonesia()
+        company.kompakapps_setup_indonesia()
         domain = [("company_id", "=", company.id)]
         taxes = self.env["account.tax"].search_count(domain)
         journals = self.env["account.journal"].search_count(domain)
 
-        company.nusara_setup_indonesia()
+        company.kompakapps_setup_indonesia()
 
         self.assertEqual(self.env["account.tax"].search_count(domain), taxes)
         self.assertEqual(self.env["account.journal"].search_count(domain), journals)
@@ -77,6 +77,6 @@ class TestCompanySetupIndonesia(TransactionCase):
             return_value=True,
         ):
             with self.assertRaises(UserError):
-                company.nusara_setup_indonesia()
+                company.kompakapps_setup_indonesia()
         self.assertFalse(company.chart_template)
         self.assertFalse(company.country_id)

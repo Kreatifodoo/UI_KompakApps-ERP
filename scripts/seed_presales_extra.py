@@ -4,7 +4,7 @@
 Jalankan SETELAH seed_presales.py (butuh data PROLINE dan pajak dari setup_tax_id.py) lewat `odoo shell`. Aman dijalankan ulang (berhenti bila
 produk PRL-STRIP-5P sudah ada). Tujuannya agar laporan keuangan (Laba Rugi, Neraca Saldo, Buku Besar, Analytic Report) bisa disaring per akun analitik.
 
-    docker compose run --rm -T --no-deps odoo odoo shell -d nusara --no-http < scripts/seed_presales_extra.py
+    docker compose run --rm -T --no-deps odoo odoo shell -d kompakapps --no-http < scripts/seed_presales_extra.py
 
 Dua rencana analitik dibuat: "Departemen" (Penjualan Instrumen, Penjualan Reagen dan Strip, Pembelian dan Gudang, Produksi, Pemasaran) dan
 "Lini Produk" (Instrumen, Reagen dan Kit, Strip dan Tes Cepat, Jasa). Setiap baris transaksi memakai satu akun dari masing-masing rencana.

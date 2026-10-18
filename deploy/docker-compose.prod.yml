@@ -16,7 +16,7 @@ services:
       retries: 10
 
   odoo:
-    image: ghcr.io/kreatifodoo/nusara-erp:${IMAGE_TAG:-latest}
+    image: ghcr.io/kreatifodoo/kompakapps:${IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       db:

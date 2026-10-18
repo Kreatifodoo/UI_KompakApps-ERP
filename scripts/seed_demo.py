@@ -1,19 +1,19 @@
 # ruff: noqa: F821
-"""Data contoh untuk mencoba alur Procure-to-Pay di UI Nusara (vendor, produk, harga vendor).
+"""Data contoh untuk mencoba alur Procure-to-Pay di UI KompakApps (vendor, produk, harga vendor).
 
 Dijalankan lewat `odoo shell` (variabel `env` disediakan oleh shell). Database harus sudah
-memasang nusara_base. Aman dijalankan ulang: data yang sudah ada tidak digandakan.
+memasang kompakapps_base. Aman dijalankan ulang: data yang sudah ada tidak digandakan.
 
-    docker compose run --rm -T odoo odoo shell -d nusara --no-http < scripts/seed_demo.py
+    docker compose run --rm -T odoo odoo shell -d kompakapps --no-http < scripts/seed_demo.py
 
-Skrip ini juga menerapkan setup Indonesia (lihat res.company.nusara_setup_indonesia), yang
+Skrip ini juga menerapkan setup Indonesia (lihat res.company.kompakapps_setup_indonesia), yang
 menolak berjalan bila perusahaan sudah punya transaksi akuntansi, dan valuasi persediaan
-perpetual dengan biaya rata-rata (res.company.nusara_setup_inventory_valuation).
+perpetual dengan biaya rata-rata (res.company.kompakapps_setup_inventory_valuation).
 """
 
 company = env["res.company"].browse(1)
-company.nusara_setup_indonesia()
-company.nusara_setup_inventory_valuation()
+company.kompakapps_setup_indonesia()
+company.kompakapps_setup_inventory_valuation()
 goods = env.ref("product.product_category_goods")
 
 tax = env["account.tax"].search(
@@ -22,11 +22,11 @@ tax = env["account.tax"].search(
 vendor = env["res.partner"].search([("name", "=", "PT Pemasok Nusantara")], limit=1) or env[
     "res.partner"
 ].create({"name": "PT Pemasok Nusantara", "is_company": True, "supplier_rank": 1})
-product = env["product.product"].search([("name", "=", "Bahan Baku Nusara")], limit=1) or env[
+product = env["product.product"].search([("name", "=", "Bahan Baku KompakApps")], limit=1) or env[
     "product.product"
 ].create(
     {
-        "name": "Bahan Baku Nusara",
+        "name": "Bahan Baku KompakApps",
         "type": "consu",
         "is_storable": True,
         "categ_id": goods.id,

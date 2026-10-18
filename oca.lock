@@ -1,4 +1,4 @@
-# Modul OCA yang dipakai Nusara, dikunci ke commit cabang 19.0.
+# Modul OCA yang dipakai KompakApps, dikunci ke commit cabang 19.0.
 # Format: <nama-repo-OCA> <sha-commit>
 # Untuk memperbarui: jalankan `git ls-remote https://github.com/OCA/<repo>.git refs/heads/19.0`
 # lalu ganti SHA-nya di sini lewat pull request.

@@ -1,9 +1,9 @@
 # ruff: noqa: F821
-"""Pajak standar Indonesia untuk Nusara: VAT Out 11% (PPN keluaran), VAT In 11% (PPN masukan), dan PPh 23 -2% (pemotongan).
+"""Pajak standar Indonesia untuk KompakApps: VAT Out 11% (PPN keluaran), VAT In 11% (PPN masukan), dan PPh 23 -2% (pemotongan).
 
-Dijalankan lewat `odoo shell` pada database yang sudah menjalankan nusara_setup_indonesia (l10n_id terpasang). Aman dijalankan ulang.
+Dijalankan lewat `odoo shell` pada database yang sudah menjalankan kompakapps_setup_indonesia (l10n_id terpasang). Aman dijalankan ulang.
 
-    docker compose run --rm -T --no-deps odoo odoo shell -d nusara --no-http < scripts/setup_tax_id.py
+    docker compose run --rm -T --no-deps odoo odoo shell -d kompakapps --no-http < scripts/setup_tax_id.py
 
 Yang dilakukan: mengaktifkan dan menamai ulang pajak 11% bawaan l10n_id (penjualan dan pembelian), membuat PPh 23 -2% untuk pembelian
 (dipotong dari vendor, akun Tax Payable PPh 23) dan untuk penjualan (dipotong pelanggan, akun Prepaid Tax PPh 23), menjadikan VAT Out dan
@@ -21,7 +21,7 @@ def tax11(use):
 
 vat_out, vat_in = tax11("sale"), tax11("purchase")
 if not vat_out or not vat_in:
-    raise SystemExit("Pajak 11% bawaan l10n_id tidak ditemukan; jalankan company.nusara_setup_indonesia() lebih dulu.")
+    raise SystemExit("Pajak 11% bawaan l10n_id tidak ditemukan; jalankan company.kompakapps_setup_indonesia() lebih dulu.")
 vat_out.write({"name": "VAT Out 11%", "invoice_label": "PPN 11%", "active": True})
 vat_in.write({"name": "VAT In 11%", "invoice_label": "PPN 11%", "active": True})
 group = env["account.tax.group"].search([("name", "=", "PPh 23")], limit=1) or env["account.tax.group"].create({"name": "PPh 23", "country_id": env.ref("base.id").id})

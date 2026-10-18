@@ -3,7 +3,7 @@
 
 Jalankan SETELAH setup_tax_id.py (pajak VAT In 11%) lewat `odoo shell`. Aman dijalankan ulang (berhenti bila model "Peralatan Laboratorium" sudah ada).
 
-    docker compose run --rm -T --no-deps odoo odoo shell -d nusara --no-http < scripts/seed_presales_assets.py
+    docker compose run --rm -T --no-deps odoo odoo shell -d kompakapps --no-http < scripts/seed_presales_assets.py
 
 Dibuat: empat model aset (Peralatan Laboratorium 4 tahun, Kendaraan Operasional 8 tahun, Peralatan Kantor dan Komputer 4 tahun, Renovasi Gudang 10 tahun),
 akun aset dan penyusutan untuk peralatan laboratorium, empat tagihan vendor yang membentuk aset (satu belum dibayar), satu aset saldo awal tanpa tagihan,

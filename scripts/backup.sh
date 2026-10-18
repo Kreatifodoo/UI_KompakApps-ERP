@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Backup database Nusara: dump PostgreSQL (format custom) + arsip filestore + manifest.
+# Backup database KompakApps: dump PostgreSQL (format custom) + arsip filestore + manifest.
 # Panduan lengkap: docs/OPERATIONS.md
 # shellcheck disable=SC2016 # skrip sh untuk container sengaja ditaruh dalam kutip tunggal
 set -Eeuo pipefail
@@ -60,8 +60,8 @@ case "$KEEP" in '' | *[!0-9]*) ops_usage_die "KEEP harus bilangan bulat >= 0" ;;
 ops_setup_compose
 ops_require_db_service
 ops_db_exists "$ODOO_DB" || ops_die "database '$ODOO_DB' tidak ada di proyek $COMPOSE_PROJECT"
-[ "$(ops_psql "$ODOO_DB" "SELECT 1 FROM ir_module_module WHERE name = 'nusara_base' AND state = 'installed'")" = "1" ] ||
-    ops_die "'$ODOO_DB' bukan database Nusara (nusara_base tidak terpasang); backup dibatalkan"
+[ "$(ops_psql "$ODOO_DB" "SELECT 1 FROM ir_module_module WHERE name = 'kompakapps_base' AND state = 'installed'")" = "1" ] ||
+    ops_die "'$ODOO_DB' bukan database KompakApps (kompakapps_base tidak terpasang); backup dibatalkan"
 
 mkdir -p "$BACKUP_DIR" || ops_die "tidak bisa membuat folder $BACKUP_DIR"
 BACKUP_DIR="$(cd "$BACKUP_DIR" && pwd)"
@@ -108,7 +108,7 @@ STATS="$(ops_stats "$ODOO_DB")"
 [ -n "$STATS" ] || ops_die "gagal membaca angka kunci database"
 DBINFO="$(ops_psql "$ODOO_DB" "SELECT pg_encoding_to_char(encoding) || '|' || datcollate || '|' || datctype || '|' || current_setting('server_version') FROM pg_database WHERE datname = current_database()")"
 ODOO_VERSION_DB="$(ops_psql "$ODOO_DB" "SELECT COALESCE(latest_version, '') FROM ir_module_module WHERE name = 'base'")"
-NUSARA_VERSION="$(ops_psql "$ODOO_DB" "SELECT COALESCE(latest_version, '') FROM ir_module_module WHERE name = 'nusara_base'")"
+KOMPAKAPPS_VERSION="$(ops_psql "$ODOO_DB" "SELECT COALESCE(latest_version, '') FROM ir_module_module WHERE name = 'kompakapps_base'")"
 MODULES="$(ops_psql "$ODOO_DB" "SELECT name || '=' || COALESCE(latest_version, '') FROM ir_module_module WHERE state = 'installed' ORDER BY name")"
 IFS='|' read -r PG_ENCODING PG_COLLATE PG_CTYPE PG_VERSION <<<"$DBINFO"
 
@@ -148,7 +148,7 @@ FS_BYTES="$(ops_filesize "$WORK/filestore.tar.gz")"
     printf '  "pg_lc_ctype": "%s",\n' "$PG_CTYPE"
     printf '  "postgres_version": "%s",\n' "$PG_VERSION"
     printf '  "odoo_base_version": "%s",\n' "$ODOO_VERSION_DB"
-    printf '  "nusara_base_version": "%s",\n' "$NUSARA_VERSION"
+    printf '  "kompakapps_base_version": "%s",\n' "$KOMPAKAPPS_VERSION"
     printf '  "dump_file": "db.dump",\n'
     printf '  "dump_bytes": %s,\n' "$DUMP_BYTES"
     printf '  "dump_sha256": "%s",\n' "$DUMP_SHA"

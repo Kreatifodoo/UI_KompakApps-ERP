@@ -6,7 +6,7 @@ from odoo.exceptions import AccessError
 from odoo.tests import tagged
 
 
-@tagged("post_install", "-at_install", "nusara")
+@tagged("post_install", "-at_install", "kompakapps")
 class TestMultiCompany(AccountTestInvoicingCommon):
     """Perusahaan kedua dengan COA Indonesia sendiri: data terpisah per perusahaan, mitra dibagi, dan hak perusahaan per pengguna (D62)."""
 
@@ -16,7 +16,7 @@ class TestMultiCompany(AccountTestInvoicingCommon):
         super().setUpClass()
         cls.company_a = cls.env.company
         cls.company_b = cls.env["res.company"].create({"name": "PT Cabang Multi Uji"})
-        cls.company_b.nusara_setup_indonesia()
+        cls.company_b.kompakapps_setup_indonesia()
         cls.env.user.write({"company_ids": [Command.link(cls.company_b.id)]})
         cls.vendor = cls.env["res.partner"].create({"name": "PT Pemasok Bersama", "supplier_rank": 1})
 
@@ -66,7 +66,7 @@ class TestMultiCompany(AccountTestInvoicingCommon):
         self.assertEqual(env_a["res.partner"].search_count([("id", "=", self.vendor.id)]), 1)
         self.assertEqual(env_b["res.partner"].search_count([("id", "=", self.vendor.id)]), 1)
         # setup berulang pada perusahaan yang sudah bertransaksi tidak mengubah apa pun
-        self.company_b.nusara_setup_indonesia()
+        self.company_b.kompakapps_setup_indonesia()
         self.assertEqual(bill_b.state, "posted")
 
     def test_user_limited_to_one_company_cannot_open_the_other(self):
@@ -86,19 +86,19 @@ class TestMultiCompany(AccountTestInvoicingCommon):
             self._env(self.company_a, as_limited)["account.move"].search([])
 
     def test_new_company_outside_tests_gets_a_warehouse_from_setup(self):
-        # di luar test Odoo 19 tidak membuat gudang untuk perusahaan baru; nusara_setup_warehouse yang membuatnya
+        # di luar test Odoo 19 tidak membuat gudang untuk perusahaan baru; kompakapps_setup_warehouse yang membuatnya
         with patch("odoo.modules.module.current_test", None):
             company = self.env["res.company"].create({"name": "PT Gudang Belakangan"})
         warehouses = self.env["stock.warehouse"].with_context(active_test=False)
         self.assertFalse(warehouses.search([("company_id", "=", company.id)]))
-        company.nusara_setup_warehouse()
+        company.kompakapps_setup_warehouse()
         warehouse = warehouses.search([("company_id", "=", company.id)])
         self.assertEqual(len(warehouse), 1)
         self.assertTrue(warehouse.in_type_id and warehouse.out_type_id and warehouse.lot_stock_id, "Gudang membawa lokasi stok dan tipe operasi")
-        company.nusara_setup_warehouse()
+        company.kompakapps_setup_warehouse()
         self.assertEqual(warehouses.search_count([("company_id", "=", company.id)]), 1, "Menjalankan ulang tidak membuat gudang kedua")
         with patch("odoo.modules.module.current_test", None):
             other = self.env["res.company"].create({"name": "PT Gudang Belakangan Dua"})
-        other.nusara_setup_warehouse()
+        other.kompakapps_setup_warehouse()
         codes = warehouses.search([("company_id", "in", (company | other).ids)]).mapped("code")
         self.assertEqual(len(codes), len(set(codes)), "Kode gudang tidak kembar walau inisial perusahaan sama")

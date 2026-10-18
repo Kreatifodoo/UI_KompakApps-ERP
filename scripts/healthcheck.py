@@ -9,7 +9,7 @@ API key (opsional), ruang disk, dan umur backup terakhir. Hanya membaca; tidak m
 Kode keluar (sama dengan konvensi Nagios, cocok untuk cron atau monitor):
     0 semua sehat, 1 ada peringatan, 2 ada yang kritis, 3 salah pemakaian atau galat internal.
 
-Variabel lingkungan (argumen mengalahkan variabel): NUSARA_ODOO_URL, NUSARA_UI_URL, NUSARA_API_KEY
+Variabel lingkungan (argumen mengalahkan variabel): KOMPAKAPPS_ODOO_URL, KOMPAKAPPS_UI_URL, KOMPAKAPPS_API_KEY
 (sengaja bukan argumen agar tidak terlihat di daftar proses), ODOO_DB, BACKUP_DIR.
 """
 
@@ -125,9 +125,9 @@ def check_ui(args):
 
 
 def check_json2(args):
-    key = os.environ.get("NUSARA_API_KEY", "")
+    key = os.environ.get("KOMPAKAPPS_API_KEY", "")
     if not key:
-        return Result("json2", SKIP, "NUSARA_API_KEY tidak diisi")
+        return Result("json2", SKIP, "KOMPAKAPPS_API_KEY tidak diisi")
     base = (args.api_url or args.ui_url or args.odoo_url).rstrip("/")
     headers = {"Content-Type": "application/json; charset=utf-8", "Authorization": f"bearer {key}"}
     if args.db:
@@ -135,7 +135,7 @@ def check_json2(args):
     host = urlparse(base).hostname or ""
     plain = urlparse(base).scheme == "http" and host not in LOOPBACK
     status, payload, ms, error = http(f"{base}/json/2/ir.module.module/search_read", args.timeout, "POST", headers,
-                                      json.dumps({"domain": [["name", "=", "nusara_base"]], "fields": ["state", "latest_version"]}).encode())
+                                      json.dumps({"domain": [["name", "=", "kompakapps_base"]], "fields": ["state", "latest_version"]}).encode())
     if error:
         return Result("json2", CRIT, f"tidak terjangkau di {base}: {error}", ms=round(ms))
     if status == 401:
@@ -144,8 +144,8 @@ def check_json2(args):
         rows = json_body(payload)
         module = rows[0] if isinstance(rows, list) and rows else None
         if module and module.get("state") != "installed":
-            return Result("json2", CRIT, f"nusara_base berstatus '{module.get('state')}', bukan installed", ms=round(ms))
-        extra = f", nusara_base {module['latest_version']} terpasang" if module else ""
+            return Result("json2", CRIT, f"kompakapps_base berstatus '{module.get('state')}', bukan installed", ms=round(ms))
+        extra = f", kompakapps_base {module['latest_version']} terpasang" if module else ""
         level = judge_latency(ms, args.warn_ms, args.crit_ms)
         note = "; API key dikirim lewat HTTP polos ke host non-loopback" if plain else ""
         if plain and level == OK:
@@ -243,8 +243,8 @@ def check_backup(args):
 def build_parser():
     env = os.environ.get
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0], formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split("\n\n", 1)[1])
-    parser.add_argument("--odoo-url", default=env("NUSARA_ODOO_URL", "http://127.0.0.1:8069"), help="alamat Odoo (bawaan: http://127.0.0.1:8069)")
-    parser.add_argument("--ui-url", default=env("NUSARA_UI_URL", ""), help="alamat UI nginx; kosong = lewati pemeriksaan UI")
+    parser.add_argument("--odoo-url", default=env("KOMPAKAPPS_ODOO_URL", "http://127.0.0.1:8069"), help="alamat Odoo (bawaan: http://127.0.0.1:8069)")
+    parser.add_argument("--ui-url", default=env("KOMPAKAPPS_UI_URL", ""), help="alamat UI nginx; kosong = lewati pemeriksaan UI")
     parser.add_argument("--api-url", default="", help="alamat untuk panggilan JSON-2 (bawaan: --ui-url bila ada, jika tidak --odoo-url)")
     parser.add_argument("--db", default=env("ODOO_DB", ""), help="nama database: header X-Odoo-Database untuk JSON-2 dan penyaring backup")
     parser.add_argument("--backup-dir", default=env("BACKUP_DIR", ""), help="folder backup (keluaran scripts/backup.sh); kosong = lewati")

@@ -10,9 +10,9 @@ ERP modular untuk bisnis Indonesia: pembelian, persediaan, manufaktur, CRM, POS,
 
 | Lapisan | Keputusan | Catatan |
 |---|---|---|
-| Backend | **Odoo** dengan modul custom `nusara_*` + modul OCA | Versi dan edisi (Community/Enterprise) diputuskan di [docs/DECISIONS.md](docs/DECISIONS.md) |
+| Backend | **Odoo** dengan modul custom `kompakapps_*` + modul OCA | Versi dan edisi (Community/Enterprise) diputuskan di [docs/DECISIONS.md](docs/DECISIONS.md) |
 | UI sekarang | HTML statis (React + Babel dari CDN) | Berfungsi sebagai spesifikasi UX, bukan kode produksi |
-| UI produksi | Web client Odoo dengan tema `nusara_theme` (jalur A), frontend headless via JSON-2 hanya untuk kasus khusus (jalur B) | Diputuskan di akhir Fase 2 |
+| UI produksi | Web client Odoo dengan tema `kompakapps_theme` (jalur A), frontend headless via JSON-2 hanya untuk kasus khusus (jalur B) | Diputuskan di akhir Fase 2 |
 
 Peta lengkap menu KompakApps ke modul Odoo ada di [docs/MODULE_MAP.md](docs/MODULE_MAP.md).
 
@@ -36,8 +36,8 @@ Business_Form_Template.html   # template tunggal untuk semua form
 generate_forms.py             # membuat 23 form di forms/ dari template + data
 forms/master/                 # 13 form master data
 forms/transaction/            # 10 form transaksi
-nusara_erp_system.html        # versi lama index.html (duplikat, akan dihapus)
-addons/nusara_base/           # modul Odoo pertama (fondasi + test)
+kompakapps_system.html        # versi lama index.html (duplikat, akan dihapus)
+addons/kompakapps_base/           # modul Odoo pertama (fondasi + test)
 oca.lock                      # repo OCA 19.0 yang dipakai, dikunci ke commit
 docker/, docker-compose.yml   # image Odoo 19 + OCA dan lingkungan lokal
 config/odoo.conf              # konfigurasi Odoo
@@ -59,16 +59,16 @@ Butuh Docker Desktop (di Settings → Resources, alokasikan minimal 4 GB RAM).
 cp .env.example .env
 ```
 
-2. Inisialisasi pertama: membuat database dan memasang modul Nusara Base (beberapa menit, sekali saja). Database manager di browser sengaja dimatikan, jadi database dibuat lewat perintah ini:
+2. Inisialisasi pertama: membuat database dan memasang modul KompakApps Base (beberapa menit, sekali saja). Database manager di browser sengaja dimatikan, jadi database dibuat lewat perintah ini:
 
 ```bash
-docker compose run --rm odoo odoo -d nusara -i nusara_base --without-demo=true --stop-after-init
+docker compose run --rm odoo odoo -d kompakapps -i kompakapps_base --without-demo=true --stop-after-init
 ```
 
 3. Terapkan setup Indonesia pada perusahaan utama: negara Indonesia, mata uang IDR, COA `l10n_id` (termasuk PPN), dan price list bawaan ke IDR. **Hanya untuk database yang belum punya transaksi akuntansi**, karena memuat COA baru menghapus COA lama; metodenya menolak berjalan bila sudah ada transaksi. Aman dijalankan ulang.
 
 ```bash
-echo "env['res.company'].browse(1).nusara_setup_indonesia(); env.cr.commit()" | docker compose run --rm -T odoo odoo shell -d nusara --no-http
+echo "env['res.company'].browse(1).kompakapps_setup_indonesia(); env.cr.commit()" | docker compose run --rm -T odoo odoo shell -d kompakapps --no-http
 ```
 
 4. Jalankan aplikasinya:
@@ -77,12 +77,12 @@ echo "env['res.company'].browse(1).nusara_setup_indonesia(); env.cr.commit()" | 
 docker compose up
 ```
 
-5. Buka http://localhost:8069 dan login dengan `admin` / `admin`, lalu **segera ganti password** di menu profil. Nama database di langkah 2 dan 3 harus sama dengan `ODOO_DB` di `.env` (default `nusara`).
+5. Buka http://localhost:8069 dan login dengan `admin` / `admin`, lalu **segera ganti password** di menu profil. Nama database di langkah 2 dan 3 harus sama dengan `ODOO_DB` di `.env` (default `kompakapps`).
 
-Menjalankan test modul `nusara_base` (di database terpisah, tidak menyentuh data Anda):
+Menjalankan test modul `kompakapps_base` (di database terpisah, tidak menyentuh data Anda):
 
 ```bash
-docker compose run --rm --no-deps odoo odoo -d nusara_test -i nusara_base --test-enable --test-tags /nusara_base --without-demo=true --stop-after-init
+docker compose run --rm --no-deps odoo odoo -d kompakapps_test -i kompakapps_base --test-enable --test-tags /kompakapps_base --without-demo=true --stop-after-init
 ```
 
 ## UI KompakApps yang terhubung ke Odoo
@@ -113,7 +113,7 @@ Kerangka di `ui/live/` memakai **desain sidebar prototipe** (9 modul, menu berti
 | Accounting › Master › Chart of Account, Tax Master, Currencies, Jurnal, Asset Model, Analitic Account; Asset | Akun, pajak dengan akun pajak, mata uang dan kurs, jurnal, model aset, aset dengan jadwal dan posting penyusutan, akun dan plan analitik | `account.account`, `account.tax`, `res.currency`, `account.journal`, `account.asset(.profile)`, `account.analytic.account` |
 | Report › Purchase Request Line dan Analisis, Purchase Order Line dan Analisis, Move Analisis, Sales Order Line dan Analisis, Sales Person, Product; POS › Order Report, Sales Details | Ringkasan per dimensi dengan ukuran dan batang, klik nama kelompok untuk baris rinciannya dan klik dokumen untuk membukanya (PR, PO, SO, pesanan POS, penerimaan, pengiriman, transfer, MO), perbandingan dengan periode sebelumnya atau tahun lalu (nilai pembanding, selisih, persen), daftar baris dengan filter, unduh CSV | `purchase.request.line`, `purchase.report`, `stock.move.line`, `sale.report`, `report.pos.order` |
 | Setting di tiap modul; General Setting › Company Setting, Users & Access | Pengaturan fitur dan kebijakan per modul, kunci periode akuntansi, data dan logo perusahaan, pengguna dengan peran per aplikasi | `res.config.settings`, `res.company`, `res.users`, `res.groups` |
-| General Setting › Import Data | Impor CSV atau Excel (.xlsx, pilih lembar) untuk produk, pelanggan dan pemasok, kategori, harga vendor, akun, stok awal, jurnal saldo awal, dan BoM: pemetaan kolom otomatis, uji tanpa simpan, lalu impor | `base_import.import` (mesin impor Odoo; Excel lewat `nusara_create_from_file`, D36) |
+| General Setting › Import Data | Impor CSV atau Excel (.xlsx, pilih lembar) untuk produk, pelanggan dan pemasok, kategori, harga vendor, akun, stok awal, jurnal saldo awal, dan BoM: pemetaan kolom otomatis, uji tanpa simpan, lalu impor | `base_import.import` (mesin impor Odoo; Excel lewat `kompakapps_create_from_file`, D36) |
 | Tombol Cetak di PR, PO, Sales Order, faktur dan tagihan, surat jalan dan penerimaan, pembayaran, POS Order (struk), Manufacturing Order (Perintah Produksi) | Pratinjau berkop surat (logo, alamat, NPWP, footer dari Company Setting) lalu cetak atau simpan sebagai PDF lewat browser; A4, dan struk POS juga lebar 80 mm | `purchase.order`, `sale.order`, `account.move`, `stock.picking`, `account.payment`, `purchase.request`, `pos.order`, `mrp.production` |
 | General Setting › Audit Log | Jejak siapa mengubah apa dan kapan dengan nilai lama dan baru; aturan audit per model (standar: kontak, produk, daftar harga, akun, pajak, jurnal master, PO, SO, transfer stok, PR, pengguna, perusahaan) dan retensi log | `auditlog.rule`, `auditlog.log`, `auditlog.log.line` (OCA `auditlog`) |
 | Accounting › Master › Budget Plan Master; Accounting › Budget; Accounting › Reporting › Budget Report | Rencana anggaran (periode, status), baris anggaran per akun, analitik, dan periode (bagi rata per bulan), konfirmasi, dan laporan anggaran vs realisasi dengan selisih, persentase, filter analitik, drilldown, dan CSV | `mis.budget.by.account(.item)`, `mis.report.instance` (OCA `mis_builder_budget`) |
@@ -152,7 +152,7 @@ docker compose up -d
 2. Opsional, bila database belum punya vendor dan produk: isi data contoh (vendor, produk, harga vendor, setup Indonesia). Menolak berjalan bila sudah ada transaksi akuntansi.
 
 ```bash
-docker compose run --rm -T odoo odoo shell -d nusara --no-http < scripts/seed_demo.py
+docker compose run --rm -T odoo odoo shell -d kompakapps --no-http < scripts/seed_demo.py
 ```
 
 3. Buat API key milik Anda di Odoo (http://localhost:8069): klik nama Anda → **Preferences** → **Account Security** → **New API Key**. Salin key-nya (hanya tampil sekali).
@@ -165,7 +165,7 @@ Nginx pada layanan `ui` hanya meneruskan `/json/2/` ke Odoo, sehingga antarmuka 
 `scripts/check_p2p_api.py` menjalankan seluruh alur di atas lewat API (panggilan yang sama dengan UI) dan memeriksa 746 hal, termasuk jurnal tagihan dan pembayaran, Sales Order sampai nota kredit, laporan keuangan (neraca seimbang, arus kas cocok dengan kas), penerimaan sebagian dengan backorder, pembayaran bertahap, lot dan nomor seri dengan kedaluwarsa, manufaktur (BoM sampai unbuild), CRM (lead sampai menang atau kalah), POS (penjualan kasir sampai jurnal penutupan sesi), Promotion & Loyalty (kode promo, promosi otomatis, kupon, kartu loyalti, dan pesanan kasir berhadiah), Inventory Valuation (nilai per tanggal lampau dari pergerakan bertanggal, mutasi periode saling cocok, rincian bertanda sama dengan nilai saat ini, saldo per akun terhadap buku besar), Replenishment dari permintaan (aturan manual otomatis, rute Beli, Produksi, dan suplai antar gudang, pemicu Otomatis lewat penjadwal), drill-down dan perbandingan periode laporan analisis (angka kelompok, pembanding, dan baris rincian dihitung ulang dari dokumen), akun analitik pada baris (PO ke tagihan ke baris analitik, SO ke faktur, PR, jurnal manual, dan anggaran terkonfirmasi), dan data master (vendor, produk, harga vendor bertingkat, arsip). Skrip ini **menulis data**, jadi pakai database uji dan API key pengguna uji:
 
 ```bash
-NUSARA_API_KEY=<api-key-uji> python3 scripts/check_p2p_api.py --yes --url http://127.0.0.1:8080
+KOMPAKAPPS_API_KEY=<api-key-uji> python3 scripts/check_p2p_api.py --yes --url http://127.0.0.1:8080
 ```
 
 Detail CI/CD dan penyiapan server ada di [docs/CICD.md](docs/CICD.md).
@@ -178,14 +178,14 @@ Skrip di `scripts/` dan prosedur lengkapnya ada di [docs/OPERATIONS.md](docs/OPE
 
 ```bash
 # backup database + filestore + manifest (rotasi simpan 14 terbaru), cocok untuk cron
-COMPOSE_PROJECT=<proyek> ODOO_DB=<database> BACKUP_DIR=/var/backups/nusara KEEP=14 scripts/backup.sh
+COMPOSE_PROJECT=<proyek> ODOO_DB=<database> BACKUP_DIR=/var/backups/kompakapps KEEP=14 scripts/backup.sh
 # pulihkan ke database BARU lalu verifikasi (tidak menimpa database yang ada)
-COMPOSE_PROJECT=<proyek> scripts/restore.sh /var/backups/nusara/<database>_<tanggal-jam> <database-baru>
+COMPOSE_PROJECT=<proyek> scripts/restore.sh /var/backups/kompakapps/<database>_<tanggal-jam> <database-baru>
 # uji siklus backup -> ubah data -> restore -> cocokkan angka (hanya database uji)
 COMPOSE_PROJECT=<proyek> ODOO_DB=<database-uji> scripts/check_backup_restore.sh --yes
 # kesehatan (kode keluar 0/1/2 untuk cron) dan uji beban (hanya loopback tanpa --yes-remote)
-python3 -I scripts/healthcheck.py --odoo-url http://127.0.0.1:8069 --backup-dir /var/backups/nusara
-NUSARA_API_KEY=<api-key-uji> python3 -I scripts/loadtest.py --url http://127.0.0.1:8080 --users 10 --duration 30
+python3 -I scripts/healthcheck.py --odoo-url http://127.0.0.1:8069 --backup-dir /var/backups/kompakapps
+KOMPAKAPPS_API_KEY=<api-key-uji> python3 -I scripts/loadtest.py --url http://127.0.0.1:8080 --users 10 --duration 30
 ```
 
 ## Peta jalan
@@ -204,3 +204,4 @@ NUSARA_API_KEY=<api-key-uji> python3 -I scripts/loadtest.py --url http://127.0.0
 | Semua daftar dan tabel rincian: Kelompokkan dan Filter | Bilah di atas tabel: Kelompokkan menurut satu atau beberapa kolom bertingkat (tanggal per bulan, jumlah baris dan jumlah kolom angka per kelompok, buka atau ciutkan), Filter menurut kolom dan nilai dengan chip; berlaku otomatis pada sekitar 35 halaman daftar dan beberapa tabel rincian | D61; `ui/live/listtools.js`; uji browser 50 halaman, dua tingkat kelompok, per bulan, filter, ciutkan dan buka |
 | General Setting > Perusahaan dan header: Multi-company | Pemilih perusahaan aktif di header (dikirim sebagai konteks perusahaan di setiap panggilan), master Perusahaan (buat perusahaan baru dengan setup Indonesia: COA, pajak, valuasi, dan gudang utama; pakai perusahaan; terapkan setup), hak perusahaan per pengguna di Users & Access; COA, pajak, gudang, dan nomor dokumen terpisah per perusahaan, mitra dan produk dibagi | D62; `TestMultiCompany` (4 test Odoo), `check_multi_company` (12 pemeriksaan api uji); uji browser membuat perusahaan, ganti perusahaan, dan membuat gudang |
 | Manufacture > Bill of Material: Bandingkan BoM | Label Bandingkan di daftar BoM untuk produk dengan lebih dari satu BoM; tabel komponen per BoM (jumlah per satu unit barang jadi), sorotan perbedaan, saklar hanya yang beda, biaya komponen per unit tiap BoM dan selisihnya, ringkasan operasi | D63; `ui/live/pages/bomcompare.js`; uji browser dua BoM satu produk (biaya Rp10.000 lawan Rp29.000, +190%), pemilihan BoM, saklar |
+| Nama teknis kompakapps | Modul `kompakapps_base`, database, project compose, image, variabel lingkungan, kunci penyimpanan, dan nama berkas memakai `kompakapps`; skrip migrasi instalasi lama | D66; `scripts/migrate_to_kompakapps.sh`; install bersih dan test Odoo di CI, latihan migrasi pada salinan DB pemilik |

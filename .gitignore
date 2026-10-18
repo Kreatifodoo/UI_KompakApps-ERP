@@ -4,3 +4,5 @@ oca/
 __pycache__/
 *.py[cod]
 *.swp
+backups/
+.env.sebelum-kompakapps-*

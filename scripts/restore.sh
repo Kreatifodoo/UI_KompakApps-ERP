@@ -185,9 +185,9 @@ if [ "$VERIFY" -eq 1 ]; then
     want="$(ops_manifest_get "$MANIFEST" stat_installed_modules)"
     if [ "$cur_mods" = "$want" ] && [ "$cur_mods" -gt 0 ]; then pass "modul terpasang $cur_mods"; else fail "modul terpasang $cur_mods, manifest $want"; fi
 
-    nb="$(ops_psql "$RESTORE_DB" "SELECT state || ' ' || COALESCE(latest_version, '') FROM ir_module_module WHERE name = 'nusara_base'")"
-    want="installed $(ops_manifest_get "$MANIFEST" nusara_base_version)"
-    if [ "$nb" = "$want" ]; then pass "nusara_base: $nb"; else fail "nusara_base: '$nb', diharapkan '$want'"; fi
+    nb="$(ops_psql "$RESTORE_DB" "SELECT state || ' ' || COALESCE(latest_version, '') FROM ir_module_module WHERE name = 'kompakapps_base'")"
+    want="installed $(ops_manifest_get "$MANIFEST" kompakapps_base_version)"
+    if [ "$nb" = "$want" ]; then pass "kompakapps_base: $nb"; else fail "kompakapps_base: '$nb', diharapkan '$want'"; fi
 
     base_v="$(ops_psql "$RESTORE_DB" "SELECT latest_version FROM ir_module_module WHERE name = 'base'")"
     want="$(ops_manifest_get "$MANIFEST" odoo_base_version)"

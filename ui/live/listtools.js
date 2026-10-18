@@ -3,7 +3,7 @@
 // pada baris kelompok) dan Filter (pilih kolom lalu satu nilai atau lebih). Pengolahan terjadi pada baris yang sudah dimuat halaman, di samping
 // pencarian dan pilihan status dari server. Pilihan pengelompokan diingat per jenis tabel di peramban; filter berlaku untuk tampilan ini saja.
 // Tabel yang tidak ingin ikut diberi atribut data-list="off".
-const STORAGE_KEY = "nusara.listgroups";
+const STORAGE_KEY = "kompakapps.listgroups";
 const MONTHS = Array.from({ length: 12 }, (_, i) => new Intl.DateTimeFormat("id-ID", { month: "short" }).format(new Date(2026, i, 1)).replace(".", ""));
 const DATE_RE = /^(\d{1,2}) ([A-Za-z]+)\.? (\d{4})/;
 const EMPTY = "(Kosong)";

@@ -1,5 +1,5 @@
 # Prototipe UI lama (hasil generate dan generate_forms.py) dikecualikan; semuanya diganti di Fase 2.
-exclude: ^(forms/|index\.html$|Business_Form_Template\.html$|nusara_erp_system\.html$|generate_forms\.py$)
+exclude: ^(forms/|index\.html$|Business_Form_Template\.html$|kompakapps_system\.html$|generate_forms\.py$)
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0

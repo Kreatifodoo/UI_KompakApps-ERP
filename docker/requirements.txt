@@ -1,4 +1,4 @@
-# Dependensi Python tambahan untuk modul OCA yang dipasang di Nusara.
+# Dependensi Python tambahan untuk modul OCA yang dipasang di KompakApps.
 # Sengaja kosong: modul yang dipakai saat ini (purchase_request, auditlog, mis_builder, dll.)
 # tidak butuh paket di luar bawaan Odoo. Tambahkan di sini hanya jika sebuah modul memintanya,
 # lihat requirements.txt di repo OCA terkait (folder oca/<repo>/).

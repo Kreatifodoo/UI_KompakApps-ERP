@@ -29,11 +29,11 @@ Situs tidak menjelaskan sistem internal, jadi bagian di bawah adalah **hipotesis
 Jalankan berurutan pada basis data demo (aman diulang; setiap skrip berhenti sendiri bila datanya sudah ada). Detail perintah ada di `docs/PRESALES_DEMO.md`.
 
 ```bash
-docker compose run --rm -T --no-deps odoo odoo shell -d nusara --no-http < scripts/setup_tax_id.py
-docker compose run --rm -T --no-deps odoo odoo shell -d nusara --no-http < scripts/seed_presales.py
-docker compose run --rm -T --no-deps odoo odoo shell -d nusara --no-http < scripts/seed_presales_extra.py
-docker compose run --rm -T --no-deps odoo odoo shell -d nusara --no-http < scripts/seed_presales_assets.py
-docker compose run --rm -T --no-deps odoo odoo shell -d nusara --no-http < scripts/seed_presales_proline.py
+docker compose run --rm -T --no-deps odoo odoo shell -d kompakapps --no-http < scripts/setup_tax_id.py
+docker compose run --rm -T --no-deps odoo odoo shell -d kompakapps --no-http < scripts/seed_presales.py
+docker compose run --rm -T --no-deps odoo odoo shell -d kompakapps --no-http < scripts/seed_presales_extra.py
+docker compose run --rm -T --no-deps odoo odoo shell -d kompakapps --no-http < scripts/seed_presales_assets.py
+docker compose run --rm -T --no-deps odoo odoo shell -d kompakapps --no-http < scripts/seed_presales_proline.py
 ```
 
 `seed_presales_proline.py` adalah lapisan khusus PROLINE: perusahaan demo **PROLINE (Demo)** dengan gudang di Jababeka, 7 kategori produk per lini (penarikan stok FEFO), 24 produk (instrumen ber-nomor seri; reagen, kalibrator, dan tes cepat ber-lot dengan tanggal kedaluwarsa), daftar harga **e-Katalog INAPROC** dan **Harga Distributor**, dua tim penjualan, tag CRM, rak dingin 2-8C, enam pelanggan dan lima pemasok rekaan, lalu transaksi yang dibahas di bawah.
