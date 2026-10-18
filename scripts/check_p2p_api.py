@@ -3611,7 +3611,7 @@ def check_journal_entry_create(api, vendor):
 
 
 def check_bank_match_docs(api, vendor):
-    """Rekonsiliasi bank dengan faktur, tagihan, dan baris jurnal entry (ui/live/pages/bank.js, D63): satu mutasi untuk satu atau banyak dokumen, pelunasan sebagian
+    """Rekonsiliasi bank dengan faktur, tagihan, dan baris jurnal entry (ui/live/pages/bank.js, D64): satu mutasi untuk satu atau banyak dokumen, pelunasan sebagian
     oleh beberapa mutasi, selisih ke akun (alokasi dinaikkan ke sisa penuh), dan baris jurnal entry manual. Urutan panggilan sama dengan UI."""
     step("Rekonsiliasi bank: faktur, tagihan, banyak dokumen, sebagian, selisih ke akun, jurnal entry")
     today = datetime.date.today().isoformat()
