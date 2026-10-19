@@ -40,6 +40,8 @@ const page = createMasterPage({
     { key: "department_id", label: "Departemen", type: "m2o", optionsOf: (refs) => refs.departments },
     { key: "parent_id", label: "Atasan", type: "m2o", optionsOf: (refs) => refs.employees },
     { key: "user_id", label: "Pengguna Terkait", type: "m2o", optionsOf: (refs) => refs.users, hint: "Pengguna ini bisa check in/out dan mengajukan cuti atas namanya." },
+    { key: "leave_manager_id", label: "Penyetuju Cuti", type: "m2o", optionsOf: (refs) => refs.users, hint: "Bila kosong, atasan langsung atau petugas HR yang menyetujui." },
+    { key: "expense_manager_id", label: "Penyetuju Biaya", type: "m2o", optionsOf: (refs) => refs.users, hint: "Bila kosong, biaya yang diajukan langsung berstatus Disetujui." },
     { key: "employee_type", label: "Jenis Karyawan", type: "select", options: EMPLOYEE_TYPES },
     { key: "work_email", label: "Email Kerja", type: "text" },
     { key: "work_phone", label: "Telepon Kerja", type: "text" },

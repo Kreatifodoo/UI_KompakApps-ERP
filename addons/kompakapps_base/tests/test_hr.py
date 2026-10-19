@@ -1,6 +1,8 @@
 import datetime
 
-from odoo.exceptions import AccessError, ValidationError
+from odoo import SUPERUSER_ID
+from odoo.addons.account.tests.common import AccountTestInvoicingCommon
+from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.tests import TransactionCase, tagged
 
 
@@ -132,3 +134,89 @@ class TestTimeOff(TransactionCase):
                     "request_date_to": datetime.date(2026, 11, 9),
                 }
             )
+
+
+@tagged("post_install", "-at_install", "kompakapps")
+class TestExpenses(AccountTestInvoicingCommon):
+    """Expenses (D83): biaya dibayar karyawan dari draft sampai dibayar, dengan akun biaya dan pajak COA Indonesia, serta penolakan."""
+
+    @classmethod
+    @AccountTestInvoicingCommon.setup_country("id")
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.company = cls.company_data["company"]
+        # pengguna uji akuntansi tidak punya hak HR, dan perusahaan uji berbeda dari perusahaan utama
+        cls.env = cls.env(user=SUPERUSER_ID, context={"allowed_company_ids": cls.company.ids})
+        cls.employee = cls.env["hr.employee"].create({"name": "Karyawan Biaya Uji", "company_id": cls.company.id})
+        cls.category = cls.env["product.product"].create({"name": "Makan Uji", "can_be_expensed": True, "standard_price": 0.0})
+        cls.expense_account = cls.env["account.account"].search(
+            [("account_type", "=", "expense"), ("company_ids", "in", cls.company.id), ("code", "=like", "6%")], limit=1
+        )
+        assert cls.expense_account, "COA l10n_id tidak punya akun beban 6xxxxxxx"
+        cls.tax = cls.env["account.tax"].search(
+            [("type_tax_use", "=", "purchase"), ("amount", "=", 12.0), ("amount_type", "=", "percent"), ("company_id", "=", cls.company.id)], limit=1
+        )
+        assert cls.tax, "pajak pembelian 12% tidak ada"
+
+    def _expense(self, **extra):
+        return self.env["hr.expense"].create(
+            {
+                "name": "Makan siang klien",
+                "employee_id": self.employee.id,
+                "product_id": self.category.id,
+                "total_amount_currency": 111_000.0,
+                "account_id": self.expense_account.id,
+                "tax_ids": [(6, 0, self.tax.ids)],
+                "payment_mode": "own_account",
+                **extra,
+            }
+        )
+
+    def test_tax_included_split(self):
+        expense = self._expense()
+        self.assertEqual(expense.state, "draft")
+        self.assertAlmostEqual(expense.total_amount, 111_000.0, places=1)
+        self.assertAlmostEqual(expense.untaxed_amount, 99_107.14, places=1)
+        self.assertAlmostEqual(expense.tax_amount, 11_892.86, places=1)
+
+    def test_employee_paid_flow_posts_receipt_to_payable(self):
+        expense = self._expense()
+        expense.action_submit()
+        self.assertIn(expense.state, ("submitted", "approved"))
+        if expense.state == "submitted":
+            expense.action_approve()
+        self.assertEqual(expense.state, "approved")
+        wizard = self.env["hr.expense.post.wizard"].with_context(active_ids=expense.ids, validate_analytic=True).create({})
+        wizard.action_post_entry()
+        self.assertEqual(expense.state, "posted")
+        move = expense.account_move_id
+        self.assertEqual(move.state, "posted")
+        debit = move.line_ids.filtered(lambda line: line.debit)
+        credit = move.line_ids.filtered(lambda line: line.credit)
+        self.assertIn(self.expense_account, debit.account_id)
+        self.assertAlmostEqual(sum(debit.mapped("debit")), 111_000.0, places=1)
+        self.assertEqual(credit.account_id.account_type, "liability_payable")
+        self.assertEqual(credit.partner_id, self.employee.work_contact_id)
+        context = {"active_model": "account.move", "active_ids": move.ids}
+        register = self.env["account.payment.register"].with_context(**context).create({})
+        register.action_create_payments()
+        self.assertEqual(move.payment_state, "paid")
+        self.assertEqual(expense.state, "paid")
+
+    def test_refuse_and_reset(self):
+        expense = self._expense()
+        expense.action_submit()
+        if expense.state == "approved":
+            expense.action_reset()
+            expense.manager_id = self.env.user
+            expense.action_submit()
+        wizard = self.env["hr.expense.refuse.wizard"].with_context(active_ids=expense.ids).create({"reason": "Tanpa struk"})
+        wizard.action_refuse()
+        self.assertEqual(expense.state, "refused")
+        expense.action_reset()
+        self.assertEqual(expense.state, "draft")
+
+    def test_cannot_post_unapproved(self):
+        expense = self._expense()
+        with self.assertRaises(UserError):
+            expense.action_post()
