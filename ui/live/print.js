@@ -3,6 +3,7 @@
 // logo (bila bukan logo bawaan), nama, alamat, NPWP, kontak, tagline, dan footer. Dokumen yang punya bentuk struk (pos.order) bisa dicetak
 // di kertas A4 atau lebar struk 80 mm; pilihannya ada di pratinjau.
 import { qrSvg } from "./qr.js";
+import { analyticSummary, preloadAnalytic } from "./analyticpick.js";
 import { button, call, ctx, dateText, dateTimeText, esc, guarded, money, openModal, plain } from "./common.js";
 
 const num = (n, currency) => {
@@ -36,6 +37,15 @@ const taxText = (row, names, key = "tax_ids") => (row[key] ?? []).map((id) => na
 const lineNote = (r) => r.display_type === "line_section" || r.display_type === "line_note";
 const lineRow = (r, cells) => (lineNote(r) ? { section: r.display_type === "line_section", note: r.name } : { cells });
 
+/** Kolom "Analitik" (D39) di posisi `at`: hanya ditambahkan bila ada baris yang punya distribusi, jadi dokumen tanpa analitik tetap sama. `lines` = baris sumber dengan urutan yang sama dengan `doc.rows`. */
+async function withAnalytic(doc, lines, at) {
+  if (!lines.some((r) => r.analytic_distribution && Object.keys(r.analytic_distribution).length)) return doc;
+  await preloadAnalytic();
+  doc.columns.splice(at, 0, ["Analitik", ""]);
+  doc.rows.forEach((row, i) => row.cells?.splice(at, 0, analyticSummary(lines[i].analytic_distribution)));
+  return doc;
+}
+
 /* ---------- Pembentuk dokumen per model ---------- */
 
 const BUILDERS = {
@@ -46,12 +56,12 @@ const BUILDERS = {
     });
     const lines = await call("purchase.order.line", "search_read", {
       domain: [["order_id", "=", id]],
-      fields: ["display_type", "name", "product_qty", "product_uom_id", "price_unit", "tax_ids", "price_subtotal"],
+      fields: ["display_type", "name", "product_qty", "product_uom_id", "price_unit", "tax_ids", "price_subtotal", "analytic_distribution"],
       order: "sequence, id",
     });
     const taxes = await taxNames(lines);
     const cur = o.currency_id?.[1];
-    return {
+    return withAnalytic({
       title: ["draft", "sent", "to approve", "cancel"].includes(o.state) ? "Request for Quotation" : "Purchase Order",
       number: o.name,
       draft: ["draft", "cancel"].includes(o.state),
@@ -62,7 +72,7 @@ const BUILDERS = {
       totals: [["Subtotal", num(o.amount_untaxed, cur)], ["Pajak", num(o.amount_tax, cur)], ["Total", num(o.amount_total, cur), true]],
       notes: [["Catatan", rich(o.note)]],
       signatures: ["Dibuat oleh", "Disetujui oleh", "Vendor"],
-    };
+    }, lines, 5);
   },
 
   async "sale.order"(id) {
@@ -72,14 +82,14 @@ const BUILDERS = {
     });
     const lines = await call("sale.order.line", "search_read", {
       domain: [["order_id", "=", id]],
-      fields: ["display_type", "name", "product_uom_qty", "product_uom_id", "price_unit", "discount", "tax_ids", "price_subtotal"],
+      fields: ["display_type", "name", "product_uom_qty", "product_uom_id", "price_unit", "discount", "tax_ids", "price_subtotal", "analytic_distribution"],
       order: "sequence, id",
     });
     const taxes = await taxNames(lines);
     const cur = o.currency_id?.[1];
     const parties = [{ label: "Pelanggan", block: await partnerBlock(o.partner_id?.[0]) }];
     if (o.partner_shipping_id?.[0] && o.partner_shipping_id[0] !== o.partner_id?.[0]) parties.push({ label: "Alamat Pengiriman", block: await partnerBlock(o.partner_shipping_id[0]) });
-    return {
+    return withAnalytic({
       title: ["draft", "sent", "cancel"].includes(o.state) ? "Quotation" : "Sales Order",
       number: o.name,
       draft: ["draft", "cancel"].includes(o.state),
@@ -90,7 +100,7 @@ const BUILDERS = {
       totals: [["Subtotal", num(o.amount_untaxed, cur)], ["Pajak", num(o.amount_tax, cur)], ["Total", num(o.amount_total, cur), true]],
       notes: [["Syarat dan Catatan", rich(o.note)]],
       signatures: ["Hormat kami", "Pelanggan"],
-    };
+    }, lines, 6);
   },
 
   async "account.move"(id) {
@@ -100,7 +110,7 @@ const BUILDERS = {
     });
     const lines = await call("account.move.line", "search_read", {
       domain: [["move_id", "=", id], ["display_type", "in", ["product", "line_section", "line_note"]]],
-      fields: ["display_type", "name", "quantity", "product_uom_id", "price_unit", "discount", "tax_ids", "price_subtotal"],
+      fields: ["display_type", "name", "quantity", "product_uom_id", "price_unit", "discount", "tax_ids", "price_subtotal", "analytic_distribution"],
       order: "sequence, id",
     });
     const taxes = await taxNames(lines);
@@ -110,7 +120,7 @@ const BUILDERS = {
     const paid = m.amount_total - m.amount_residual;
     const totals = [["Subtotal", num(m.amount_untaxed, cur)], ["Pajak", num(m.amount_tax, cur)], ["Total", num(m.amount_total, cur), true]];
     if (m.state === "posted" && Math.abs(paid) > 0.004) totals.push(["Sudah dibayar", num(paid, cur)], ["Sisa tagihan", num(m.amount_residual, cur), true]);
-    return {
+    return withAnalytic({
       title,
       number: m.name && m.name !== "/" ? m.name : "Draft",
       draft: m.state !== "posted",
@@ -121,7 +131,7 @@ const BUILDERS = {
       totals,
       notes: [["Catatan", rich(m.narration)]],
       signatures: sales ? ["Hormat kami", "Penerima"] : [],
-    };
+    }, lines, 6);
   },
 
   /** Jurnal entry manual (D50): baris jurnal dengan akun, mitra, label, debit, dan kredit. */
@@ -129,13 +139,13 @@ const BUILDERS = {
     const [m] = await call("account.move", "read", { ids: [id], fields: ["name", "state", "date", "ref", "journal_id", "narration", "currency_id"] });
     const lines = await call("account.move.line", "search_read", {
       domain: [["move_id", "=", id]],
-      fields: ["account_id", "name", "partner_id", "debit", "credit"],
+      fields: ["account_id", "name", "partner_id", "debit", "credit", "analytic_distribution"],
       order: "sequence, id",
     });
     const cur = m.currency_id?.[1];
     const number = m.name && m.name !== "/" ? m.name : "Draft";
     const state = { draft: "Draft", posted: "Terposting", cancel: "Dibatalkan" }[m.state] ?? m.state;
-    return {
+    return withAnalytic({
       title: "Jurnal Entry",
       number,
       draft: m.state !== "posted",
@@ -146,7 +156,7 @@ const BUILDERS = {
       totals: [["Total Debit", num(lines.reduce((s, r) => s + r.debit, 0), cur)], ["Total Kredit", num(lines.reduce((s, r) => s + r.credit, 0), cur), true]],
       notes: [["Catatan", rich(m.narration)]],
       signatures: ["Dibuat oleh", "Disetujui oleh"],
-    };
+    }, lines, 3);
   },
 
   async "stock.picking"(id) {
@@ -298,8 +308,8 @@ const BUILDERS = {
 
   async "purchase.request"(id) {
     const [r] = await call("purchase.request", "read", { ids: [id], fields: ["name", "state", "requested_by", "assigned_to", "date_start", "origin", "description"] });
-    const lines = await call("purchase.request.line", "search_read", { domain: [["request_id", "=", id]], fields: ["name", "product_id", "product_qty", "product_uom_id", "date_required", "estimated_cost"], order: "id" });
-    return {
+    const lines = await call("purchase.request.line", "search_read", { domain: [["request_id", "=", id]], fields: ["name", "product_id", "product_qty", "product_uom_id", "date_required", "estimated_cost", "analytic_distribution"], order: "id" });
+    return withAnalytic({
       title: "Purchase Request",
       number: r.name,
       draft: ["draft", "rejected"].includes(r.state),
@@ -310,7 +320,7 @@ const BUILDERS = {
       totals: [],
       notes: [["Keterangan", text(r.description)]],
       signatures: ["Pemohon", "Disetujui oleh", "Bagian Pembelian"],
-    };
+    }, lines, 4);
   },
 };
 
