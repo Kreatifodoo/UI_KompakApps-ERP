@@ -3248,9 +3248,9 @@ def check_valuation_scope(api, vendor):
     check(api.call("stock.picking", "button_validate", ids=[lot_picking]) is True, "penerimaan 10 unit dua lot (6 dan 4) divalidasi")
     horizon = (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
     lots = api.call("stock.lot", "search_read", domain=[["product_id", "=", lot_product]], fields=["name", "product_qty", "avg_cost", "total_value"], order="name", context={"to_date": horizon})
-    check([(l["product_qty"], l["total_value"]) for l in lots] == [(6.0, 6000.0), (4.0, 4000.0)], "nilai per lot: 6 unit Rp 6.000 dan 4 unit Rp 4.000")
+    check([(lot["product_qty"], lot["total_value"]) for lot in lots] == [(6.0, 6000.0), (4.0, 4000.0)], "nilai per lot: 6 unit Rp 6.000 dan 4 unit Rp 4.000")
     total = api.call("product.product", "read", ids=[lot_product], fields=["total_value"], context={"to_date": horizon})[0]["total_value"]
-    check(abs(total - sum(l["total_value"] for l in lots)) < 0.005, "jumlah nilai lot sama dengan nilai produk")
+    check(abs(total - sum(lot["total_value"] for lot in lots)) < 0.005, "jumlah nilai lot sama dengan nilai produk")
 
     # zona waktu: PO bertanggal 30 September 20:00 UTC = 1 Oktober 03:00 di Asia/Jakarta
     [po] = api.call("purchase.order", "create", vals_list=[{"partner_id": vendor["id"], "date_order": "2025-09-30 20:00:00", "order_line": [[0, 0, {"product_id": product, "product_qty": 1, "price_unit": 1.0}]]}])
