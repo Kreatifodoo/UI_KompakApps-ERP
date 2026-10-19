@@ -75,16 +75,38 @@ async function renderList(query) {
     );
 }
 
+const PICKING_ROUTE = { incoming: ["receipt", "Penerimaan"], outgoing: ["delivery", "Pengiriman"], internal: ["transfer", "Transfer"] };
+
 /** Dokumen yang menghasilkan jurnal ini, dicari dari sisi dokumennya karena account.move tidak menyimpannya langsung. */
 async function sourceLinks(move) {
   const links = [];
   if (move.move_type === "in_invoice") links.push({ label: `Tagihan Vendor ${move.name}`, href: `#/bill/${move.id}`, icon: "fa-file-invoice" });
   const [payments, stock] = await Promise.all([
     searchRead("account.payment", [["move_id", "=", move.id]], ["name"], { limit: 1 }),
-    searchRead("stock.move", [["account_move_id", "=", move.id]], ["picking_id"], { limit: 1 }),
+    searchRead("stock.move", [["account_move_id", "=", move.id]], ["picking_id", "picking_code", "scrap_id", "production_id", "raw_material_production_id", "reference"], { limit: 3 }),
   ]);
   for (const p of payments) links.push({ label: `Pembayaran ${p.name}`, href: `#/payment/${p.id}`, icon: "fa-money-bill" });
-  for (const s of stock) if (s.picking_id) links.push({ label: `Penerimaan ${s.picking_id[1]}`, href: `#/receipt/${s.picking_id[0]}`, icon: "fa-boxes" });
+  const seen = new Set();
+  const add = (key, link) => {
+    if (!seen.has(key)) links.push(link);
+    seen.add(key);
+  };
+  for (const s of stock) {
+    const mo = s.production_id ?? s.raw_material_production_id;
+    if (s.picking_id) {
+      const [route, label] = PICKING_ROUTE[s.picking_code] ?? PICKING_ROUTE.incoming;
+      add(`p${s.picking_id[0]}`, { label: `${label} ${s.picking_id[1]}`, href: `#/${route}/${s.picking_id[0]}`, icon: "fa-boxes" });
+    } else if (s.scrap_id) add(`s${s.scrap_id[0]}`, { label: `Scrap ${s.scrap_id[1]}`, href: `#/scrap/${s.scrap_id[0]}`, icon: "fa-trash" });
+    else if (mo) add(`m${mo[0]}`, { label: `Manufacturing Order ${mo[1]}`, href: `#/mo/${mo[0]}`, icon: "fa-industry" });
+    else add("adjust", { label: "Penyesuaian stok (pergerakan stok)", href: "#/moves", icon: "fa-boxes" });
+  }
+  // koreksi selisih harga tagihan terhadap harga PO (Q49): ref "Koreksi nilai <nomor penerimaan>", tidak tertaut langsung ke pergerakan stok
+  const fix = move.move_type === "entry" && /^Koreksi nilai (.+)$/.exec(move.ref ?? "");
+  if (fix && !links.length) {
+    const [picking] = await searchRead("stock.picking", [["name", "=", fix[1]]], ["name", "picking_type_code"], { limit: 1 });
+    const [route, label] = PICKING_ROUTE[picking?.picking_type_code] ?? PICKING_ROUTE.incoming;
+    links.push(picking ? { label: `Koreksi harga ${label} ${picking.name}`, href: `#/${route}/${picking.id}`, icon: "fa-boxes" } : { label: "Koreksi nilai penerimaan", href: "#/moves", icon: "fa-boxes" });
+  }
   return links;
 }
 

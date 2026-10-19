@@ -92,8 +92,8 @@ export async function render(sub, query) {
       : "") +
     `<div class="grid md:grid-cols-3 gap-4 mb-4">
       ${card("Nilai stok (barang di gudang)", esc(money(totalValue)), `${groups.size} ${mode === "report" ? "produk" : "lokasi"}, biaya rata-rata`)}
-      ${card("Saldo akun Persediaan (buku besar)", esc(money(gl.balance)), "dijurnal saat tagihan dan faktur diposting")}
-      ${card("Selisih stok terhadap buku besar", esc(money(difference)), Math.abs(difference) < 0.5 ? "sama" : "wajar bila ada barang diterima yang belum ditagih, atau penyesuaian stok dan scrap (Sistem tidak menjurnalnya otomatis)", Math.abs(difference) < 0.5 ? "text-emerald-700" : "text-amber-700")}
+      ${card("Saldo akun Persediaan (buku besar)", esc(money(gl.balance)), "jurnal terposting pada akun persediaan")}
+      ${card("Selisih stok terhadap buku besar", esc(money(difference)), Math.abs(difference) < 0.5 ? "sama" : "wajar untuk transaksi yang belum dijurnal pada saat terjadinya (sebelum jurnal per transaksi aktif, atau biaya standar); lihat Inventory Valuation per akun", Math.abs(difference) < 0.5 ? "text-emerald-700" : "text-amber-700")}
     </div>
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
       <table class="w-full text-left"><thead class="bg-gray-50 border-b border-gray-200"><tr>${[def.title, "Jumlah", "Terpesan", "Tersedia", "Nilai"]

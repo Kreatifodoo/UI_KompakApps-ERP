@@ -23,15 +23,19 @@ export const RECEIPT = {
   route: "receipt", code: "incoming", returnRoute: "delivery", title: "Penerimaan Barang", noun: "Penerimaan", partner: "Diterima dari", qty: "Jumlah Diterima", qtyLabel: "diterima",
   source: { field: "purchase_id", route: "po", label: "Purchase Order", icon: "fa-shopping-cart", param: "po" },
   empty: "Belum ada penerimaan barang. Penerimaan terbentuk otomatis saat Purchase Order dikonfirmasi.",
-  valuedNote: (pk) =>
-    `Nilai persediaan sudah tercatat pada pergerakan stok. Odoo tidak membuat jurnal saat barang diterima; jurnal persediaan atau biaya tercipta saat tagihan vendor diposting${pk.purchase_id ? ` (<a href="#/po/${pk.purchase_id[0]}" class="underline">${esc(pk.purchase_id[1])}</a>)` : ""}.`,
+  valuedNote: (pk, journaled) =>
+    journaled
+      ? `Barang diterima dijurnal saat ini juga: Dr Persediaan, Cr Barang Diterima Belum Ditagih, dengan akun dari Product Category. Tagihan vendor${pk.purchase_id ? ` (<a href="#/po/${pk.purchase_id[0]}" class="underline">${esc(pk.purchase_id[1])}</a>)` : ""} membersihkan akun perantara itu.`
+      : `Nilai persediaan sudah tercatat pada pergerakan stok. Penerimaan ini tidak dijurnal saat barang diterima (biaya standar, atau diterima sebelum jurnal per transaksi aktif); jurnal persediaan atau biaya tercipta saat tagihan vendor diposting${pk.purchase_id ? ` (<a href="#/po/${pk.purchase_id[0]}" class="underline">${esc(pk.purchase_id[1])}</a>)` : ""}.`,
 };
 export const DELIVERY = {
   route: "delivery", code: "outgoing", returnRoute: "receipt", title: "Pengiriman Barang", noun: "Pengiriman", partner: "Dikirim ke", qty: "Jumlah Dikirim", qtyLabel: "dikirim",
   source: { field: "sale_id", route: "sale", label: "Sales Order", icon: "fa-cart-shopping", param: "so" },
   empty: "Belum ada pengiriman barang. Pengiriman terbentuk otomatis saat Sales Order dikonfirmasi.",
-  valuedNote: (pk) =>
-    `Barang sudah keluar dari gudang dan nilainya tercatat pada pergerakan stok. Odoo tidak membuat jurnal saat pengiriman; harga pokok (Dr HPP, Cr Persediaan) tercipta saat faktur pelanggan diposting${pk.sale_id ? ` (<a href="#/sale/${pk.sale_id[0]}" class="underline">${esc(pk.sale_id[1])}</a>)` : ""}.`,
+  valuedNote: (pk, journaled) =>
+    journaled
+      ? `Barang keluar dijurnal saat ini juga: Dr Barang Terkirim Belum Ditagih, Cr Persediaan, dengan akun dari Product Category. Faktur pelanggan${pk.sale_id ? ` (<a href="#/sale/${pk.sale_id[0]}" class="underline">${esc(pk.sale_id[1])}</a>)` : ""} mencatat harga pokok (Dr HPP) dan membersihkan akun perantara itu.`
+      : `Barang sudah keluar dari gudang dan nilainya tercatat pada pergerakan stok. Pengiriman ini tidak dijurnal saat barang keluar (biaya standar, kasir, atau dikirim sebelum jurnal per transaksi aktif); harga pokok (Dr HPP, Cr Persediaan) tercipta saat faktur pelanggan diposting${pk.sale_id ? ` (<a href="#/sale/${pk.sale_id[0]}" class="underline">${esc(pk.sale_id[1])}</a>)` : ""}.`,
 };
 
 /** Halaman tempat dokumen dibuka menurut jenis tipe operasinya (rute suplai antar gudang dan multi-langkah mencampur jenis). */
@@ -152,7 +156,7 @@ export function createPickingPage(config) {
     moves = await searchRead(
       "stock.move",
       [["picking_id", "=", id]],
-      ["product_id", "description_picking", "product_uom_qty", "quantity", "product_uom", "picked", "state", "value", "has_tracking", "location_id", "location_dest_id", "move_orig_ids", "move_dest_ids"],
+      ["product_id", "description_picking", "product_uom_qty", "quantity", "product_uom", "picked", "state", "value", "has_tracking", "location_id", "location_dest_id", "move_orig_ids", "move_dest_ids", "account_move_id"],
       { order: "id" },
     );
     const chain = await chainSteps(id, moves);
@@ -220,7 +224,7 @@ export function createPickingPage(config) {
           <tbody class="divide-y divide-gray-100">${rows}</tbody></table>
       </section>
       ${chain}
-      ${valued && config.valuedNote ? `<p class="mt-3 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3">${config.valuedNote(pk)}</p>` : ""}
+      ${valued && config.valuedNote ? `<p class="mt-3 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3">${config.valuedNote(pk, moves.some((m) => m.account_move_id))}</p>` : ""}
       ${journal}
       ${chatterHtml("stock.picking", pk.id)}`;
     loadMessages("stock.picking", pk.id);

@@ -7,13 +7,15 @@ memasang kompakapps_base. Aman dijalankan ulang: data yang sudah ada tidak digan
     docker compose run --rm -T odoo odoo shell -d kompakapps --no-http < scripts/seed_demo.py
 
 Skrip ini juga menerapkan setup Indonesia (lihat res.company.kompakapps_setup_indonesia), yang
-menolak berjalan bila perusahaan sudah punya transaksi akuntansi, dan valuasi persediaan
-perpetual dengan biaya rata-rata (res.company.kompakapps_setup_inventory_valuation).
+menolak berjalan bila perusahaan sudah punya transaksi akuntansi, valuasi persediaan
+perpetual dengan biaya rata-rata (res.company.kompakapps_setup_inventory_valuation), dan jurnal
+pada setiap transaksi inventori (res.company.kompakapps_setup_stock_journals).
 """
 
 company = env["res.company"].browse(1)
 company.kompakapps_setup_indonesia()
 company.kompakapps_setup_inventory_valuation()
+company.kompakapps_setup_stock_journals()
 goods = env.ref("product.product_category_goods")
 
 tax = env["account.tax"].search(

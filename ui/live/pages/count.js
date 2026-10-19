@@ -1,5 +1,5 @@
 // Physical Inventory (stock.quant mode inventaris): isi jumlah hasil hitung per produk dan lokasi, lalu terapkan
-// untuk membuat penyesuaian stok. Penyesuaian dinilai pada pergerakan stok (Odoo 19 tidak menjurnalnya otomatis).
+// untuk membuat penyesuaian stok. Penyesuaian dinilai pada pergerakan stok dan dijurnal ke akun Selisih Persediaan bila lokasi Inventory adjustment punya akun valuasi (D69).
 import {
   PRODUCT_PAGE, searchProducts,
   INPUT, app, call, esc, guarded, pageHeader, registerLookup, runLookup, searchBox, searchRead, selectOptions, toast,

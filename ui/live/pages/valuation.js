@@ -539,7 +539,7 @@ async function viewAccount(query) {
     empty: "Belum ada kategori dengan akun persediaan.",
     subtitle: `Per ${dateText(date)}`,
     meta: [["Tanggal", dateText(date)]],
-    note: "Selisih wajar bila ada barang diterima yang belum ditagih (Odoo menjurnal persediaan saat tagihan diposting) atau penyesuaian stok dan scrap (Sistem tidak menjurnalnya otomatis).",
+    note: "Selisih wajar untuk transaksi yang tidak dijurnal pada saat terjadinya: yang terjadi sebelum jurnal per transaksi aktif, produk berbiaya standar, atau lokasi opname, scrap, dan produksi yang belum punya akun valuasi.",
     file: `inventory-valuation-akun-${date}`,
   };
   const difference = stockTotal - glTotal;
@@ -554,7 +554,7 @@ async function viewAccount(query) {
       </div>` +
       tableHtml(m) +
       `<div class="text-xs text-gray-600 mt-3 space-y-1">
-        <p><b>Mengapa selisih terjadi.</b> (1) Barang yang sudah diterima tetapi belum ditagih sudah masuk nilai stok, sedangkan jurnalnya baru terbentuk saat tagihan vendor diposting. (2) Penyesuaian stok dan scrap hanya tercatat pada nilai pergerakan stok; Sistem tidak membuat jurnalnya pada valuasi perpetual ini. (3) Jurnal manual atau koreksi langsung pada akun persediaan ikut dalam saldo buku besar. (4) Selisih pembulatan biaya rata-rata.</p>
+        <p><b>Mengapa selisih terjadi.</b> (1) Transaksi yang terjadi sebelum jurnal per transaksi aktif: penerimaan dan pengiriman lama baru dijurnal saat tagihan atau faktur diposting, sedangkan nilainya sudah masuk stok. (2) Penyesuaian stok, scrap, dan produksi hanya tercatat pada nilai pergerakan stok bila lokasi Inventory adjustment, Scrap, atau Production belum punya akun valuasi. (3) Produk berbiaya standar dan kategori tanpa akun Barang Diterima atau Barang Terkirim tetap dijurnal saat tagihan atau faktur. (4) Jurnal manual atau koreksi langsung pada akun persediaan ikut dalam saldo buku besar. (5) Selisih pembulatan biaya rata-rata.</p>
         <p>Telusuri pergerakannya di ${link(`#/valuation/moves?state=adjust&from=2000-01-01&to=${date}`, "Rincian Pergerakan (penyesuaian dan scrap)", "text-indigo-700 underline")}. Klik kategori untuk melihat nilai per produk pada tanggal ini.</p>
       </div>`,
   };
