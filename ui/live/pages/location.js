@@ -60,7 +60,7 @@ async function renderForm(id) {
   removals = await referenceRemovals();
   let loc = null;
   if (id) {
-    loc = await readOne("stock.location", id, ["name", "complete_name", "usage", "location_id", "warehouse_id", "active", "removal_strategy_id"]);
+    loc = await readOne("stock.location", id, ["name", "complete_name", "usage", "location_id", "warehouse_id", "active", "removal_strategy_id", "replenish_location"]);
     if (!loc) {
       app.innerHTML = '<p class="text-sm text-rose-600">Lokasi tidak ditemukan.</p>';
       return;
@@ -68,9 +68,9 @@ async function renderForm(id) {
   }
   if (!form || form.id !== (loc?.id ?? null)) {
     const values = loc
-      ? { name: loc.name, usage: loc.usage, removal: loc.removal_strategy_id?.[0] ?? null, parent: loc.location_id ? { id: loc.location_id[0], display_name: loc.location_id[1] } : null }
-      : { name: "", usage: "internal", removal: null, parent: null };
-    form = { id: loc?.id ?? null, values, initial: loc ? { name: values.name, usage: values.usage, removal: values.removal, parent: values.parent?.id ?? null } : null };
+      ? { name: loc.name, usage: loc.usage, removal: loc.removal_strategy_id?.[0] ?? null, replenish: Boolean(loc.replenish_location), parent: loc.location_id ? { id: loc.location_id[0], display_name: loc.location_id[1] } : null }
+      : { name: "", usage: "internal", removal: null, replenish: false, parent: null };
+    form = { id: loc?.id ?? null, values, initial: loc ? { name: values.name, usage: values.usage, removal: values.removal, replenish: values.replenish, parent: values.parent?.id ?? null } : null };
   }
   const v = form.values;
   app.innerHTML = `
@@ -84,6 +84,7 @@ async function renderForm(id) {
       ${fieldBlock("Gudang", `<div class="py-2 text-sm font-medium text-gray-900">${esc(loc?.warehouse_id?.[1] ?? "Mengikuti lokasi induk")}</div>`)}
       ${fieldBlock("Strategi Pengeluaran", removalSelect(removals, v.removal, 'data-loc="removal"', "Mengikuti lokasi induk (bawaan: FIFO)"))}
       <p class="text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3 self-end" id="removal-note">${esc(removalHelp(v.removal))}</p>
+      ${`<label class="md:col-span-2 flex items-start gap-3 text-sm"><input type="checkbox" data-loc="replenish" ${v.replenish ? "checked" : ""} class="mt-1 rounded border-gray-300 text-indigo-600"><span><span class="font-medium text-gray-900">Lokasi pengisian ulang</span><span class="block text-xs text-gray-500">Replenishment membuatkan aturan manual otomatis untuk produk yang kekurangan stok di lokasi ini. Biasanya hanya Stock tiap gudang; lokasi induk dan anaknya tidak boleh sama-sama ditandai.</span></span></label>`}
     </section>
     <div class="flex gap-2 mt-4"><button data-action="save" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
       <a href="#/location" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a></div>`;
@@ -95,7 +96,7 @@ async function persist() {
   const vals = { name: v.name.trim(), usage: v.usage, location_id: v.parent?.id ?? false };
   const removal = v.removal ?? null;
   if (!form.id) {
-    const [id] = await call("stock.location", "create", { vals_list: [{ ...vals, location_id: v.parent?.id ?? undefined, ...(removal ? { removal_strategy_id: removal } : {}) }] });
+    const [id] = await call("stock.location", "create", { vals_list: [{ ...vals, location_id: v.parent?.id ?? undefined, ...(removal ? { removal_strategy_id: removal } : {}), ...(v.replenish ? { replenish_location: true } : {}) }] });
     return id;
   }
   const changed = {};
@@ -103,6 +104,7 @@ async function persist() {
   if (vals.usage !== form.initial.usage) changed.usage = vals.usage;
   if ((v.parent?.id ?? null) !== form.initial.parent) changed.location_id = v.parent?.id ?? false;
   if (removal !== form.initial.removal) changed.removal_strategy_id = removal ?? false;
+  if (v.replenish !== form.initial.replenish) changed.replenish_location = v.replenish;
   if (Object.keys(changed).length) await call("stock.location", "write", { ids: [form.id], vals: changed });
   return form.id;
 }
@@ -136,7 +138,8 @@ export function onInput(event, el) {
   if (el.dataset.loc === "removal") {
     form.values.removal = el.value ? Number(el.value) : null;
     document.querySelector("#removal-note").textContent = removalHelp(form.values.removal);
-  } else if (el.dataset.loc) form.values[el.dataset.loc] = el.value;
+  } else if (el.dataset.loc === "replenish") form.values.replenish = el.checked;
+  else if (el.dataset.loc) form.values[el.dataset.loc] = el.value;
   else if (el.dataset.lookup === "location-parent") {
     form.values.parent = null;
     runLookup(el, 250);

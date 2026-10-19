@@ -226,6 +226,7 @@ def main():
     check_inventory_valuation(api, vendor)
     check_valuation_scope(api, vendor)
     check_replenish_routes(api, vendor)
+    check_replenish_extras(api)
     check_bill_invoice_create(api, vendor)
     check_payment_receipt_create(api, vendor)
     check_journal_entry_create(api, vendor)
@@ -3477,6 +3478,47 @@ def check_replenish_routes(api, vendor):
     api.call("stock.warehouse", "write", ids=[wh2_id], vals={"active": False})
     check(not api.search("stock.warehouse", [["id", "=", wh2_id]], ["id"]), "gudang uji replenish diarsipkan")
     check(all(api.read("stock.picking", t, ["state"])["state"] == "cancel" for t in cleanup["picking"]), "transfer uji dibatalkan")
+
+
+def check_replenish_extras(api):
+    """Replenishment (ui/live/pages/replenish.js, orderpoint.js, location.js, D73): halaman dan pencarian aturan, tunda (snoozed_until), dan lokasi pengisian ulang
+    di luar Stock gudang yang ikut dibuatkan aturan manual otomatis."""
+    import random
+    from datetime import date, timedelta
+
+    step("Replenishment: halaman aturan, tunda, dan lokasi pengisian ulang")
+    tag = f"{random.randint(0, 99999):05d}"
+    warehouse = api.search("stock.warehouse", [], ["lot_stock_id", "view_location_id"], order="sequence, id", limit=1)[0]
+    stock = warehouse["lot_stock_id"][0]
+    products = api.call("product.product", "create", vals_list=[{"name": f"Q30 Aturan {tag} {i:02d}", "is_storable": True, "type": "consu"} for i in range(5)])
+    rules = api.call("stock.warehouse.orderpoint", "create", vals_list=[{"product_id": p, "location_id": stock, "warehouse_id": api.search("stock.warehouse", [], ["id"], order="sequence, id", limit=1)[0]["id"],
+                                                                     "product_min_qty": 5, "product_max_qty": 10, "trigger": "manual"} for p in products])
+    today = date.today()
+    visible = [["qty_to_order", ">", 0], "|", ["snoozed_until", "=", False], ["snoozed_until", "<=", today.isoformat()], ["product_id.name", "ilike", f"Q30 Aturan {tag}"]]
+    snoozed = [["qty_to_order", ">", 0], ["snoozed_until", ">", today.isoformat()], ["product_id.name", "ilike", f"Q30 Aturan {tag}"]]
+    count = lambda domain: api.call("stock.warehouse.orderpoint", "search_count", domain=domain)  # noqa: E731
+    check(count(visible) == 5 and count(snoozed) == 0, "lima aturan baru perlu dipesan dan tampil; belum ada yang ditunda")
+    first = api.search("stock.warehouse.orderpoint", visible, ["id"], order="id", limit=2)
+    second = api.search("stock.warehouse.orderpoint", visible, ["id"], order="id", limit=2, offset=2)
+    check(len(first) == 2 and len(second) == 2 and not {r["id"] for r in first} & {r["id"] for r in second}, "halaman 1 dan 2 (limit 2, offset 0 dan 2) tidak tumpang tindih")
+    api.call("stock.warehouse.orderpoint", "write", ids=[rules[0]], vals={"snoozed_until": (today + timedelta(days=7)).isoformat()})
+    check(count(visible) == 4 and count(snoozed) == 1, "aturan yang ditunda 7 hari hilang dari tampilan biasa dan muncul di tampilan yang ditunda")
+    api.call("stock.warehouse.orderpoint", "write", ids=[rules[0]], vals={"snoozed_until": False})
+    check(count(visible) == 5 and count(snoozed) == 0, "tunda dibatalkan: aturan kembali tampil")
+    api.call("stock.warehouse.orderpoint", "write", ids=[rules[1]], vals={"snoozed_until": (today - timedelta(days=1)).isoformat()})
+    check(count(visible) == 5, "tunda yang sudah lewat tidak menyembunyikan aturan")
+
+    # lokasi pengisian ulang tambahan: aturan manual dibuatkan untuk produk yang kekurangan stok di sana
+    [location] = api.call("stock.location", "create", vals_list=[{"name": f"Cadangan {tag}", "usage": "internal", "location_id": warehouse["view_location_id"][0], "replenish_location": True}])
+    check(api.read("stock.location", location, ["replenish_location"])["replenish_location"] is True, "lokasi internal bisa ditandai lokasi pengisian ulang")
+    [product] = api.call("product.product", "create", vals_list=[{"name": f"Q30 Cadangan {tag}", "is_storable": True, "type": "consu"}])
+    out = api.search("stock.picking.type", [["code", "=", "outgoing"]], ["default_location_dest_id"], limit=1)[0]
+    [picking] = api.call("stock.picking", "create", vals_list=[{"picking_type_id": out["id"], "location_id": location, "location_dest_id": out["default_location_dest_id"][0], "move_ids": [[0, 0, {
+        "product_id": product, "product_uom_qty": 5, "location_id": location, "location_dest_id": out["default_location_dest_id"][0]}]]}])
+    api.call("stock.picking", "action_confirm", ids=[picking])
+    api.call("stock.warehouse.orderpoint", "action_open_orderpoints")
+    made = api.search("stock.warehouse.orderpoint", [["product_id", "=", product]], ["location_id", "qty_to_order"])
+    check(len(made) == 1 and made[0]["location_id"][0] == location and made[0]["qty_to_order"] == 5, "kebutuhan 5 unit di lokasi pengisian ulang tambahan menghasilkan aturan manual di lokasi itu")
 
 
 def check_bill_invoice_create(api, vendor):
