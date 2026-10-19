@@ -1074,7 +1074,9 @@ def check_manufacturing(api):
     cost = api.read("product.product", cake["id"], ["avg_cost"])["avg_cost"]
     minutes = api.read("mrp.workorder", workorder, ["duration"])["duration"]
     expected_cost = (4 * 10_000.0 + 2 * 5_000.0 + minutes / 60 * 60_000.0) * 0.9 / 2
-    check(abs(cost - expected_cost) < 0.5, f"biaya barang jadi = (komponen + operasi {minutes:g} menit) dikurangi porsi sampingan 10% ({cost:,.0f} per unit)")
+    # `duration` work order dibulatkan ke 2 desimal menit (selisih sampai 0,005 menit = 5 rupiah biaya operasi, 2,25 per unit), jadi toleransi mengikutinya agar tidak gagal acak
+    tolerance = 0.5 + 0.005 / 60 * 60_000.0 * 0.9 / 2
+    check(abs(cost - expected_cost) < tolerance, f"biaya barang jadi = (komponen + operasi {minutes:g} menit) dikurangi porsi sampingan 10% ({cost:,.0f} per unit)")
     # produksi dijurnal saat selesai lewat akun Barang Dalam Proses pada lokasi Production (D69): komponen keluar, barang jadi dan produk sampingan masuk
     moves_done = api.search("stock.move", ["|", ["production_id", "=", mo], ["raw_material_production_id", "=", mo], ["state", "=", "done"]], ["account_move_id", "value"])
     entry_ids = sorted({m["account_move_id"][0] for m in moves_done if m["account_move_id"]})
