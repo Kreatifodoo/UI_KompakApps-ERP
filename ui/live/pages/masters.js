@@ -63,7 +63,7 @@ export function createMasterPage(config) {
       pageHeader(
         config.title,
         `${config.search?.length ? searchBox(text, "Cari...") : ""}${filterControls}${config.archive ? filterSelect(ARCHIVE_FILTERS, state) : ""}${config.headerExtra ?? ""}${(await config.headerAsync?.()) ?? ""}
-         <a href="#/${config.route}/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>${esc(config.newLabel)}</a>`,
+         ${config.noNew ? "" : `<a href="#/${config.route}/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>${esc(config.newLabel)}</a>`}`,
       ) +
       table(config.columns.map((c) => ({ label: c.label, right: c.right })), body, config.empty) +
       (config.listNote ? `<p class="text-xs text-gray-500 mt-3">${config.listNote}</p>` : "") +

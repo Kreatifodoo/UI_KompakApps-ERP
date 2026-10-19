@@ -171,7 +171,7 @@ const BUILDERS = {
 
   async hr() {
     const dayStart = utc(startOfDay());
-    const [employees, present, todayAtt, ot, leavePending, onLeave, expPending, expToPost] = await Promise.all([
+    const [employees, present, todayAtt, ot, leavePending, onLeave, expPending, expToPost, expiring] = await Promise.all([
       count("hr.employee", []),
       count("hr.attendance", [["check_out", "=", false]]),
       count("hr.attendance", [["check_in", ">=", dayStart]]),
@@ -180,13 +180,14 @@ const BUILDERS = {
       count("hr.leave", [["state", "=", "validate"], ["date_from", "<=", utc(new Date(startOfDay().getTime() + 86399000))], ["date_to", ">=", dayStart]]),
       count("hr.expense", [["state", "=", "submitted"]]),
       count("hr.expense", [["state", "=", "approved"]]),
+      count("hr.version", [["contract_date_end", ">=", ymd(now())], ["contract_date_end", "<=", ymd(new Date(now().getTime() + 30 * 86400000))]]).catch(() => 0),
     ]);
     const series = await monthly("hr.attendance", [], "check_in", "worked_hours");
     return {
       title: "Dashboard Human Resources",
       html: shortcuts([["Karyawan Baru", "#/employee/new", "fa-user-plus"], ["Kehadiran", "#/attendance", "fa-user-clock"], ["Ajukan Cuti", "#/timeoff/new", "fa-umbrella-beach"], ["Biaya Baru", "#/expense/new", "fa-receipt"], ["Departemen", "#/department", "fa-sitemap"]]) +
         `<div class="grid md:grid-cols-4 gap-4 mb-4">${tile("Karyawan aktif", employees, { href: "#/employee" })}${tile("Sedang hadir", present, { href: "#/attendance?period=open" })}${tile("Check in hari ini", todayAtt, { href: "#/attendance?period=today" })}${tile("Lembur menunggu persetujuan", ot, { href: "#/attendance?ot=to_approve", tone: ot ? "text-amber-700" : "" })}</div>` +
-        `<div class="grid md:grid-cols-4 gap-4 mb-4">${tile("Cuti menunggu persetujuan", leavePending, { href: "#/timeoff?status=confirm", tone: leavePending ? "text-amber-700" : "" })}${tile("Sedang cuti hari ini", onLeave, { href: "#/timeoff?status=validate" })}${tile("Biaya menunggu persetujuan", expPending, { href: "#/expense?status=submitted", tone: expPending ? "text-amber-700" : "" })}${tile("Biaya siap diposting", expToPost, { href: "#/expense?status=approved", tone: expToPost ? "text-amber-700" : "" })}</div>` +
+        `<div class="grid md:grid-cols-4 gap-4 mb-4">${tile("Cuti menunggu persetujuan", leavePending, { href: "#/timeoff?status=confirm", tone: leavePending ? "text-amber-700" : "" })}${tile("Sedang cuti hari ini", onLeave, { href: "#/timeoff?status=validate" })}${tile("Biaya menunggu persetujuan", expPending, { href: "#/expense?status=submitted", tone: expPending ? "text-amber-700" : "" })}${tile("Biaya siap diposting", expToPost, { href: "#/expense?status=approved", tone: expToPost ? "text-amber-700" : "" })}${tile("Kontrak berakhir 30 hari", expiring, { href: "#/contract?status=running", tone: expiring ? "text-amber-700" : "", hint: "versi pada kontrak yang segera berakhir" })}</div>` +
         `<div class="grid lg:grid-cols-2 gap-4">${bars("Jam Kerja per Bulan", series, { format: (v) => `${nf.format(v)} j` })}</div>`,
     };
   },
