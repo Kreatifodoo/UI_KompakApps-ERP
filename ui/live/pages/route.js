@@ -108,7 +108,7 @@ async function renderForm(id) {
   const tiles = route
     ? statTiles([
         { count: rules.length, label: "Aturan", icon: "fa-list-check", always: true },
-        { count: usage.products, label: "Produk memakai", icon: "fa-box" },
+        { count: usage.products, label: "Produk memakai", icon: "fa-box", href: `#/product?state=all&route=${route.id}` },
         { count: usage.categories, label: "Kategori memakai", icon: "fa-tags" },
         { count: usage.warehouses, label: "Gudang memakai", icon: "fa-warehouse" },
         { count: usage.moves, label: "Pergerakan stok", icon: "fa-right-left" },

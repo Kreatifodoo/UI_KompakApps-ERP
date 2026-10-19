@@ -7,6 +7,7 @@ import {
   referenceCategories, referenceJournals, referenceRemovals, removalNote, removalSelect, registerLookup, resetReferences, rowLink, runLookup,
   searchAccounts, searchBox, searchRead, selectOptions, statTiles, table, toast, button, chatterHtml, loadMessages,
 } from "../common.js";
+import { loadRouteChoices, routeBoxHtml, routeWarningsHtml } from "../routerules.js";
 
 const COSTING = { standard: "Harga Standar", fifo: "FIFO", average: "Rata-rata Tertimbang (AVCO)" };
 const VALUATION = { periodic: "Periodik (saat tutup periode)", real_time: "Perpetual (saat ditagih)" };
@@ -19,7 +20,7 @@ const ACCOUNT_FIELDS = {
   property_price_difference_account_id: { label: "Akun Selisih Harga", types: ["expense", "expense_direct_cost", "expense_other", "income_other"] },
 };
 const READ_FIELDS = [
-  "name", "parent_id", "property_cost_method", "property_valuation", "property_stock_journal", "removal_strategy_id", "product_count", ...Object.keys(ACCOUNT_FIELDS),
+  "name", "parent_id", "property_cost_method", "property_valuation", "property_stock_journal", "removal_strategy_id", "product_count", "route_ids", ...Object.keys(ACCOUNT_FIELDS),
 ];
 
 const REMOVAL_NONE = "Tanpa pilihan, strategi mengikuti pengaturan lokasi gudang, dan bila kosong memakai FIFO. Pilihan di kategori mengalahkan pengaturan lokasi.";
@@ -40,6 +41,7 @@ const normalize = (record) => ({
   property_valuation: record.property_valuation || "periodic",
   property_stock_journal: record.property_stock_journal?.[0] ?? null,
   removal_strategy_id: record.removal_strategy_id?.[0] ?? null,
+  route_ids: [...(record.route_ids ?? [])].sort((a, b) => a - b),
   ...Object.fromEntries(Object.keys(ACCOUNT_FIELDS).map((key) => [key, asRef(record[key])])),
 });
 const flat = (values) => ({ ...values, ...Object.fromEntries(Object.keys(ACCOUNT_FIELDS).map((key) => [key, values[key]?.id ?? null])) });
@@ -114,6 +116,13 @@ function journalNote(v) {
   return `<b>Perpetual saat ditagih:</b> tagihan vendor atas barang stok mendebit <b>${stock}</b>, bukan akun beban; faktur pelanggan mencatat HPP (Dr ${expense}, Cr ${stock}). Penerimaan dan pengiriman barang belum dijurnal. Untuk menjurnalnya saat terjadi, pilih metode FIFO atau rata-rata dan isi Akun Barang Diterima dan Barang Terkirim Belum Ditagih.`;
 }
 
+/** Rute yang bisa dipasang pada kategori dan rute turunan induknya (D81). */
+async function routeContext(v) {
+  const parent = v.parent_id ? await readOne("product.category", v.parent_id, ["total_route_ids"]) : null;
+  const inherited = parent?.total_route_ids ?? [];
+  return { choices: await loadRouteChoices("product_categ_selectable", v.route_ids, inherited), inherited };
+}
+
 async function renderForm(id) {
   closeLookup();
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
@@ -132,6 +141,7 @@ async function renderForm(id) {
   }
   removalsCache = removals;
   const v = form.values;
+  form.routeCtx = await routeContext(v);
   const accountInput = (key) =>
     fieldBlock(
       ACCOUNT_FIELDS[key].label,
@@ -163,6 +173,10 @@ async function renderForm(id) {
       ${accountInput("kompakapps_stock_output_account_id")}
       ${fieldBlock("Jurnal Stok", `<select data-value="property_stock_journal" data-kind="id" class="${INPUT}">${selectOptions(journals, v.property_stock_journal, "-")}</select>`)}
       ${accountInput("property_price_difference_account_id")}
+      <div class="md:col-span-2 border-t border-gray-100 pt-4 text-sm font-semibold text-gray-700">Rute</div>
+      <div class="md:col-span-2" id="route-box">${routeBoxHtml(form.routeCtx.choices, v.route_ids, { inherited: form.routeCtx.inherited, emptyHint: 'Belum ada rute yang dapat dipilih pada kategori. Buat atau aktifkan di <a href="#/route" class="underline">Routes</a> (centang "Kategori Produk").' })}
+        <p class="text-xs text-gray-500 mt-2">Rute kategori berlaku untuk semua produk di kategori ini (dan subkategorinya) yang tidak punya rute sendiri, dan mengalahkan rute bawaan gudang. Kelola rute di <a href="#/route" class="underline">Routes</a>.</p>
+        <div id="route-warn" class="space-y-2 mt-3">${routeWarningsHtml(form.routeCtx.choices, v.route_ids, { scope: "kategori" })}</div></div>
     </section>
     <div class="flex flex-wrap gap-2 mt-4">
       <button data-action="save" data-id="${category?.id ?? ""}" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
@@ -182,14 +196,14 @@ async function persist() {
   }
   const current = flat(v);
   const keys = Object.keys(current);
-  const toOdoo = (value) => (value === "" || value === null ? false : value);
+  const toOdoo = (value, key) => (key === "route_ids" ? [[6, 0, value]] : value === "" || value === null ? false : value);
   if (!form.id) {
-    const vals = Object.fromEntries(keys.filter((k) => current[k] !== null && current[k] !== "").map((k) => [k, current[k]]));
+    const vals = Object.fromEntries(keys.filter((k) => current[k] !== null && current[k] !== "" && !(k === "route_ids" && !current[k].length)).map((k) => [k, k === "route_ids" ? toOdoo(current[k], k) : current[k]]));
     const [newId] = await call("product.category", "create", { vals_list: [vals] });
     return newId;
   }
   const changed = changedValues(current, form.initial, keys);
-  const vals = Object.fromEntries(Object.entries(changed).map(([k, value]) => [k, toOdoo(value)]));
+  const vals = Object.fromEntries(Object.entries(changed).map(([k, value]) => [k, toOdoo(value, k)]));
   if (Object.keys(vals).length) await call("product.category", "write", { ids: [form.id], vals });
   return form.id;
 }
@@ -223,6 +237,12 @@ export async function onClick(event, el) {
 
 export function onInput(event, el) {
   if (!form) return;
+  if (el.dataset.routeBox) {
+    const id = Number(el.dataset.routeBox);
+    form.values.route_ids = (el.checked ? [...new Set([...form.values.route_ids, id])] : form.values.route_ids.filter((x) => x !== id)).sort((a, b) => a - b);
+    document.querySelector("#route-warn").innerHTML = routeWarningsHtml(form.routeCtx.choices, form.values.route_ids, { scope: "kategori" });
+    return;
+  }
   if (el.dataset.lookup === "cat-account") {
     const key = el.dataset.key;
     form.values[key] = null;

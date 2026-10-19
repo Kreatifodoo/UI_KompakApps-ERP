@@ -5,6 +5,8 @@ import {
   ACCOUNT_TYPE_LABELS, INPUT, app, call, cell, changedValues, chatterHtml, checkboxField, closeLookup, esc, fieldBlock, fieldValue, filterSelect,
   guarded, hasGroup, loadMessages, money, pageHeader, readOne, referenceCategories, referenceDefaultCategories, referenceSelection, referenceTaxes,
   referenceUoms, registerLookup, rowLink, runLookup, searchAccounts, searchBox, searchRead, selectOptions, statTiles, table, toast, today, button, dayBoundary,} from "../common.js";
+import { loadRouteChoices, routeBoxHtml, routeWarningsHtml } from "../routerules.js";
+import { productSupport } from "../routes.js";
 
 // Periode tombol Dibeli, Terjual, dan POS di form produk (D71); bawaan 12 bulan terakhir, sama dengan hitungan Odoo.
 const PERIODS = [["12m", "12 bulan terakhir"], ["month", "Bulan ini"], ["year", "Tahun ini"], ["all", "Semua waktu"], ["custom", "Pilih tanggal"]];
@@ -14,7 +16,7 @@ const FILTERS = [["purchase", "Dapat dibeli"], ["sale", "Dapat dijual"], ["pos",
 const FIELDS = [
   "name", "type", "is_storable", "sale_ok", "purchase_ok", "purchase_request", "available_in_pos", "uom_id", "default_code", "barcode", "categ_id", "list_price",
   "standard_price", "taxes_id", "supplier_taxes_id", "purchase_method", "description_purchase", "description_sale",
-  "property_account_expense_id", "property_account_income_id", "tracking", "use_expiration_date", "lot_valuated", "expiration_time", "use_time", "removal_time", "alert_time",
+  "property_account_expense_id", "property_account_income_id", "route_ids", "tracking", "use_expiration_date", "lot_valuated", "expiration_time", "use_time", "removal_time", "alert_time",
 ];
 // Akun yang menimpa akun kategori; kosong berarti mengikuti kategori.
 const ACCOUNT_KEYS = {
@@ -80,13 +82,14 @@ const normalize = (record) => {
   values.standard_price = record.standard_price ?? 0;
   values.taxes_id = sorted(record.taxes_id ?? []);
   values.supplier_taxes_id = sorted(record.supplier_taxes_id ?? []);
+  values.route_ids = sorted(record.route_ids ?? []);
   for (const key of Object.keys(ACCOUNT_KEYS)) values[key] = asRef(record[key]);
   return values;
 };
 
 /** Nilai untuk Odoo: teks/relasi kosong menjadi false; pajak menjadi perintah "ganti seluruhnya". */
 const toOdoo = (key, value) => {
-  if (key === "taxes_id" || key === "supplier_taxes_id") return [[6, 0, value]];
+  if (key === "taxes_id" || key === "supplier_taxes_id" || key === "route_ids") return [[6, 0, value]];
   if (ID_KEYS.includes(key) || key in ACCOUNT_KEYS) return value || false;
   if (TEXT_KEYS.includes(key)) return value === "" ? false : value;
   return value;
@@ -110,6 +113,8 @@ async function renderList(query) {
   if (text) domain.push("|", "|", ["name", "ilike", text], ["default_code", "ilike", text], ["barcode", "ilike", text]);
   const category = Number(query.get("category")) || null;
   if (category) domain.push(["categ_id", "child_of", category]);
+  const routeFilter = Number(query.get("route")) || null;
+  if (routeFilter) domain.push(["route_ids", "in", [routeFilter]]);
   const rows = await searchRead("product.template", domain, ["name", "default_code", "categ_id", "type", "is_storable", "list_price", "standard_price", "qty_available", "uom_id"], {
     order: "name", limit: 100, context: { active_test: filter !== "archived" },
   });
@@ -133,8 +138,8 @@ async function renderList(query) {
        <button data-action="refresh" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50" aria-label="Muat ulang"><i class="fas fa-rotate"></i></button>
        <a href="#/product/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>Produk Baru</a>`,
     ) +
-    (category
-      ? `<p class="text-sm text-gray-500 mb-3">Difilter per kategori. <a href="#/product?state=${esc(filter)}" class="text-indigo-600 hover:underline">Tampilkan semua</a></p>`
+    (category || routeFilter
+      ? `<p class="text-sm text-gray-500 mb-3">Difilter per ${category ? "kategori" : "rute"}. <a href="#/product?state=${esc(filter)}" class="text-indigo-600 hover:underline">Tampilkan semua</a></p>`
       : "") +
     table(
       [{ label: "Kode" }, { label: "Nama" }, { label: "Kategori" }, { label: "Tipe" }, { label: "Harga Jual", right: true }, { label: "Biaya", right: true }, { label: "Stok", right: true }],
@@ -281,6 +286,22 @@ function tilesHtml(product, counts) {
   return control + tiles + makeBom;
 }
 
+/** Rute yang bisa dipasang pada produk (barang), rute turunan kategorinya, dan kelengkapan pemasok atau BoM produk untuk peringatan (D81). */
+async function routeContext(v, product) {
+  const category = v.categ_id ? await readOne("product.category", v.categ_id, ["total_route_ids"]) : null;
+  const inherited = category?.total_route_ids ?? [];
+  const [choices, support] = await Promise.all([loadRouteChoices("product_selectable", v.route_ids, inherited), product ? productSupport([product.id]) : null]);
+  return { choices, inherited, support: support ? { ...support, tmplId: product.id } : null };
+}
+
+function routeSection(v, ctx) {
+  const empty = 'Belum ada rute yang dapat dipilih pada produk. Buat atau aktifkan di <a href="#/route" class="underline">Routes</a> (centang "Produk").';
+  return `<div class="md:col-span-2 border-t border-gray-100 pt-4 text-sm font-semibold text-gray-700">Rute</div>
+    <div class="md:col-span-2" id="route-box">${routeBoxHtml(ctx.choices, v.route_ids, { inherited: ctx.inherited, emptyHint: empty })}
+      <p class="text-xs text-gray-500 mt-2">Rute menentukan cara barang dipasok: dibeli, diproduksi, atau ditarik dari gudang lain. Tanpa rute, produk memakai rute bawaan gudang. Kelola rute di <a href="#/route" class="underline">Routes</a>.</p>
+      <div id="route-warn" class="space-y-2 mt-3">${routeWarningsHtml(ctx.choices, v.route_ids, { scope: "produk", support: ctx.support })}</div></div>`;
+}
+
 async function renderForm(id) {
   closeLookup();
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
@@ -320,6 +341,7 @@ async function renderForm(id) {
     form = { id: product?.id ?? null, values, initial: product ? flat(values) : null, taxesTouched: new Set(), categTouched: false, pending: new Set() };
   }
   const v = form.values;
+  form.routeCtx = v.type === "consu" ? await routeContext(v, product) : null;
   const input = (key, extra = "") => `<input data-value="${key}" value="${esc(v[key])}" ${extra} class="${INPUT}">`;
   const number = (key) => `<input type="number" min="0" step="any" data-value="${key}" data-kind="number" value="${esc(v[key])}" class="${INPUT}">`;
   const types = typeOptions.filter(([k]) => k !== "combo" || v.type === "combo");
@@ -355,6 +377,7 @@ async function renderForm(id) {
       ${fieldBlock("Barcode", input("barcode"))}
       ${fieldBlock("Kategori Produk", `<select data-value="categ_id" data-kind="id" class="${INPUT}">${selectOptions(categories, v.categ_id, "-")}</select>`)}
       ${trackingSection(v, product, lotsOn)}
+      ${form.routeCtx ? routeSection(v, form.routeCtx) : ""}
       <div class="md:col-span-2 border-t border-gray-100 pt-4 text-sm font-semibold text-gray-700">Harga dan Pajak</div>
       ${fieldBlock("Harga Jual", number("list_price"))}
       ${fieldBlock("Biaya", number("standard_price"))}
@@ -411,6 +434,7 @@ async function persist() {
       if ((key === "taxes_id" || key === "supplier_taxes_id") && !form.taxesTouched.has(key)) continue; // pajak bawaan perusahaan
       if (!v.purchase_ok && ["purchase_method", "description_purchase"].includes(key)) continue;
       if (!v.sale_ok && key === "description_sale") continue;
+      if (key === "route_ids" && !current[key].length) continue;
       if (current[key] === "" || current[key] === null) continue;
       vals[key] = toOdoo(key, current[key]);
     }
@@ -451,6 +475,12 @@ export async function onClick(event, el) {
 
 export function onInput(event, el) {
   if (!form) return;
+  if (el.dataset.routeBox) {
+    const id = Number(el.dataset.routeBox);
+    form.values.route_ids = sorted(el.checked ? [...new Set([...form.values.route_ids, id])] : form.values.route_ids.filter((x) => x !== id));
+    document.querySelector("#route-warn").innerHTML = routeWarningsHtml(form.routeCtx.choices, form.values.route_ids, { scope: "produk", support: form.routeCtx.support });
+    return;
+  }
   if (el.dataset.lookup === "prod-account") {
     const key = el.dataset.key;
     form.values[key] = null;

@@ -3808,6 +3808,14 @@ def check_routes_rules(api, vendor):
     api.call("stock.rule", "unlink", ids=[rule_buy])
     check(api.read("stock.route", route_buy, ["rule_ids"])["rule_ids"] == [], "aturan yang belum dipakai pergerakan stok bisa dihapus")
 
+    # 6. pemasangan rute pada produk dan kategori dari form (perintah "ganti seluruhnya"), dan filter produk menurut rute
+    check([r["id"] for r in api.search("product.template", [["route_ids", "in", [route_mto]]], ["id"])] == [tmpl], "filter produk menurut rute (daftar Product Master) menemukan produk yang memasangnya")
+    api.call("product.template", "write", ids=[tmpl], vals={"route_ids": [[6, 0, [route_mto]]]})
+    check(api.read("product.template", tmpl, ["route_ids"])["route_ids"] == [route_mto], "form produk mengganti seluruh rute produk (hanya MTO yang tersisa)")
+    api.call("product.template", "write", ids=[tmpl], vals={"route_ids": [[6, 0, []]]})
+    api.call("product.category", "write", ids=[category], vals={"route_ids": [[6, 0, []]]})
+    check(api.read("product.template", tmpl, ["route_ids"])["route_ids"] == [] and api.read("product.category", category, ["total_route_ids"])["total_route_ids"] == [], "mengosongkan rute produk dan kategori kembali ke rute bawaan gudang")
+
     # bersihkan: batalkan dokumen uji, arsipkan rute uji
     for picking in dict.fromkeys(cleanup["picking"]):
         api.call("stock.picking", "action_cancel", ids=[picking])
