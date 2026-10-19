@@ -155,14 +155,14 @@ export const flowText = (rule) => `${rule.location_src_id?.[1] ?? "-"} -> ${rule
 export function ruleSentence(v, picking, wh) {
   const src = v.src?.display_name ?? "lokasi asal";
   const dest = v.dest?.display_name ?? "lokasi tujuan";
-  const op = picking?.display_name ?? "tipe operasi";
+  const op = picking?.display_name ?? "transfer";
   const where = wh ? ` (gudang ${wh})` : "";
   switch (v.action) {
     case "pull": return `Saat barang dibutuhkan di ${dest}, dibuat ${op} dari ${src}${where}.`;
     case "push": return `Saat barang tiba di ${src}, dibuat ${op} untuk memindahkannya ke ${dest}${where}.`;
     case "pull_push": return `Saat barang dibutuhkan di ${dest}, dibuat ${op} dari ${src}; saat barang tiba di ${src}, ia dipindahkan ke ${dest}${where}.`;
-    case "buy": return `Saat barang dibutuhkan di ${dest}, dibuat RFQ ke pemasok produk, diterima lewat ${op}${where}.`;
-    case "manufacture": return `Saat barang dibutuhkan di ${dest}, dibuat Manufacturing Order (${op})${v.src ? `; komponen diambil dari ${src}` : ""}${where}.`;
+    case "buy": return `Saat barang dibutuhkan di ${dest}, dibuat RFQ ke pemasok produk, diterima lewat ${picking ? op : "tipe operasi Penerimaan"}${where}.`;
+    case "manufacture": return `Saat barang dibutuhkan di ${dest}, dibuat Manufacturing Order${picking ? ` (${op})` : ""}${v.src ? `; komponen diambil dari ${src}` : ""}${where}.`;
     default: return "";
   }
 }
