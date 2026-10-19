@@ -198,6 +198,7 @@ def main():
     check_warehouse_master(api, product)
     check_multi_warehouse(api)
     check_stock_picker(api)
+    check_stock_limits(api)
     check_product_search(api)
     check_line_stock(api)
     check_product_smart_buttons(api)
@@ -2531,6 +2532,70 @@ def check_stock_picker(api):
     check(got == expected, f"on hand dan tersedia per produk ({len(expected)} produk) sama dengan hitungan quant langsung")
     other = api.call("stock.quant", "formatted_read_group", domain=[["location_id", "child_of", location], ["product_id", "=", -1]], groupby=["product_id"], aggregates=["quantity:sum"])
     check(other == [], "produk tanpa stok di lokasi itu tidak muncul (dianggap 0)")
+
+
+def check_stock_limits(api):
+    """Stok di form Scrap, Physical Inventory, dan Replenishment (ui/live/stockqty.js, D70): stok per lokasi (strict, tanpa sublokasi) dan per lot,
+    pemeriksaan jumlah Scrap oleh Odoo, hasil hitung di bawah jumlah dicadangkan, dan opsi "Blokir jumlah melebihi stok" (parameter sistem)."""
+    import random
+
+    step("Stok tersedia di Scrap, Physical Inventory, dan Replenishment; opsi blokir")
+    key = "kompakapps.block_over_stock"
+    check(api.call("ir.config_parameter", "get_param", key=key) in (False, "", "0", "1"), "parameter opsi blokir terbaca (kosong atau 1)")
+    api.call("ir.config_parameter", "set_param", key=key, value="1")
+    check(api.call("ir.config_parameter", "get_param", key=key) == "1", "opsi blokir menyala: parameter bernilai 1")
+    api.call("ir.config_parameter", "set_param", key=key, value=False)
+    check(api.call("ir.config_parameter", "get_param", key=key) is False, "opsi blokir mati: parameter dihapus (bawaan hanya peringatan merah)")
+
+    tag = f"{random.randint(0, 99999):05d}"
+    mode = {"inventory_mode": True}
+    stock = api.search("stock.warehouse", [], ["lot_stock_id"], order="sequence, id", limit=1)[0]["lot_stock_id"][0]
+    [shelf] = api.call("stock.location", "create", vals_list=[{"name": f"Rak Q30 {tag}", "usage": "internal", "location_id": stock}])
+    [product] = api.call("product.product", "create", vals_list=[{"name": f"Q30 Stok {tag}", "is_storable": True, "type": "consu"}])
+    [quant] = api.call("stock.quant", "create", vals_list=[{"product_id": product, "location_id": stock, "inventory_quantity": 10}], context=mode)
+    [quant_shelf] = api.call("stock.quant", "create", vals_list=[{"product_id": product, "location_id": shelf, "inventory_quantity": 2}], context=mode)
+    api.call("stock.quant", "action_apply_inventory", ids=[quant, quant_shelf], context=mode)
+
+    def at(location, strict, lot=None):
+        domain = [["location_id", "=" if strict else "child_of", location], ["product_id", "=", product]]
+        if lot:
+            domain.append(["lot_id", "=", lot])
+        rows = api.call("stock.quant", "formatted_read_group", domain=domain, groupby=["product_id"], aggregates=["quantity:sum", "reserved_quantity:sum"])
+        return (rows[0]["quantity:sum"], rows[0]["quantity:sum"] - rows[0]["reserved_quantity:sum"]) if rows else (0, 0)
+
+    check(at(stock, True) == (10, 10) and at(stock, False) == (12, 12), "stok tepat di lokasi (10) berbeda dari stok dengan sublokasi (12): Scrap memeriksa lokasi itu saja")
+
+    out = api.search("stock.picking.type", [["code", "=", "outgoing"]], ["default_location_src_id", "default_location_dest_id"], limit=1)[0]
+    move = {"product_id": product, "product_uom_qty": 3, "location_id": stock, "location_dest_id": out["default_location_dest_id"][0]}
+    [picking] = api.call("stock.picking", "create", vals_list=[{"picking_type_id": out["id"], "location_id": stock, "location_dest_id": move["location_dest_id"], "move_ids": [[0, 0, move]]}])
+    api.call("stock.picking", "action_confirm", ids=[picking])
+    api.call("stock.picking", "action_assign", ids=[picking])
+    check(at(stock, True) == (10, 7), "pengiriman 3 unit mencadangkan stok: on hand 10, tersedia 7")
+
+    def scrap(qty):
+        [scrap_id] = api.call("stock.scrap", "create", vals_list=[{"product_id": product, "scrap_qty": qty, "location_id": stock}])
+        return scrap_id, api.call("stock.scrap", "action_validate", ids=[scrap_id])
+
+    _, result = scrap(11)
+    check(isinstance(result, dict), "Scrap 11 unit (lebih dari on hand 10) ditolak Odoo: stok tidak cukup")
+    check(at(stock, True)[0] == 10, "Scrap yang ditolak tidak mengubah stok")
+    _, result = scrap(8)
+    check(not isinstance(result, dict) and at(stock, True)[0] == 2, "Scrap 8 unit (melebihi tersedia 7 tetapi tidak melebihi on hand) lolos Odoo; Odoo hanya memeriksa on hand, jadi opsi blokir UI yang menahannya")
+    check(at(stock, True)[1] <= at(stock, True)[0], "cadangan tidak melebihi stok setelah Scrap")
+
+    # Physical Inventory: hasil hitung di bawah jumlah dicadangkan melepas sebagian cadangan (kolom Tersedia dan peringatan UI)
+    api.call("stock.quant", "write", ids=[quant], vals={"inventory_quantity": 1}, context=mode)
+    api.call("stock.quant", "action_apply_inventory", ids=[quant], context=mode)
+    check(at(stock, True)[0] == 1 and at(stock, True)[1] >= 0, "hasil hitung 1 di bawah cadangan 2: stok jadi 1 dan cadangan di lokasi itu dilepas sampai tidak melebihi stok (tersedia tidak negatif)")
+    check(api.read("stock.picking", picking, ["state"])["state"] in ("confirmed", "assigned"), "pengiriman yang cadangannya dilepas tetap hidup (menunggu stok)")
+
+    # lot: stok per lot (pilihan lot Scrap)
+    [tracked] = api.call("product.product", "create", vals_list=[{"name": f"Q30 Lot {tag}", "is_storable": True, "type": "consu", "tracking": "lot"}])
+    [lot_a, lot_b] = api.call("stock.lot", "create", vals_list=[{"name": f"LA{tag}", "product_id": tracked}, {"name": f"LB{tag}", "product_id": tracked}])
+    quants = api.call("stock.quant", "create", vals_list=[{"product_id": tracked, "location_id": stock, "lot_id": lot_a, "inventory_quantity": 5}, {"product_id": tracked, "location_id": stock, "lot_id": lot_b, "inventory_quantity": 3}], context=mode)
+    api.call("stock.quant", "action_apply_inventory", ids=quants, context=mode)
+    rows = {lot: api.call("stock.quant", "formatted_read_group", domain=[["location_id", "=", stock], ["product_id", "=", tracked], ["lot_id", "=", lot]], groupby=["product_id"], aggregates=["quantity:sum"]) for lot in (lot_a, lot_b)}
+    check(rows[lot_a][0]["quantity:sum"] == 5 and rows[lot_b][0]["quantity:sum"] == 3, "stok per lot terpisah (lot A 5, lot B 3) untuk pemeriksaan jumlah Scrap per lot")
 
 
 def check_product_search(api):

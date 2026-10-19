@@ -3,6 +3,7 @@
 // (action_open_orderpoints). Rute dan pemicu dipilih per baris; "Pesan" menjalankan pengisian ulang Odoo: RFQ (Beli), Manufacturing Order
 // (Produksi), atau transfer antar gudang (rute suplai). Pemicu Otomatis dijalankan penjadwal Odoo tanpa klik (D47).
 import { INPUT, app, call, cell, esc, guarded, pageHeader, searchRead, table, toast, button } from "../common.js";
+import { blockOverStock, stockAt, stockText } from "../stockqty.js";
 import { effectiveKind, friendlyReplenishError, loadRoutes, productSupport, routeWarning, routesFor } from "../routes.js";
 
 const nf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 3 });
@@ -21,11 +22,13 @@ let last = { sub: "", query: new URLSearchParams() };
 let orders = new Map(); // id aturan -> jumlah pesan yang diedit
 let rows = []; // aturan yang sedang ditampil
 let routes = [];
+let supply = new Map(); // id aturan -> { available, onhand, place } stok di gudang sumber untuk rute suplai antar gudang (D70)
 let summary = null; // hasil pengisian ulang terakhir: { docs: [{ type, id, name }], failed: [{ product, message }] }
 export const leave = () => {
   orders = new Map();
   rows = [];
   routes = [];
+  supply = new Map();
   summary = null;
 };
 const reload = () => render(last.sub, last.query);
@@ -47,7 +50,7 @@ async function draw() {
     searchRead("stock.warehouse.orderpoint", [["qty_to_order", ">", 0]], FIELDS, { order: "id", limit: 200 }),
     routes.length ? routes : loadRoutes(),
   ]);
-  const support = await productSupport(rows.map((r) => r.product_tmpl_id[0]));
+  const [support] = await Promise.all([productSupport(rows.map((r) => r.product_tmpl_id[0])), loadSupply()]);
   const body = rows.map((r) => rowHtml(r, support)).join("");
   app.innerHTML =
     pageHeader(
@@ -68,6 +71,32 @@ async function draw() {
      </div>`;
 }
 
+/** Stok di gudang sumber untuk baris yang rutenya suplai antar gudang: yang diminta dari gudang lain harus ada di sana. */
+async function loadSupply() {
+  supply = new Map();
+  const wanted = rows.map((r) => ({ r, route: routes.find((x) => x.id === (r.route_id?.[0] || r.effective_route_id?.[0])) })).filter((x) => x.route?.kind === "resupply" && x.route.supplier_wh_id);
+  if (!wanted.length) return;
+  const warehouses = await searchRead("stock.warehouse", [["id", "in", [...new Set(wanted.map((x) => x.route.supplier_wh_id[0]))]]], ["lot_stock_id"]);
+  const places = new Map(warehouses.map((w) => [w.id, w.lot_stock_id]));
+  const bySource = new Map();
+  for (const { r, route } of wanted) {
+    const place = places.get(route.supplier_wh_id[0]);
+    if (place) bySource.set(place[0], [...(bySource.get(place[0]) ?? []), { r, place }]);
+  }
+  await Promise.all([...bySource].map(async ([locationId, list]) => {
+    const stock = await stockAt(list.map((x) => x.r.product_id[0]), locationId);
+    for (const { r, place } of list) supply.set(r.id, { ...(stock.get(r.product_id[0]) ?? { onhand: 0, available: 0 }), place: place[1] });
+  }));
+}
+
+/** Petunjuk stok gudang sumber di bawah jumlah pesan; merah bila jumlah melebihi stok tersedia di sana. */
+function supplyLine(r, qty) {
+  const info = supply.get(r.id);
+  if (!info) return "";
+  const over = Number(qty) > info.available + 1e-9;
+  return `<div class="text-xs mt-1 ${over ? "text-rose-600" : "text-gray-500"}" id="supply-${r.id}">${esc(stockText(info, r.product_uom?.[1], info.place))}${over ? " · melebihi stok tersedia" : ""}</div>`;
+}
+
 function rowHtml(r, support) {
   const kind = effectiveKind(routes, r.route_id?.[0], r.effective_route_id?.[0]);
   const warning = routeWarning(kind, support, r.product_tmpl_id[0]);
@@ -85,7 +114,7 @@ function rowHtml(r, support) {
     <td class="py-2 px-4 min-w-[7.5rem]"><select data-trigger="${r.id}" class="${INPUT}" aria-label="Pemicu ${esc(r.product_id[1])}">${Object.entries(TRIGGERS).map(([k, label]) => `<option value="${k}" ${k === r.trigger ? "selected" : ""}>${label}</option>`).join("")}</select></td>
     ${cell(nf.format(r.qty_on_hand), { right: true })}${cell(nf.format(r.qty_forecast), { right: true })}
     ${cell(unruled ? "Tanpa aturan" : `${nf.format(r.product_min_qty)} / ${nf.format(r.product_max_qty)}`, { right: true })}
-    <td class="py-2 px-4 w-36"><input type="number" min="0" step="any" data-order="${r.id}" data-suggested="${r.qty_to_order}" value="${esc(value)}" ${auto ? 'readonly title="Jumlah aturan otomatis dihitung Odoo"' : ""} class="${INPUT} text-right ${auto ? "bg-gray-50 text-gray-500" : ""}" aria-label="Jumlah pesan ${esc(r.product_id[1])}"></td>
+    <td class="py-2 px-4 w-36"><input type="number" min="0" step="any" data-order="${r.id}" data-suggested="${r.qty_to_order}" value="${esc(value)}" ${auto ? 'readonly title="Jumlah aturan otomatis dihitung Odoo"' : ""} class="${INPUT} text-right ${auto ? "bg-gray-50 text-gray-500" : ""}" aria-label="Jumlah pesan ${esc(r.product_id[1])}">${supplyLine(r, value)}</td>
     <td class="py-2 px-4 text-sm text-right">${button("order", "Pesan", "plain", { id: r.id })}</td></tr>`;
 }
 
@@ -105,6 +134,13 @@ function summaryHtml() {
 /** Jalankan pengisian ulang satu aturan (satu panggilan per aturan agar Odoo menyebut dokumen yang dibuat), kembalikan dokumen atau galat. */
 async function orderOne(r) {
   const edited = orders.get(r.id);
+  const source = supply.get(r.id);
+  if (source && (await blockOverStock())) {
+    const qty = r.trigger !== "auto" && edited !== undefined && edited !== "" ? Number(edited) : r.qty_to_order;
+    if (qty > source.available + 1e-9) {
+      return { failed: { product: r.product_id[1], message: `Jumlah ${nf.format(qty)} melebihi stok tersedia di ${source.place} (${nf.format(source.available)}). Kurangi jumlah, atau matikan "Blokir jumlah melebihi stok" di Inventory Setting.` } };
+    }
+  }
   if (r.trigger !== "auto" && edited !== undefined && edited !== "") {
     if (!(Number(edited) >= 0)) return { failed: { product: r.product_id[1], message: "Jumlah pesan tidak boleh negatif." } };
     if (Number(edited) !== r.qty_to_order) await call("stock.warehouse.orderpoint", "write", { ids: [r.id], vals: { qty_to_order: Number(edited) } });
@@ -189,5 +225,10 @@ export async function onChange(event, el) {
 }
 
 export function onInput(event, el) {
-  if (el.dataset.order) orders.set(Number(el.dataset.order), el.value);
+  if (!el.dataset.order) return;
+  const id = Number(el.dataset.order);
+  orders.set(id, el.value);
+  const row = rows.find((r) => r.id === id);
+  const box = document.getElementById(`supply-${id}`);
+  if (row && box) box.outerHTML = supplyLine(row, el.value);
 }

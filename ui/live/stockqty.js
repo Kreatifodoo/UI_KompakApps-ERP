@@ -3,13 +3,35 @@ import { call, esc, searchRead } from "./common.js";
 
 export const fmtQty = (n) => new Intl.NumberFormat("id-ID", { maximumFractionDigits: 3 }).format(n ?? 0);
 
-/** Map id produk -> { onhand, available } di lokasi (dan sublokasinya). Produk tanpa stok tidak masuk Map. Galat jaringan menghasilkan Map kosong. */
-export async function stockAt(productIds, locationId) {
+/** Kunci parameter sistem: bila "1", formulir menolak jumlah yang melebihi stok tersedia (Inventory Setting, D70). Bawaan: hanya memberi peringatan merah. */
+export const BLOCK_OVER_STOCK = "kompakapps.block_over_stock";
+let blockCache = null; // { value, at }; disimpan 30 detik supaya perubahan dari pengguna lain cepat terlihat
+export async function blockOverStock() {
+  if (!blockCache || Date.now() - blockCache.at > 30_000) {
+    try {
+      blockCache = { value: (await call("ir.config_parameter", "get_param", { key: BLOCK_OVER_STOCK })) === "1", at: Date.now() };
+    } catch {
+      blockCache = { value: false, at: Date.now() };
+    }
+  }
+  return blockCache.value;
+}
+export const resetBlockOverStock = () => {
+  blockCache = null;
+};
+
+/**
+ * Map id produk -> { onhand, available } di lokasi (dan sublokasinya). Produk tanpa stok tidak masuk Map. Galat jaringan menghasilkan Map kosong.
+ * `lotId` membatasi ke satu lot atau nomor seri; `strict` hanya menghitung lokasi itu sendiri (tanpa sublokasi), seperti pemeriksaan Scrap Odoo.
+ */
+export async function stockAt(productIds, locationId, { lotId = null, strict = false } = {}) {
   const out = new Map();
   if (!productIds.length || !locationId) return out;
   try {
+    const domain = [["location_id", strict ? "=" : "child_of", locationId], ["product_id", "in", productIds]];
+    if (lotId) domain.push(["lot_id", "=", lotId]);
     const rows = await call("stock.quant", "formatted_read_group", {
-      domain: [["location_id", "child_of", locationId], ["product_id", "in", productIds]],
+      domain,
       groupby: ["product_id"],
       aggregates: ["quantity:sum", "reserved_quantity:sum"],
     });
