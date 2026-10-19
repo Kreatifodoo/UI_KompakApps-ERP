@@ -50,6 +50,7 @@ export const REPORTS = {
     title: "Purchase Request Line", model: "purchase.request.line", dateField: "date_required", datetime: false, order: "date_required desc, id desc",
     fields: ["request_id", "product_id", "name", "product_qty", "product_uom_id", "date_required", "requested_by", "purchased_qty", "estimated_cost", "request_state"],
     search: ["name", "product_id.name", "request_id.name"], state: { field: "request_state", options: Object.entries(SELECTION_LABELS.request_state) },
+    summary: [{ agg: "__count", label: "Baris", fmt: "num" }, { agg: "product_qty:sum", label: "Jumlah Diminta", fmt: "num" }, { agg: "estimated_cost:sum", label: "Estimasi Biaya", fmt: "money" }],
     columns: [
       { label: "PR", value: (r) => `<a href="#/pr/${r.request_id[0]}" class="text-indigo-700 hover:underline">${esc(r.request_id[1])}</a>`, raw: true },
       { label: "Produk", value: (r) => esc(r.product_id?.[1] || r.name), raw: true }, { label: "Jumlah", value: (r) => `${num(r.product_qty)} ${esc(r.product_uom_id?.[1] ?? "")}`, right: true, raw: true },
@@ -69,6 +70,7 @@ export const REPORTS = {
     title: "Purchase Order Line", model: "purchase.order.line", dateField: "date_order", datetime: true, order: "date_order desc, id desc",
     fields: ["order_id", "partner_id", "product_id", "name", "product_qty", "qty_received", "qty_invoiced", "price_unit", "price_subtotal", "state", "date_order"],
     search: ["name", "product_id.name", "order_id.name", "partner_id.name"], state: { field: "state", options: [["draft", "Draft"], ["sent", "Terkirim"], ["purchase", "Dikonfirmasi"], ["done", "Terkunci"], ["cancel", "Dibatalkan"]] },
+    summary: [{ agg: "__count", label: "Baris", fmt: "num" }, { agg: "product_qty:sum", label: "Dipesan", fmt: "num" }, { agg: "price_subtotal:sum", label: "Subtotal", fmt: "money" }],
     columns: [
       { label: "PO", value: (r) => `<a href="#/po/${r.order_id[0]}" class="text-indigo-700 hover:underline">${esc(r.order_id[1])}</a>`, raw: true }, { label: "Vendor", value: (r) => esc(r.partner_id?.[1] ?? "-"), raw: true },
       { label: "Produk", value: (r) => esc(r.product_id?.[1] || r.name), raw: true }, { label: "Dipesan", value: (r) => num(r.product_qty), right: true }, { label: "Diterima", value: (r) => num(r.qty_received), right: true },
@@ -97,6 +99,7 @@ export const REPORTS = {
     title: "Sales Order Line", model: "sale.order.line", dateField: "order_id.date_order", datetime: true, order: "id desc",
     fields: ["order_id", "order_partner_id", "product_id", "name", "product_uom_qty", "qty_delivered", "qty_invoiced", "price_unit", "discount", "price_subtotal", "state"],
     search: ["name", "product_id.name", "order_id.name", "order_partner_id.name"], state: { field: "state", options: [["draft", "Draft"], ["sent", "Terkirim"], ["sale", "Dikonfirmasi"], ["cancel", "Dibatalkan"]] },
+    summary: [{ agg: "__count", label: "Baris", fmt: "num" }, { agg: "product_uom_qty:sum", label: "Dipesan", fmt: "num" }, { agg: "price_subtotal:sum", label: "Subtotal", fmt: "money" }],
     columns: [
       { label: "SO", value: (r) => `<a href="#/sale/${r.order_id[0]}" class="text-indigo-700 hover:underline">${esc(r.order_id[1])}</a>`, raw: true }, { label: "Pelanggan", value: (r) => esc(r.order_partner_id?.[1] ?? "-"), raw: true },
       { label: "Produk", value: (r) => esc(r.product_id?.[1] || r.name), raw: true }, { label: "Dipesan", value: (r) => num(r.product_uom_qty), right: true }, { label: "Dikirim", value: (r) => num(r.qty_delivered), right: true },
@@ -194,7 +197,9 @@ for (const key of ["posreport", "possales"]) REPORTS[key].drill = POS_DRILL;
 
 /* ---------- Periode pembanding ---------- */
 
-export const COMPARISONS = { prev: "Periode sebelumnya", year: "Tahun lalu" };
+export const COMPARISONS = { prev: "Periode sebelumnya", year: "Tahun lalu", custom: "Rentang bebas" };
+const DATE_TEXT = /^\d{4}-\d{2}-\d{2}$/;
+export const ALL_ROWS = "*";
 const DRILL_LIMIT = 300;
 const pf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 1 });
 
@@ -215,8 +220,9 @@ const shiftYear = (value, years) => {
   return `${y + years}-${pad(m)}-${pad(Math.min(d, lastDay))}`;
 };
 
-/** Rentang pembanding: "prev" = rentang selama sama tepat sebelum `from`; "year" = rentang yang sama setahun lalu. */
-export function compareRange(from, to, mode) {
+/** Rentang pembanding: "prev" = rentang selama sama tepat sebelum `from`; "year" = rentang yang sama setahun lalu; "custom" = rentang pilihan sendiri (`custom.from` sampai `custom.to`, null bila kosong atau terbalik). */
+export function compareRange(from, to, mode, custom = {}) {
+  if (mode === "custom") return DATE_TEXT.test(custom.from ?? "") && DATE_TEXT.test(custom.to ?? "") && dayNumber(custom.from) <= dayNumber(custom.to) ? { from: custom.from, to: custom.to } : null;
   if (mode === "year") return { from: shiftYear(from, -1), to: shiftYear(to, -1) };
   const days = dayNumber(to) - dayNumber(from) + 1;
   if (mode !== "prev" || days < 1) return null;
@@ -307,7 +313,36 @@ function hashWith(query, from, to, dimKey, extra) {
   }
   return `#/analysis/${last.sub}?${params}`;
 }
-const statCard = (label, value, extra = "") => `<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4"><div class="text-xs font-medium text-gray-500 uppercase">${esc(label)}</div><div class="text-xl font-semibold mt-1">${esc(value)}</div>${extra}</div>`;
+/** Kartu angka; dengan `href` seluruh kartu menjadi tautan (drill dari kartu total). */
+const statCard = (label, value, extra = "", href = "") => {
+  const inner = `<div class="text-xs font-medium text-gray-500 uppercase">${esc(label)}</div><div class="text-xl font-semibold mt-1">${esc(value)}</div>${extra}`;
+  const box = "bg-white rounded-xl border border-gray-200 shadow-sm p-4";
+  return href ? `<a href="${esc(href)}" class="block ${box} hover:border-indigo-300 hover:shadow" title="Lihat semua baris rincian">${inner}</a>` : `<div class="${box}">${inner}</div>`;
+};
+/** Kartu ukuran (maksimal empat); dengan `priorTotals` tiap kartu memuat selisih dan persen terhadap pembanding. */
+const summaryCards = (measures, totals, priorTotals, href = "") => measures
+  .slice(0, 4)
+  .map((m, i) => {
+    if (!priorTotals) return statCard(m.label, FORMATS[m.fmt](totals[i]), "", href);
+    const { diff, pct } = delta(totals[i], priorTotals[i]);
+    return statCard(m.label, FORMATS[m.fmt](totals[i]), `<div class="text-xs mt-1 ${tone(diff)}">${esc(signed(diff, FORMATS[m.fmt](Math.abs(diff))))} (${esc(pctText(pct, totals[i]))}) <span class="text-gray-500">dari ${esc(FORMATS[m.fmt](priorTotals[i]))}</span></div>`, href);
+  })
+  .join("");
+/** Mode dan rentang pembanding dari alamat (`cmp`, `cf`, `ct`); rentang null bila tidak sah. */
+const comparisonOf = (query, from, to) => {
+  const mode = COMPARISONS[query.get("cmp")] ? query.get("cmp") : "";
+  return { mode, range: mode ? compareRange(from, to, mode, { from: query.get("cf"), to: query.get("ct") }) : null };
+};
+/** Pilihan pembanding; "Rentang bebas" menambah dua kotak tanggal. */
+const compareControls = (mode, query) => {
+  const select = `<select data-an="cmp" class="${INPUT} w-56" aria-label="Bandingkan dengan"><option value="">Tanpa perbandingan</option>${Object.entries(COMPARISONS).map(([k, l]) => `<option value="${k}" ${k === mode ? "selected" : ""}>Bandingkan: ${esc(l)}</option>`).join("")}</select>`;
+  if (mode !== "custom") return select;
+  const box = (key, label) => `<label class="text-xs font-medium text-gray-500 uppercase">${label}<input type="date" data-an="${key}" value="${esc(query.get(key) ?? "")}" class="${INPUT} mt-1 w-40"></label>`;
+  return `${select}${box("cf", "Pembanding dari")}${box("ct", "Pembanding sampai")}`;
+};
+const compareNote = (mode, range, extra = "") => (range
+  ? `<p class="mt-3 text-xs text-gray-500">Pembanding: ${esc(COMPARISONS[mode])}, ${esc(dateText(range.from))} sampai ${esc(dateText(range.to))}. Selisih dan persen dihitung dari periode ini dikurangi pembanding ("baru" bila pembanding nol).${extra}</p>`
+  : mode ? '<p class="mt-3 text-xs text-gray-500">Rentang tanggal tidak valid untuk perbandingan (isi kedua tanggal, awal tidak boleh setelah akhir).</p>' : "");
 
 /* ---------- Grafik (SVG tanpa pustaka) ---------- */
 
@@ -366,8 +401,7 @@ async function renderGroup(cfg, query, from, to) {
   const productChip = productId
     ? `<span class="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-200 text-sm text-indigo-900">Produk: <b>${esc(filterProduct?.display_name ?? `#${productId}`)}</b><a href="${esc(clearHref)}" class="text-indigo-700 underline">Semua produk</a></span>`
     : "";
-  const mode = COMPARISONS[query.get("cmp")] ? query.get("cmp") : "";
-  const range = mode ? compareRange(from, to, mode) : null;
+  const { mode, range } = comparisonOf(query, from, to);
   const [rows, priorRows, meta] = await Promise.all([
     readGroups(cfg, dim, base, from, to, aggregates), range ? readGroups(cfg, dim, base, range.from, range.to, aggregates) : [], readMeta(cfg, dim),
   ]);
@@ -434,40 +468,27 @@ async function renderGroup(cfg, query, from, to) {
         .join("")}${range ? cmpCells(r.values[cm], r.prior?.[cm] ?? 0) : ""}<td class="py-2 px-4 w-1/6"><div class="h-3 bg-gray-100 rounded"><div class="h-3 ${r.values[barIndex] < 0 ? "bg-rose-400" : "bg-indigo-500"} rounded" style="width:${Math.round((Math.abs(r.values[barIndex]) / max) * 100)}%"></div></div></td></tr>`,
     )
     .join("");
-  const cards = cfg.measures
-    .slice(0, 4)
-    .map((m, i) => {
-      if (!range) return statCard(m.label, FORMATS[m.fmt](totals[i]));
-      const { diff, pct } = delta(totals[i], priorTotals[i]);
-      return statCard(m.label, FORMATS[m.fmt](totals[i]), `<div class="text-xs mt-1 ${tone(diff)}">${esc(signed(diff, FORMATS[m.fmt](Math.abs(diff))))} (${esc(pctText(pct, totals[i]))}) <span class="text-gray-500">dari ${esc(FORMATS[m.fmt](priorTotals[i]))}</span></div>`);
-    })
-    .join("");
+  const cards = summaryCards(cfg.measures, totals, priorTotals, cfg.drill ? hashWith(query, from, to, dimKey, { d: ALL_ROWS }) : "");
   const dimSelect = `<select data-an="by" class="${INPUT} w-48" aria-label="Kelompokkan menurut">${Object.entries(cfg.dims).map(([k, d]) => `<option value="${esc(k)}" ${k === dimKey ? "selected" : ""}>${esc(d.label)}</option>`).join("")}</select>`;
   const filterSelectHtml = cfg.filter
     ? `<select data-an="${esc(cfg.filter.key)}" class="${INPUT} w-52" aria-label="${esc(cfg.filter.label)}"><option value="">${esc(cfg.filter.label)}</option>${cfg.filter.options.map(([k, l]) => `<option value="${esc(k)}" ${query.get(cfg.filter.key) === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`
     : "";
-  const compareSelect = `<select data-an="cmp" class="${INPUT} w-56" aria-label="Bandingkan dengan"><option value="">Tanpa perbandingan</option>${Object.entries(COMPARISONS).map(([k, l]) => `<option value="${k}" ${k === mode ? "selected" : ""}>Bandingkan: ${esc(l)}</option>`).join("")}</select>`;
   const measureSelect = range
     ? `<select data-an="cm" class="${INPUT} w-48" aria-label="Ukuran pembanding">${cfg.measures.map((m, i) => `<option value="${i}" ${i === cm ? "selected" : ""}>Ukuran: ${esc(m.label)}</option>`).join("")}</select>`
     : "";
-  const compareNote = range
-    ? `<p class="mt-3 text-xs text-gray-500">Pembanding: ${esc(COMPARISONS[mode])}, ${esc(dateText(range.from))} sampai ${esc(dateText(range.to))}. Selisih dan persen dihitung dari ukuran terpilih (periode ini dikurangi pembanding; "baru" bila pembanding nol).${unit ? " Bucket waktu dipasangkan menurut urutan dari awal rentang." : ""}</p>`
-    : mode
-      ? '<p class="mt-3 text-xs text-gray-500">Rentang tanggal tidak valid untuk perbandingan.</p>'
-      : "";
   // Grafik: dimensi waktu sebagai garis dari lama ke baru; lainnya sebagai batang untuk 12 kelompok terbesar. Ukuran = ukuran pembanding (bawaan: berbatang).
   const ci = range ? cm : barIndex;
   const shown = list.filter((r) => !r.outside);
   const plotted = (unit ? [...shown].reverse() : shown.slice(0, 12)).map((r) => ({ label: r.label, value: r.values[ci], ...(range ? { prior: r.prior?.[ci] ?? 0 } : {}) }));
   const chart = chartSvg(plotted, { line: Boolean(unit), format: FORMATS[cfg.measures[ci].fmt], title: `${cfg.measures[ci].label} per ${dim.label}${!unit && shown.length > 12 ? " (12 terbesar)" : ""}` });
   return {
-    controls: `${productChip}${dimSelect}${filterSelectHtml}${compareSelect}${measureSelect}`,
+    controls: `${productChip}${dimSelect}${filterSelectHtml}${compareControls(mode, query)}${measureSelect}`,
     html: `<div class="grid md:grid-cols-4 gap-4 mb-4">${cards}</div>${chart}
-      <section class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto"><div class="px-4 py-3 border-b border-gray-200 text-sm font-semibold">Per ${esc(dim.label)} <span class="font-normal text-gray-500">· ${list.length} baris${cfg.drill ? " · klik nama untuk melihat rincian" : ""}</span></div>
+      <section class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto"><div class="px-4 py-3 border-b border-gray-200 text-sm font-semibold">Per ${esc(dim.label)} <span class="font-normal text-gray-500">· ${list.length} baris${cfg.drill ? " · klik nama atau kartu total untuk melihat rincian" : ""}</span></div>
         <table class="w-full text-left"><thead class="bg-gray-50"><tr>${[...head, ...compareHead].map((h, i) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${i ? "text-right" : ""}">${esc(h)}</th>`).join("")}<th></th></tr></thead>
           <tbody class="divide-y divide-gray-100">${rowsHtml || `<tr><td colspan="${head.length + compareHead.length + 1}" class="py-8 text-center text-sm text-gray-500">Tidak ada data pada rentang ini.</td></tr>`}</tbody>
           ${list.length ? `<tfoot class="bg-gray-50"><tr><td class="py-2 px-4 text-sm font-semibold">Total</td>${totals.map((v, i) => `<td class="py-2 px-4 text-sm text-right tabular-nums font-semibold">${esc(FORMATS[cfg.measures[i].fmt](v))}</td>`).join("")}${range ? cmpCells(totals[cm], priorTotals[cm], "font-semibold") : ""}<td></td></tr></tfoot>` : ""}</table></section>
-      ${compareNote}${cfg.note ? `<p class="mt-3 text-xs text-gray-500">${esc(cfg.note)}</p>` : ""}`,
+      ${compareNote(mode, range, `${range ? " Selisih memakai ukuran terpilih." : ""}${range && unit ? " Bucket waktu dipasangkan menurut urutan dari awal rentang." : ""}`)}${cfg.note ? `<p class="mt-3 text-xs text-gray-500">${esc(cfg.note)}</p>` : ""}`,
   };
 }
 
@@ -480,26 +501,35 @@ const detailTable = (columns, rows, heading, empty) => {
       <tbody class="divide-y divide-gray-100">${body || `<tr><td colspan="${columns.length}" class="py-8 text-center text-sm text-gray-500">${esc(empty)}</td></tr>`}</tbody></table></section>`;
 };
 
-/** Baris rincian satu kelompok ringkasan (query `d` = kunci kelompok pada dimensi `by`). */
+/** Baris rincian satu kelompok ringkasan (query `d` = kunci kelompok pada dimensi `by`; `*` = semua baris pada rentang, dari kartu total). */
 async function renderDrill(cfg, query, from, to) {
   const { dimKey, dim, base } = groupSetup(cfg, query);
   const aggregates = [...new Set([...cfg.measures.map((m) => m.agg), "__count"])];
-  const [groups, meta] = await Promise.all([readGroups(cfg, dim, base, from, to, aggregates), readMeta(cfg, dim)]);
-  const group = groups.find((g) => groupKey(dim.by, g[dim.by]) === query.get("d"));
+  const everything = query.get("d") === ALL_ROWS;
+  let group;
+  let meta = null;
+  if (everything) {
+    const [total] = await call(cfg.model, "formatted_read_group", { domain: [...base, ...dateDomain(cfg, from, to)], groupby: [], aggregates, context: { tz: userTz() } });
+    group = total && total.__count ? { ...total, __extra_domain: [] } : null;
+  } else {
+    let groups;
+    [groups, meta] = await Promise.all([readGroups(cfg, dim, base, from, to, aggregates), readMeta(cfg, dim)]);
+    group = groups.find((g) => groupKey(dim.by, g[dim.by]) === query.get("d"));
+  }
   const back = `<a href="${esc(hashWith(query, from, to, dimKey, { d: null }))}" class="inline-flex items-center text-sm text-indigo-700 hover:underline mb-3"><i class="fas fa-arrow-left mr-2"></i>Kembali ke ringkasan per ${esc(dim.label)}</a>`;
   if (!group) {
     exportRows = [];
-    return { html: `${back}<section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 text-sm text-gray-500">Kelompok ini tidak ada pada rentang tanggal tersebut.</section>` };
+    return { html: `${back}<section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 text-sm text-gray-500">${everything ? "Tidak ada baris" : "Kelompok ini tidak ada"} pada rentang tanggal tersebut.</section>` };
   }
-  const label = labeler(dim, meta)(group[dim.by]);
+  const label = everything ? "Semua baris" : labeler(dim, meta)(group[dim.by]);
   const rows = await searchRead(cfg.model, [...base, ...dateDomain(cfg, from, to), ...group.__extra_domain], cfg.drill.fields, { order: cfg.drill.order, limit: DRILL_LIMIT });
   await cfg.drill.prepare?.(rows);
   exportRows = detailExport(cfg.drill.columns, rows);
-  exportName = "-rincian";
+  exportName = everything ? "-semua-baris" : "-rincian";
   const total = group.__count ?? rows.length;
   const cards = cfg.measures.slice(0, 4).map((m) => statCard(m.label, FORMATS[m.fmt](group[m.agg] ?? 0))).join("");
   return {
-    html: `${back}<p class="mb-3 text-sm text-gray-600">${esc(dim.label)}: <strong class="text-gray-900">${esc(label)}</strong> <span class="text-gray-500">· ${esc(dateText(from))} sampai ${esc(dateText(to))}</span></p>
+    html: `${back}<p class="mb-3 text-sm text-gray-600">${everything ? "" : `${esc(dim.label)}: `}<strong class="text-gray-900">${esc(label)}</strong> <span class="text-gray-500">· ${esc(dateText(from))} sampai ${esc(dateText(to))}</span></p>
       <div class="grid md:grid-cols-4 gap-4 mb-4">${cards}</div>
       ${detailTable(cfg.drill.columns, rows, `${rows.length} baris${total > rows.length ? ` dari ${total} (${DRILL_LIMIT} terbaru; persempit dengan tanggal)` : ""}`, "Tidak ada baris.")}
       ${cfg.note ? `<p class="mt-3 text-xs text-gray-500">${esc(cfg.note)}</p>` : ""}`,
@@ -509,24 +539,33 @@ async function renderDrill(cfg, query, from, to) {
 async function renderLines(cfg, query, from, to) {
   const q = query.get("q") ?? "";
   const state = query.get("state") ?? "";
-  const domain = [...dateDomain(cfg, from, to)];
-  if (state && cfg.state) domain.push([cfg.state.field, "=", state]);
-  if (q && cfg.search?.length) domain.push(...Array(cfg.search.length - 1).fill("|"), ...cfg.search.map((s) => [s, "ilike", q]));
+  // saringan di luar tanggal (status, pencarian, produk) berlaku sama untuk daftar, kartu ringkasan, dan rentang pembanding
+  const extra = [];
+  if (state && cfg.state) extra.push([cfg.state.field, "=", state]);
+  if (q && cfg.search?.length) extra.push(...Array(cfg.search.length - 1).fill("|"), ...cfg.search.map((s) => [s, "ilike", q]));
   // dari tombol pintas halaman produk: hanya baris produk (template) itu
   const productId = cfg.fields.includes("product_id") ? Number(query.get("product")) || null : null;
-  if (productId) domain.push(["product_id.product_tmpl_id", "=", productId]);
-  const [rows, [product]] = await Promise.all([
-    searchRead(cfg.model, domain, cfg.fields, { order: cfg.order, limit: 300 }),
+  if (productId) extra.push(["product_id.product_tmpl_id", "=", productId]);
+  const { mode, range } = comparisonOf(query, from, to);
+  const totalsOf = async (a, b) => {
+    const [row] = await call(cfg.model, "formatted_read_group", { domain: [...dateDomain(cfg, a, b), ...extra], groupby: [], aggregates: cfg.summary.map((m) => m.agg), context: { tz: userTz() } });
+    return cfg.summary.map((m) => row?.[m.agg] ?? 0);
+  };
+  const [rows, [product], totals, priorTotals] = await Promise.all([
+    searchRead(cfg.model, [...dateDomain(cfg, from, to), ...extra], cfg.fields, { order: cfg.order, limit: 300 }),
     productId ? searchRead("product.template", [["id", "=", productId]], ["display_name"], { limit: 1 }) : Promise.resolve([]),
+    cfg.summary ? totalsOf(from, to) : null,
+    cfg.summary && range ? totalsOf(range.from, range.to) : null,
   ]);
   exportRows = detailExport(cfg.columns, rows);
   const clearHref = location.hash.replace(/([?&])product=\d+&?/, "$1").replace(/[?&]$/, "");
   const productChip = productId
     ? `<span class="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-200 text-sm text-indigo-900">Produk: <b>${esc(product?.display_name ?? `#${productId}`)}</b><a href="${esc(clearHref)}" class="text-indigo-700 underline">Semua produk</a></span>`
     : "";
+  const cards = totals ? `<div class="grid md:grid-cols-4 gap-4 mb-4">${summaryCards(cfg.summary, totals, priorTotals)}</div>` : "";
   return {
-    controls: `${productChip}${searchBox(q, "Cari...")}${cfg.state ? filterSelect([["", "Semua status"], ...cfg.state.options], state) : ""}`,
-    html: detailTable(cfg.columns, rows, `${rows.length} baris${rows.length >= 300 ? " (300 terbaru; persempit dengan tanggal atau pencarian)" : ""}`, "Tidak ada baris pada rentang ini."),
+    controls: `${productChip}${searchBox(q, "Cari...")}${cfg.state ? filterSelect([["", "Semua status"], ...cfg.state.options], state) : ""}${cfg.summary ? compareControls(mode, query) : ""}`,
+    html: `${cards}${detailTable(cfg.columns, rows, `${rows.length} baris${rows.length >= 300 ? " (300 terbaru; persempit dengan tanggal atau pencarian)" : ""}`, "Tidak ada baris pada rentang ini.")}${cfg.summary ? compareNote(mode, range, " Kartu menghitung semua baris yang cocok dengan saringan, bukan hanya 300 baris pertama.") : ""}`,
   };
 }
 
@@ -546,6 +585,17 @@ export function onChange(event, el) {
   const params = new URLSearchParams(last.query);
   if (el.value) params.set(key, el.value);
   else params.delete(key);
+  if (key === "cmp") {
+    // "Rentang bebas" dimulai dari periode sebelumnya agar langsung terisi; pilihan lain membuang tanggal pembanding
+    const prev = el.value === "custom" && !(params.get("cf") && params.get("ct")) ? compareRange(params.get("from") ?? yearStart(), params.get("to") ?? todayText(), "prev") : null;
+    if (prev) {
+      params.set("cf", prev.from);
+      params.set("ct", prev.to);
+    } else if (el.value !== "custom") {
+      params.delete("cf");
+      params.delete("ct");
+    }
+  }
   const qs = params.toString();
   location.hash = `#/analysis/${last.sub}${qs ? `?${qs}` : ""}`;
 }
