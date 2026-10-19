@@ -117,7 +117,10 @@ async function saveMethods() {
 
 async function renderForm(id) {
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
-  const [allMethods, pricelists] = await Promise.all([searchRead("pos.payment.method", [], ["name", "type", "config_ids"], { order: "sequence, id" }), referencePricelists()]);
+  const [allMethods, pricelists, warehouses] = await Promise.all([
+    searchRead("pos.payment.method", [], ["name", "type", "config_ids"], { order: "sequence, id" }), referencePricelists(),
+    searchRead("stock.warehouse", [["pos_type_id", "!=", false]], ["display_name", "pos_type_id"], { order: "sequence, id" }),
+  ]);
   let cfg = null;
   if (id) {
     cfg = await readOne("pos.config", id, ["name", "payment_method_ids", "cash_control", "pricelist_id", "active", "current_session_id", "current_session_state", "journal_id", "picking_type_id", "session_ids", "last_session_closing_cash", "last_session_closing_date"]);
@@ -128,8 +131,8 @@ async function renderForm(id) {
   }
   if (!form || form.id !== (cfg?.id ?? null)) {
     const values = cfg
-      ? { name: cfg.name, payment_method_ids: [...cfg.payment_method_ids].sort((a, b) => a - b), cash_control: Boolean(cfg.cash_control), pricelist_id: cfg.pricelist_id?.[0] ?? null }
-      : { name: "", payment_method_ids: allMethods.filter((m) => !(m.type === "cash" && m.config_ids.length)).map((m) => m.id).sort((a, b) => a - b), cash_control: false, pricelist_id: null };
+      ? { name: cfg.name, payment_method_ids: [...cfg.payment_method_ids].sort((a, b) => a - b), cash_control: Boolean(cfg.cash_control), pricelist_id: cfg.pricelist_id?.[0] ?? null, picking_type_id: cfg.picking_type_id?.[0] ?? null }
+      : { name: "", payment_method_ids: allMethods.filter((m) => !(m.type === "cash" && m.config_ids.length)).map((m) => m.id).sort((a, b) => a - b), cash_control: false, pricelist_id: null, picking_type_id: null };
     form = { id: cfg?.id ?? null, values, initial: cfg ? { ...values } : null };
   }
   const v = form.values;
@@ -142,6 +145,13 @@ async function renderForm(id) {
         .join("")}</div>`
     : '<div class="py-2 text-sm text-amber-700">Belum ada metode pembayaran. Tambahkan di halaman POS Station.</div>';
   const running = cfg?.current_session_id && ["opened", "opening_control"].includes(cfg.current_session_state);
+  // Gudang stasiun = tipe operasi POS gudang itu (`pos_type_id`): dari situ stok keluar saat sesi ditutup. Tipe operasi lain (bukan milik satu gudang) tetap tampil apa adanya.
+  const types = warehouses.map((w) => ({ id: w.pos_type_id[0], display_name: w.display_name }));
+  if (cfg?.picking_type_id && !types.some((t) => t.id === cfg.picking_type_id[0])) types.push({ id: cfg.picking_type_id[0], display_name: cfg.picking_type_id[1] });
+  const stockField = running
+    ? `${readonlyValue(cfg.picking_type_id?.[1] ?? "-")}<p class="mt-1 text-xs text-gray-500">Tutup sesi yang sedang berjalan untuk mengganti gudang.</p>`
+    : `<select data-cfg="picking_type_id" data-kind="id" class="${INPUT}">${selectOptions(types, v.picking_type_id, cfg ? "" : "Gudang utama (bawaan)")}</select>
+       <p class="mt-1 text-xs text-gray-500">Stok barang yang dijual keluar dari gudang ini saat sesi ditutup.</p>`;
   app.innerHTML = `
     <div class="text-sm text-gray-500 mb-2"><a href="#/posconfig" class="hover:text-indigo-600">POS Station</a> / ${esc(cfg?.name ?? "Baru")}</div>
     <div class="flex flex-wrap items-center gap-2 mb-3">
@@ -160,7 +170,7 @@ async function renderForm(id) {
       <div class="flex items-start pt-5"><label class="flex items-start gap-3 text-sm"><input type="checkbox" data-cfg="cash_control" ${v.cash_control ? "checked" : ""} class="mt-1 rounded border-gray-300 text-indigo-600">
         <span><span class="font-medium text-gray-900">Kontrol kas</span><span class="block text-gray-500">Kas awal dicatat saat membuka sesi dan kas dihitung saat menutup; selisih dijurnal sebagai selisih kas.</span></span></label></div>
       ${cfg ? fieldBlock("Jurnal Penjualan POS", readonlyValue(cfg.journal_id?.[1] ?? "-")) : ""}
-      ${cfg ? fieldBlock("Tipe Operasi Stok", readonlyValue(cfg.picking_type_id?.[1] ?? "-")) : ""}
+      ${fieldBlock("Gudang Stok", stockField)}
     </section>
     <div class="flex gap-2 mt-4">
       <button data-action="save" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
@@ -173,9 +183,10 @@ async function persist() {
   const v = form.values;
   if (!v.name.trim()) throw new Error("Nama stasiun wajib diisi.");
   if (!v.payment_method_ids.length) throw new Error("Pilih minimal satu metode pembayaran.");
-  const toOdoo = { name: (x) => x.trim(), pricelist_id: (x) => x || false, cash_control: (x) => Boolean(x), payment_method_ids: (x) => [[6, 0, x]] };
+  const toOdoo = { name: (x) => x.trim(), pricelist_id: (x) => x || false, cash_control: (x) => Boolean(x), payment_method_ids: (x) => [[6, 0, x]], picking_type_id: (x) => Number(x) };
   if (!form.id) {
-    const [id] = await call("pos.config", "create", { vals_list: [Object.fromEntries(Object.entries(v).map(([k, x]) => [k, toOdoo[k](x)]))] });
+    // gudang kosong = bawaan Odoo (gudang utama); tipe operasi wajib, jadi tidak dikirim bila tidak dipilih
+    const [id] = await call("pos.config", "create", { vals_list: [Object.fromEntries(Object.entries(v).filter(([k, x]) => k !== "picking_type_id" || x).map(([k, x]) => [k, toOdoo[k](x)]))] });
     return id;
   }
   const changed = changedValues(v, form.initial, Object.keys(v));
