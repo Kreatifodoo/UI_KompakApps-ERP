@@ -364,3 +364,18 @@ class TestStockJournals(AccountTestInvoicingCommon):
         parent = self.env["product.category"].create({"name": "Induk Jurnal", "property_cost_method": "average", "kompakapps_stock_input_account_id": custom.id})
         child = self.env["product.category"].create({"name": "Anak Jurnal", "parent_id": parent.id})
         self.assertEqual((child.kompakapps_stock_input_account_id, child.kompakapps_stock_output_account_id), (custom, parent.kompakapps_stock_output_account_id))
+
+    def test_loss_account_of_the_location_is_the_counterpart_of_the_category_inventory_account(self):
+        """Akun Loss pada lokasi Inventory Loss (dapat diatur di UI) adalah lawan akun Persediaan kategori; mengganti atau mengosongkannya mengubah jurnal opname."""
+        self._stocked(10.0, 100000.0)
+        adjustment = self.env["stock.location"].search([("company_id", "=", self.company.id), ("usage", "=", "inventory"), ("name", "!=", "Scrap")], limit=1)
+        other = self.env["account.account"].create({"code": "51000077", "name": "Loss Pilihan Pengguna", "account_type": "expense_direct_cost", "company_ids": [Command.set(self.company.ids)]})
+        adjustment.valuation_account_id = other
+        self._count(self.product, 9.0)
+        self.assertEqual((self._balance(self.stock_account), self._balance(other)), (900000.0, 100000.0), "Opname kurang: Dr Akun Loss pilihan, Cr Persediaan kategori")
+        adjustment.valuation_account_id = False
+        journals = self.env["account.move"].search_count([])
+        self._count(self.product, 8.0)
+        self.assertEqual(self.env["account.move"].search_count([]), journals, "Tanpa Akun Loss opname tidak dijurnal")
+        self.assertEqual(self._balance(self.stock_account), 900000.0)
+
