@@ -146,7 +146,7 @@ export const MENU = [
       { title: "Dashboard", route: "dashboard/hr" },
       { title: "Master", items: [{ title: "Employees", route: "employee" }, { title: "Departments", route: "department" }, { title: "Jobs", route: "job" }] },
       { title: "Attendance", route: "attendance" },
-      { title: "Time Off" },
+      { title: "Time Off", items: [{ title: "Leave Requests", route: "timeoff" }, { title: "Allocations", route: "leavealloc" }, { title: "Balance", route: "leavebalance" }, { title: "Leave Types", route: "leavetype" }] },
       { title: "Expenses" },
       { title: "Contracts" },
       { title: "Payroll" },
