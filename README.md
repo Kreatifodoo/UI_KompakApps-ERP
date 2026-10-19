@@ -26,7 +26,7 @@ python3 -m http.server 8080
 
 Lalu buka http://localhost:8080. Menjalankan lewat server HTTP lebih aman daripada membuka `index.html` langsung (`file://`), karena form dimuat lewat `<iframe>` dan sebagian browser membatasi akses file lokal.
 
-Demo online: https://kreatifodoo.github.io/UI_Nusara-ERP/
+Demo online: https://kreatifodoo.github.io/UI_KompakApps-ERP/
 
 ## Struktur
 
