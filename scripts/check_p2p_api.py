@@ -222,6 +222,7 @@ def main():
     check_budget(api)
     check_analytic_lines(api, product, vendor)
     check_line_taxes(api, product, vendor)
+    check_fiscal_position_taxes(api, product)
     check_loyalty(api, product)
     check_analysis_drill(api)
     check_inventory_valuation(api, vendor)
@@ -2266,6 +2267,68 @@ def check_analytic_lines(api, product, vendor):
     check(sum(r["debit"] for r in hit_a) == 1_400_000.0 and sum(r["debit"] for r in hit_d) == 400_000.0, "anggaran terkonfirmasi ditemukan per akun, termasuk kunci gabungan (A: 1.400.000, D: 400.000)")
     actual = api.call("account.analytic.line", "formatted_read_group", domain=[["account_id", "=", acc_a], ["general_account_id", "in", [codes["63110080"]]], ["date", ">=", f"{year}-01-01"], ["date", "<=", f"{year}-12-31"]], groupby=[], aggregates=["amount:sum"])[0]
     check(-actual["amount:sum"] == 250_000.0, "realisasi dari baris analitik akun A pada akun anggaran = 250.000 (sisa 1.150.000)")
+
+
+def check_fiscal_position_taxes(api, product):
+    """Pajak bawaan produk dipetakan posisi fiskal seperti Odoo (D79): posisi fiskal dibaca dari onchange kolom mitra dan petanya dari `tax_map`, dengan aturan `map_tax` yang sama dengan ui/live/taxpick.js (hasilnya harus sama dengan pajak yang disimpan Odoo pada baris tanpa tax_ids)."""
+    step("Posisi fiskal: pajak bawaan produk dipetakan seperti Odoo (chip pajak baris baru)")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    uom = product["uom_id"][0]
+
+    def mk_tax(name, amount, use, **extra):
+        return api.call("account.tax", "create", vals_list=[{"name": f"{name} {tag}", "amount": amount, "amount_type": "percent", "type_tax_use": use, **extra}])[0]
+
+    p_src, s_src = mk_tax("PPN Masukan Sumber FP", 11.0, "purchase"), mk_tax("PPN Keluaran Sumber FP", 11.0, "sale")
+    [fp] = api.call("account.fiscal.position", "create", vals_list=[{"name": f"FP Pemetaan {tag}"}])
+    [fp_plain] = api.call("account.fiscal.position", "create", vals_list=[{"name": f"FP Tanpa Peta {tag}"}])
+    p_dest = mk_tax("PPN Masukan Tujuan FP", 0.0, "purchase", original_tax_ids=[[6, 0, [p_src]]], fiscal_position_ids=[[6, 0, [fp]]])
+    s_dest = mk_tax("PPN Keluaran Tujuan FP", 0.0, "sale", original_tax_ids=[[6, 0, [s_src]]], fiscal_position_ids=[[6, 0, [fp]]])
+    partners = {name: api.call("res.partner", "create", vals_list=[{"name": f"Mitra {name} {tag}", "is_company": True, "supplier_rank": 1, "customer_rank": 1, **extra}])[0]
+                for name, extra in (("FP", {"property_account_position_id": fp}), ("FP polos", {"property_account_position_id": fp_plain}), ("tanpa FP", {}))}
+    [item] = api.call("product.product", "create", vals_list=[{
+        "name": f"Produk Pajak FP {tag}", "type": "consu", "categ_id": product["categ_id"][0], "list_price": 100_000.0, "standard_price": 50_000.0,
+        "supplier_taxes_id": [[6, 0, [p_src, p_dest]]], "taxes_id": [[6, 0, [s_src, s_dest]]],
+    }])
+    defaults = api.read("product.product", item, ["supplier_taxes_id", "taxes_id"])
+    check(sorted(defaults["supplier_taxes_id"]) == sorted([p_src, p_dest]) and sorted(defaults["taxes_id"]) == sorted([s_src, s_dest]), "produk uji membawa pajak sumber dan pajak tujuan sebagai pajak bawaan")
+
+    def position_of(model, partner, values):
+        """Posisi fiskal seperti loadPosition di taxpick.js: onchange kolom mitra pada dokumen kosong, lalu `tax_map`."""
+        res = api.call(model, "onchange", ids=[], values={**values, "partner_id": partner}, field_names=[], fields_spec={"fiscal_position_id": {"fields": {"display_name": {}}}})
+        fid = (res["value"].get("fiscal_position_id") or {}).get("id")
+        return (fid, api.read("account.fiscal.position", fid, ["tax_ids", "tax_map"])) if fid else (None, None)
+
+    def mapped(taxes, position):
+        """Sama dengan mapTaxes di taxpick.js (meniru map_tax Odoo)."""
+        if not position:
+            return sorted(taxes)
+        if not position["tax_ids"]:
+            bound = {t["id"] for t in api.call("account.tax", "search_read", domain=[["id", "in", taxes], ["fiscal_position_ids", "!=", False]], fields=["id"])}
+            return sorted(t for t in taxes if t not in bound)
+        out = []
+        for t in taxes:
+            out += [d for d in position["tax_map"].get(str(t), [t]) if d not in out]
+        return sorted(out)
+
+    cases = [
+        ("purchase.order", {}, "supplier_taxes_id", "order_line", "purchase.order.line", {"product_qty": 1.0, "product_uom_id": uom, "name": "Uji FP", "price_unit": 1000.0}, "order_id"),
+        ("sale.order", {}, "taxes_id", "order_line", "sale.order.line", {"product_uom_qty": 1.0, "price_unit": 1000.0}, "order_id"),
+        ("account.move", {"move_type": "in_invoice"}, "supplier_taxes_id", "invoice_line_ids", "account.move.line", {"quantity": 1.0, "price_unit": 1000.0, "name": "Uji FP"}, "move_id"),
+    ]
+    for model, values, field, lines_field, line_model, line_vals, link in cases:
+        for who in ("FP", "FP polos", "tanpa FP"):
+            if model != "purchase.order" and who != "FP":
+                continue
+            fid, position = position_of(model, partners[who], values)
+            expected = mapped(defaults[field], position)
+            [doc] = api.call(model, "create", vals_list=[{**values, "partner_id": partners[who], lines_field: [[0, 0, {"product_id": item, **line_vals}]]}])
+            saved = api.read(model, doc, ["fiscal_position_id"])["fiscal_position_id"]
+            row = api.search(line_model, [[link, "=", doc], ["product_id", "=", item]], ["tax_ids"])[0]
+            if model != "purchase.order":  # PO yang dibuat tanpa onchange menyimpan kolom posisi fiskal kosong, tetapi baris tetap dipetakan menurut posisi fiskal mitra
+                check((saved[0] if saved else None) == fid, f"{model} mitra {who}: posisi fiskal dari onchange sama dengan yang disimpan dokumen ({fid})")
+            check(sorted(row["tax_ids"]) == expected, f"{model} mitra {who}: pajak baris simpanan Odoo {sorted(row['tax_ids'])} sama dengan hasil pemetaan klien {expected}")
+    check(mapped(defaults["supplier_taxes_id"], position_of("purchase.order", partners["FP"], {})[1]) == [p_dest], "pajak sumber diganti pajak tujuan, pajak tujuan tidak berganda")
+    check(mapped(defaults["supplier_taxes_id"], position_of("purchase.order", partners["FP polos"], {})[1]) == [p_src], "posisi fiskal tanpa pemetaan membuang pajak yang terikat pada posisi fiskal lain")
 
 
 def check_line_taxes(api, product, vendor):

@@ -49,12 +49,52 @@ document.addEventListener("click", (event) => {
   if (handler) handler.set(key, handler.get(key).filter((t) => t.id !== Number(del.dataset.txDel)));
 });
 
-/** Pajak bawaan produk: "purchase" memakai supplier_taxes_id, "sale" memakai taxes_id. */
-export async function productDefaultTaxes(productId, use) {
+/* ---------- Posisi fiskal (D79) ---------- */
+// Odoo memetakan pajak baris menurut posisi fiskal dokumen saat baris disimpan. Agar chip pada baris baru sama dengan hasil simpan,
+// posisi fiskal dibaca dari server (onchange kolom mitra pada dokumen kosong, jadi aturan otomatis Odoo ikut) beserta petanya
+// (`tax_map`), lalu dipakai untuk memetakan pajak bawaan produk. JSON-2 tidak bisa memanggil `map_tax` (argumennya recordset).
+
+const positions = new Map();
+const POSITION_TTL = 60_000;
+async function loadPosition(model, partnerId, values) {
+  const result = await call(model, "onchange", { ids: [], values: { ...values, partner_id: partnerId }, field_names: [], fields_spec: { fiscal_position_id: { fields: { display_name: {} } } } });
+  const id = result?.value?.fiscal_position_id?.id;
+  if (!id) return null;
+  const [position] = await call("account.fiscal.position", "read", { ids: [id], fields: ["name", "tax_ids", "tax_map"] });
+  return { id, name: position.name, mapped: (position.tax_ids ?? []).length > 0, map: position.tax_map ?? {} };
+}
+/** Posisi fiskal yang dipakai Odoo untuk dokumen model ini dengan mitra itu ({ id, name, mapped, map }), null bila tanpa posisi fiskal atau tak terbaca. Disimpan semenit per mitra. */
+export function fiscalPosition(model, partnerId, values = {}) {
+  if (!partnerId) return Promise.resolve(null);
+  const key = `${model}|${partnerId}|${JSON.stringify(values)}`;
+  const hit = positions.get(key);
+  if (hit && Date.now() - hit.at < POSITION_TTL) return hit.promise;
+  const promise = loadPosition(model, partnerId, values).catch(() => null);
+  positions.set(key, { at: Date.now(), promise });
+  return promise;
+}
+
+/** Pajak setelah dipetakan posisi fiskal seperti `map_tax` Odoo: posisi tanpa pemetaan hanya membuang pajak yang terikat pada posisi fiskal tertentu; selain itu tiap pajak diganti pajak tujuannya, dan pajak tanpa pemetaan tetap. */
+export async function mapTaxes(taxes, position) {
+  if (!position || !taxes.length) return taxes;
+  if (!position.mapped) {
+    const bound = await searchRead("account.tax", [["id", "in", taxes.map((t) => t.id)], ["fiscal_position_ids", "!=", false]], ["id"], { context: { active_test: false } });
+    const drop = new Set(bound.map((t) => t.id));
+    return drop.size ? taxes.filter((t) => !drop.has(t.id)) : taxes;
+  }
+  const ids = [...new Set(taxes.flatMap((t) => position.map[String(t.id)] ?? [t.id]))];
+  if (ids.length === taxes.length && ids.every((id) => taxes.some((t) => t.id === id))) return taxes;
+  return taxList(ids, await loadTaxNames(ids));
+}
+
+/** Pajak bawaan produk: "purchase" memakai supplier_taxes_id, "sale" memakai taxes_id. Dengan `doc` ({ model, partnerId, values }) hasilnya sudah dipetakan posisi fiskal mitra dokumen itu. */
+export async function productDefaultTaxes(productId, use, doc = null) {
   const field = use === "purchase" ? "supplier_taxes_id" : "taxes_id";
   const [product] = await call("product.product", "read", { ids: [productId], fields: [field] });
   const ids = product?.[field] ?? [];
-  return ids.length ? searchRead("account.tax", [["id", "in", ids]], ["name", "price_include"], { order: "sequence, name" }) : [];
+  const taxes = ids.length ? await searchRead("account.tax", [["id", "in", ids]], ["name", "price_include"], { order: "sequence, name" }) : [];
+  if (!doc?.partnerId || !taxes.length) return taxes;
+  return mapTaxes(taxes, await fiscalPosition(doc.model, doc.partnerId, doc.values));
 }
 
 /** Daftar {id, name} dari id pajak baris Odoo dan peta nama. */

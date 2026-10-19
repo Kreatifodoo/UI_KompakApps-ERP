@@ -71,6 +71,7 @@ registerLookup("po-vendor", {
   choose: (input, item) => {
     form.partner = item;
     input.value = item.display_name;
+    refreshNewLineTaxes().catch((error) => toast(error.message, "error"));
   },
 });
 /** Gudang penerima dokumen: pilihan pada "Terima di Gudang" (tipe operasi penerimaannya), atau gudang bawaan bila "Otomatis". */
@@ -142,9 +143,24 @@ registerTaxes("po", {
   },
 });
 
+const taxDoc = () => ({ model: "purchase.order", partnerId: form?.partner?.id ?? null });
+
+/** Pajak bawaan baris baru mengikuti posisi fiskal mitra; saat mitra diganti, baris baru yang pajaknya belum disentuh dihitung ulang (baris tersimpan tetap). */
+async function refreshNewLineTaxes() {
+  const current = form;
+  const lines = current?.lines.filter((l) => l.product_id && !l.taxTouched && l.taxes0 === undefined) ?? [];
+  if (!lines.length) return;
+  const results = await Promise.all(lines.map((l) => productDefaultTaxes(l.product_id, "purchase", taxDoc())));
+  if (form !== current) return;
+  lines.forEach((l, i) => {
+    l.taxes = results[i];
+  });
+  document.querySelector("#lines-box").innerHTML = linesTable();
+}
+
 /** Mengganti produk menerapkan pajak bawaan produk baru; pilihan manual sebelumnya ditimpa dan penggunanya diberi tahu. */
 async function applyProductTaxes(line, productId) {
-  const defaults = await productDefaultTaxes(productId, "purchase");
+  const defaults = await productDefaultTaxes(productId, "purchase", taxDoc());
   if (line.product_id !== productId) return;
   const before = line.taxes.map((t) => t.id).sort().join();
   if (line.taxTouched && before !== defaults.map((t) => t.id).sort().join()) toast("Pajak baris diganti dengan pajak bawaan produk baru.");
