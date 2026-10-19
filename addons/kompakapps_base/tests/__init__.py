@@ -17,3 +17,4 @@ from . import test_activity
 from . import test_multi_company
 from . import test_report_groups
 from . import test_stock_journals
+from . import test_subcontracting

@@ -1,5 +1,6 @@
-// Bill of Material (mrp.bom). Form mengikuti form BoM Odoo 19: produk jadi, jumlah dan satuan, tipe (produksi atau kit),
-// komponen, produk sampingan (bila fiturnya aktif), dan operasi per work center (bila Work Orders aktif). Kartu biaya
+// Bill of Material (mrp.bom). Form mengikuti form BoM Odoo 19: produk jadi, jumlah dan satuan, tipe (produksi, kit, atau subcontracting),
+// subkontraktor (tipe subcontracting; BoM ini tanpa operasi), komponen, produk sampingan (bila fiturnya aktif), dan operasi per work center
+// (bila Work Orders aktif). Kartu biaya
 // memakai laporan struktur BoM Odoo: biaya komponen ditambah biaya operasi.
 import {
   PRODUCT_PAGE, searchProducts,
@@ -9,12 +10,12 @@ import {
 } from "../common.js";
 import { compareAction, compareBadge, compareChange, renderCompare } from "./bomcompare.js";
 
-const TYPES = { normal: "Produksi (manufacture)", phantom: "Kit" };
+const TYPES = { normal: "Produksi (manufacture)", phantom: "Kit", subcontract: "Subcontracting" };
 const CONSUMPTION = { flexible: "Boleh", warning: "Boleh dengan peringatan", strict: "Diblokir" };
-const FILTERS = [["active", "Aktif"], ["archived", "Diarsipkan"], ["all", "Semua"]];
+const FILTERS = [["active", "Aktif"], ["archived", "Diarsipkan"], ["all", "Semua"], ["normal", "Tipe Produksi"], ["phantom", "Tipe Kit"], ["subcontract", "Tipe Subcontracting"]];
 const nf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 3 });
 
-let form = null; // { id, values, initial, product, lines, byproducts, ops, removed: { lines, byproducts, ops } }
+let form = null; // { id, values, initial, product, subcontractors, lines, byproducts, ops, removed: { lines, byproducts, ops } }
 let last = { sub: "", query: new URLSearchParams() };
 let features = null; // { byproducts, routings }
 export const leave = () => {
@@ -43,6 +44,16 @@ registerLookup("bom-product", {
     repaintHeaderUnit();
   },
 });
+registerLookup("bom-subcontractor", {
+  search: (q) => searchRead("res.partner", [["name", "ilike", q], ["id", "not in", (form?.subcontractors ?? []).map((p) => p.id)]], ["display_name"], { limit: 10, order: "name" }),
+  isChosen: () => false,
+  choose: (input, item) => {
+    form.subcontractors.push({ id: item.id, display_name: item.display_name });
+    input.value = "";
+    paintSubcontractors();
+    document.querySelector("#bom-subcontractor-input")?.focus();
+  },
+});
 for (const [name, section] of Object.entries(SECTIONS)) {
   registerLookup(section.lookup, {
     pageSize: PRODUCT_PAGE,
@@ -66,6 +77,25 @@ function repaintHeaderUnit() {
   if (select) select.value = String(form.values.uomId);
 }
 
+/** Kotak Subcontractors: pemasok yang boleh mengerjakan BoM tipe Subcontracting, berupa chip dan kotak saran. */
+function subcontractorBox() {
+  const chips = form.subcontractors
+    .map((p, i) => `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-indigo-50 text-indigo-800 text-sm">${esc(p.display_name)}<button type="button" data-action="remove-subcontractor" data-row="${i}" class="text-indigo-400 hover:text-rose-600" aria-label="Hapus ${esc(p.display_name)}"><i class="fas fa-times"></i></button></span>`)
+    .join("");
+  return `<div class="flex flex-wrap gap-2 mb-2">${chips || '<span class="text-sm text-gray-400">Belum ada subkontraktor.</span>'}</div>
+    <input id="bom-subcontractor-input" data-lookup="bom-subcontractor" autocomplete="off" role="combobox" aria-autocomplete="list" placeholder="Cari pemasok untuk ditambahkan..." class="${INPUT}">`;
+}
+function paintSubcontractors() {
+  const box = document.querySelector("#box-subcontractors");
+  if (box) box.innerHTML = subcontractorBox();
+}
+/** Tipe Subcontracting: tampilkan Subcontractors dan sembunyikan Operasi (BoM subkontrak tidak boleh punya operasi). */
+function paintTypeSections() {
+  const sub = form.values.type === "subcontract";
+  document.querySelector("#field-subcontractors")?.classList.toggle("hidden", !sub);
+  document.querySelector("#section-ops")?.classList.toggle("hidden", sub);
+}
+
 async function loadFeatures() {
   const [byproducts, routings] = await Promise.all([hasGroup("mrp.group_mrp_byproducts"), hasGroup("mrp.group_mrp_routings")]);
   features = { byproducts, routings };
@@ -85,11 +115,14 @@ async function renderList(query) {
   const product = Number(query.get("product")) || null;
   const domain = [];
   if (filter === "archived") domain.push(["active", "=", false]);
+  else if (TYPES[filter]) domain.push(["type", "=", filter]);
   if (product) domain.push(["product_tmpl_id", "=", product]);
   if (text) domain.push("|", "|", ["product_tmpl_id.name", "ilike", text], ["code", "ilike", text], ["bom_line_ids.product_id.name", "ilike", text]);
-  const rows = await searchRead("mrp.bom", domain, ["code", "product_tmpl_id", "product_qty", "product_uom_id", "type", "bom_line_ids", "operation_ids", "active"], {
+  const rows = await searchRead("mrp.bom", domain, ["code", "product_tmpl_id", "product_qty", "product_uom_id", "type", "subcontractor_ids", "bom_line_ids", "operation_ids", "active"], {
     order: "product_tmpl_id, sequence, id", limit: 100, context: { active_test: filter === "active" },
   });
+  const partnerIds = [...new Set(rows.flatMap((r) => r.subcontractor_ids))];
+  const partners = new Map((partnerIds.length ? await searchRead("res.partner", [["id", "in", partnerIds]], ["display_name"], { limit: 200 }) : []).map((p) => [p.id, p.display_name]));
   const perProduct = new Map();
   rows.forEach((r) => perProduct.set(r.product_tmpl_id[0], (perProduct.get(r.product_tmpl_id[0]) ?? 0) + 1));
   const body = rows
@@ -98,6 +131,7 @@ async function renderList(query) {
         cell(`${esc(r.product_tmpl_id[1])} ${compareBadge(perProduct.get(r.product_tmpl_id[0]), r.product_tmpl_id[0])}`, { strong: true, raw: true }),
         cell(r.code || "-"),
         cell(TYPES[r.type] ?? r.type),
+        cell(r.subcontractor_ids.map((id) => partners.get(id) ?? `#${id}`).join(", ") || "-"),
         cell(`${nf.format(r.product_qty)} ${r.product_uom_id?.[1] ?? ""}`, { right: true }),
         cell(String(r.bom_line_ids.length), { right: true }),
         cell(String(r.operation_ids.length), { right: true }),
@@ -113,7 +147,7 @@ async function renderList(query) {
        <a href="#/bom/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>BoM Baru</a>`,
     ) +
     table(
-      [{ label: "Produk Jadi" }, { label: "Kode" }, { label: "Tipe" }, { label: "Jumlah", right: true }, { label: "Komponen", right: true }, { label: "Operasi", right: true }, { label: "" }],
+      [{ label: "Produk Jadi" }, { label: "Kode" }, { label: "Tipe" }, { label: "Subcontractors" }, { label: "Jumlah", right: true }, { label: "Komponen", right: true }, { label: "Operasi", right: true }, { label: "" }],
       body,
       "Belum ada BoM. Buat dengan tombol BoM Baru.",
     );
@@ -197,7 +231,7 @@ async function renderForm(id, query) {
   centers = wcs;
   let bom = null;
   if (id) {
-    bom = await readOne("mrp.bom", id, ["code", "type", "product_tmpl_id", "product_qty", "product_uom_id", "consumption", "produce_delay", "active", "bom_line_ids", "byproduct_ids", "operation_ids"]);
+    bom = await readOne("mrp.bom", id, ["code", "type", "product_tmpl_id", "product_qty", "product_uom_id", "consumption", "produce_delay", "active", "subcontractor_ids", "bom_line_ids", "byproduct_ids", "operation_ids"]);
     if (!bom) {
       app.innerHTML = '<p class="text-sm text-rose-600">BoM tidak ditemukan.</p>';
       return;
@@ -205,16 +239,17 @@ async function renderForm(id, query) {
   }
   if (!form || form.id !== (bom?.id ?? null)) {
     if (bom) {
-      const [lines, byproducts, ops, product] = await Promise.all([
+      const [lines, byproducts, ops, product, subcontractors] = await Promise.all([
         bom.bom_line_ids.length ? searchRead("mrp.bom.line", [["id", "in", bom.bom_line_ids]], ["product_id", "product_qty", "product_uom_id"], { order: "sequence, id" }) : [],
         bom.byproduct_ids.length ? searchRead("mrp.bom.byproduct", [["id", "in", bom.byproduct_ids]], ["product_id", "product_qty", "product_uom_id", "cost_share"], { order: "sequence, id" }) : [],
         bom.operation_ids.length ? searchRead("mrp.routing.workcenter", [["id", "in", bom.operation_ids]], ["name", "workcenter_id", "time_cycle_manual", "time_mode"], { order: "sequence, id" }) : [],
         searchRead("product.template", [["id", "=", bom.product_tmpl_id[0]]], ["display_name", "uom_id"], { limit: 1 }),
+        bom.subcontractor_ids.length ? searchRead("res.partner", [["id", "in", bom.subcontractor_ids]], ["display_name"], { order: "name" }) : [],
       ]);
       const rowOf = (r) => ({ id: r.id, product: { id: r.product_id[0], display_name: r.product_id[1] }, text: r.product_id[1], qty: r.product_qty, uomId: r.product_uom_id[0] });
       const values = normalize(bom);
       form = {
-        id: bom.id, values, initial: { ...values }, product: product[0],
+        id: bom.id, values, initial: { ...values }, product: product[0], subcontractors, initialSubcontractors: subcontractors.map((p) => p.id),
         lines: bom.bom_line_ids.length ? lines.map(rowOf) : [emptyRow("lines")],
         byproducts: byproducts.map((r) => ({ ...rowOf(r), share: r.cost_share })),
         ops: ops.map((o) => ({ id: o.id, name: o.name, wcId: o.workcenter_id[0], minutes: o.time_cycle_manual })),
@@ -225,7 +260,7 @@ async function renderForm(id, query) {
       const wanted = Number(query?.get("product")) || null;
       const product = wanted ? (await searchRead("product.template", [["id", "=", wanted]], ["display_name", "uom_id"], { limit: 1 }))[0] ?? null : null;
       const values = { type: "normal", qty: 1, uomId: product?.uom_id?.[0] ?? uoms[0]?.id ?? null, code: "", consumption: "warning", delay: 0 };
-      form = { id: null, values, initial: null, product, lines: [emptyRow("lines")], byproducts: [], ops: [], removed: { lines: [], byproducts: [], ops: [] }, initialRows: { lines: [], byproducts: [], ops: [] } };
+      form = { id: null, values, initial: null, product, subcontractors: [], initialSubcontractors: [], lines: [emptyRow("lines")], byproducts: [], ops: [], removed: { lines: [], byproducts: [], ops: [] }, initialRows: { lines: [], byproducts: [], ops: [] } };
     }
   }
   const v = form.values;
@@ -246,6 +281,7 @@ async function renderForm(id, query) {
         ? readonlyValue(bom.product_tmpl_id[1])
         : `<input data-lookup="bom-product" autocomplete="off" role="combobox" aria-autocomplete="list" value="${esc(form.product?.display_name ?? "")}" placeholder="Cari produk..." class="${INPUT}">`)}
       ${fieldBlock("Tipe BoM", `<select data-bom="type" class="${INPUT}">${Object.entries(TYPES).map(([k, label]) => `<option value="${k}" ${k === v.type ? "selected" : ""}>${esc(label)}</option>`).join("")}</select>`)}
+      <div id="field-subcontractors" class="md:col-span-2 ${v.type === "subcontract" ? "" : "hidden"}">${fieldBlock("Subcontractors", `<div id="box-subcontractors">${subcontractorBox()}</div><p class="mt-1 text-xs text-gray-500">Pemasok yang boleh mengerjakan produk ini. PO produk ini ke pemasok di atas membuat penerimaan dan MO subkontrak; kirim komponen lewat Resupply Subcontractor. BoM subkontrak tidak punya operasi.</p>`)}</div>
       ${fieldBlock("Jumlah", `<input type="number" min="0" step="any" data-bom="qty" data-kind="number" value="${esc(v.qty)}" class="${INPUT} text-right">`)}
       ${fieldBlock("Satuan", `<select data-bom="uomId" data-kind="id" class="${INPUT}">${selectOptions(uoms, v.uomId, "-")}</select>`)}
       ${fieldBlock("Referensi", `<input data-bom="code" value="${esc(v.code)}" class="${INPUT}">`)}
@@ -255,7 +291,7 @@ async function renderForm(id, query) {
     <section id="box-lines-section" class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 p-4 overflow-x-auto"><div class="text-sm font-semibold mb-2">Komponen</div><div id="box-lines">${sectionTable("lines")}</div></section>
     ${features.byproducts ? `<section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 p-4 overflow-x-auto"><div class="text-sm font-semibold mb-2">Produk Sampingan</div><div id="box-byproducts">${sectionTable("byproducts")}</div></section>` : ""}
     ${features.routings
-      ? `<section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 p-4 overflow-x-auto"><div class="text-sm font-semibold mb-2">Operasi</div><div id="box-ops">${opsTable()}</div></section>`
+      ? `<section id="section-ops" class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 p-4 overflow-x-auto ${v.type === "subcontract" ? "hidden" : ""}"><div class="text-sm font-semibold mb-2">Operasi</div><div id="box-ops">${opsTable()}</div></section>`
       : `<p class="mt-4 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3">Operasi dan work order belum aktif. Aktifkan di <a href="#/workcenter" class="underline">WorkCenter</a> (bagian Fitur manufaktur).</p>`}
     <div class="flex gap-2 mt-4">
       <button data-action="save" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
@@ -305,9 +341,15 @@ async function persist() {
   if (!v.uomId) throw new Error("Pilih satuan BoM.");
   if (!form.lines.some((r) => r.product)) throw new Error("Tambahkan minimal satu komponen.");
   const header = { type: v.type, product_qty: Number(v.qty), product_uom_id: v.uomId, code: v.code.trim() || false, consumption: v.consumption, produce_delay: Number(v.delay) || 0 };
+  const subcontract = v.type === "subcontract";
+  if (subcontract && !form.subcontractors.length) throw new Error("Pilih minimal satu subkontraktor untuk BoM tipe Subcontracting.");
+  if (subcontract && form.ops.some((o) => o.name.trim() || o.wcId)) throw new Error("BoM tipe Subcontracting tidak boleh punya operasi. Ganti tipe lalu hapus operasinya, atau hapus operasi sebelum memilih Subcontracting.");
   const rels = { bom_line_ids: commands("lines") };
+  const subIds = form.subcontractors.map((p) => p.id).sort((a, b) => a - b);
+  const subChanged = JSON.stringify(subIds) !== JSON.stringify([...form.initialSubcontractors].sort((a, b) => a - b));
+  if (subcontract && (subChanged || !form.id)) rels.subcontractor_ids = [[6, 0, subIds]];
   if (features.byproducts) rels.byproduct_ids = commands("byproducts");
-  if (features.routings) rels.operation_ids = commands("ops");
+  if (features.routings && !subcontract) rels.operation_ids = commands("ops");
   if (!form.id) {
     const create = Object.fromEntries(Object.entries(rels).filter(([, c]) => c.length));
     const [newId] = await call("mrp.bom", "create", { vals_list: [{ product_tmpl_id: form.product.id, ...header, ...create }] });
@@ -338,6 +380,9 @@ export async function onClick(event, el) {
     if (removed?.id) form.removed[name].push(removed.id);
     if (!form[name].length && name === "lines") form[name].push(emptyRow(name));
     paintSection(name);
+  } else if (action === "remove-subcontractor") {
+    form.subcontractors.splice(Number(el.dataset.row), 1);
+    paintSubcontractors();
   } else if (action === "new-mo") location.hash = `#/mo/new?bom=${id}`;
   else if (action === "save") {
     const saved = await guarded(el, persist);
@@ -366,7 +411,10 @@ export function onChange(event, el) {
 
 export function onInput(event, el) {
   if (!form) return;
-  if (el.dataset.bom) form.values[el.dataset.bom] = fieldValue(el);
+  if (el.dataset.bom) {
+    form.values[el.dataset.bom] = fieldValue(el);
+    if (el.dataset.bom === "type") paintTypeSections();
+  }
   else if (el.dataset.section) {
     const row = form[el.dataset.section][Number(el.dataset.row)];
     const field = el.dataset.field;
@@ -379,5 +427,5 @@ export function onInput(event, el) {
   } else if (el.dataset.lookup === "bom-product") {
     form.product = null;
     runLookup(el, 250);
-  }
+  } else if (el.dataset.lookup === "bom-subcontractor") runLookup(el, 250);
 }

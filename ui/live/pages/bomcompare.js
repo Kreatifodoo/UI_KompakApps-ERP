@@ -3,7 +3,7 @@
 import { app, esc, money, pageHeader, searchRead } from "../common.js";
 
 const nf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 4 });
-const TYPES = { normal: "Produksi", phantom: "Kit" };
+const TYPES = { normal: "Produksi", phantom: "Kit", subcontract: "Subcontracting" };
 const MAX_BOMS = 6;
 let onlyDiff = false;
 

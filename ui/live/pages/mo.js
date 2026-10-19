@@ -8,6 +8,7 @@ import {
   selectOptions, statTiles, statusbar, table, toast, toInputDateTime, actionBar,
 } from "../common.js";
 import { printButton } from "../print.js";
+import { moNote } from "../subcontract.js";
 import { productionJournals } from "../stockjournal.js";
 import { defaultWarehouse, fmtQty, stockHint, stockText, storableStock } from "../stockqty.js";
 
@@ -243,7 +244,7 @@ const MO_FIELDS = [
   "name", "state", "reservation_state", "product_id", "product_qty", "qty_produced", "qty_producing", "product_uom_id", "bom_id", "picking_type_id", "location_src_id",
   "location_dest_id", "date_start", "date_finished", "date_deadline", "user_id", "origin", "move_raw_ids", "move_finished_ids", "workorder_ids", "components_availability",
   "components_availability_state", "reserve_visible", "unreserve_visible", "product_tracking", "lot_producing_ids", "scrap_count", "unbuild_count", "mrp_production_backorder_count",
-  "production_group_id", "duration_expected", "duration",
+  "production_group_id", "duration_expected", "duration", "subcontractor_id",
 ];
 
 const BUTTONS = [
@@ -380,6 +381,7 @@ async function renderForm(id, query) {
       { count: mo.mrp_production_backorder_count > 1 ? mo.mrp_production_backorder_count : 0, label: "Backorder", icon: "fa-clone", href: `#/mo?group=${mo.production_group_id?.[0]}` },
     ])}</div>
     <div class="mb-3 flex flex-wrap items-center gap-3"><h1 class="text-2xl font-bold text-gray-900">${esc(mo.name)}</h1>${open ? availabilityBadge(mo.components_availability_state) : ""}</div>
+    ${await moNote(mo)}
     ${componentsLeft ? `<p class="mb-3 text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">Komponen belum lengkap${mo.components_availability ? ` (${esc(AVAILABILITY[mo.components_availability_state]?.[0] ?? mo.components_availability)})` : ""}. Terima atau beli komponen, lalu pilih Cek Ketersediaan. Produksi tetap bisa dicatat dengan jumlah yang tersedia.</p>` : ""}
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 grid md:grid-cols-2 gap-x-8 gap-y-4">
       ${fieldBlock("Produk", readonlyValue(mo.product_id[1]))}
