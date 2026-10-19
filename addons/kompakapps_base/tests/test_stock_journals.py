@@ -364,4 +364,3 @@ class TestStockJournals(AccountTestInvoicingCommon):
         parent = self.env["product.category"].create({"name": "Induk Jurnal", "property_cost_method": "average", "kompakapps_stock_input_account_id": custom.id})
         child = self.env["product.category"].create({"name": "Anak Jurnal", "parent_id": parent.id})
         self.assertEqual((child.kompakapps_stock_input_account_id, child.kompakapps_stock_output_account_id), (custom, parent.kompakapps_stock_output_account_id))
-
