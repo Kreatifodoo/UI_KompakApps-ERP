@@ -1,6 +1,6 @@
 // Bagian bersama halaman Routes dan Rules (stock.route, stock.rule): label Indonesia, penjelasan pilihan, pengenal rute dan aturan bawaan
 // gudang (yang tidak boleh dirusak), dan pemeriksaan kombinasi aturan yang tak sah (D81).
-import { call, hasGroup, searchRead } from "./common.js";
+import { call, esc, hasGroup, searchRead } from "./common.js";
 
 export const ACTIONS = {
   pull: "Tarik dari (Pull)",
@@ -169,3 +169,68 @@ export function ruleSentence(v, picking, wh) {
 
 export const note = (html, tone = "info") =>
   `<p class="text-sm rounded-lg px-4 py-3 border ${tone === "warn" ? "text-amber-900 bg-amber-50 border-amber-200" : "text-sky-900 bg-sky-50 border-sky-200"}">${html}</p>`;
+
+/**
+ * Pilihan rute untuk produk atau kategori produk (field `route_ids`): rute yang dapat dipilih pada `selectableField`, ditambah rute yang sudah terpasang
+ * atau diwarisi agar tidak hilang diam-diam. Tiap rute membawa ringkasan aturannya (aksi, MTO) untuk peringatan efeknya.
+ */
+export async function loadRouteChoices(selectableField, selected = [], inherited = []) {
+  const want = [...new Set([...selected, ...inherited])];
+  const domain = want.length ? ["|", [selectableField, "=", true], ["id", "in", want]] : [[selectableField, "=", true]];
+  const routes = await searchRead("stock.route", domain, ["display_name", "sequence"], { order: "sequence, name" });
+  const rules = routes.length ? await searchRead("stock.rule", [["route_id", "in", routes.map((r) => r.id)]], ["route_id", "action", "procure_method"]) : [];
+  const info = new Map(routes.map((r) => [r.id, { actions: new Set(), mto: false, mtsMto: false, rules: 0 }]));
+  for (const rule of rules) {
+    const item = info.get(rule.route_id[0]);
+    item.rules += 1;
+    item.actions.add(rule.action);
+    if (rule.action === "pull" || rule.action === "pull_push") {
+      if (rule.procure_method === "make_to_order") item.mto = true;
+      else if (rule.procure_method === "mts_else_mto") item.mtsMto = true;
+    }
+  }
+  return routes.map((r) => ({ ...r, ...info.get(r.id) }));
+}
+
+/** Label singkat isi rute di samping namanya: "Beli", "Produksi", "MTO", dst. */
+const routeTags = (route) => [route.actions.has("buy") ? "Beli" : "", route.actions.has("manufacture") ? "Produksi" : "", route.mto ? "MTO" : "", route.mtsMto ? "Stok lalu MTO" : ""].filter(Boolean);
+
+/** Daftar kotak centang rute; `key` menandai milik siapa (data-route-box) dan `inherited` adalah rute turunan kategori (hanya info). */
+export function routeBoxHtml(choices, selected, { inherited = [], emptyHint = "" } = {}) {
+  const boxes = choices
+    .filter((r) => !inherited.includes(r.id) || selected.includes(r.id))
+    .map((r) => {
+      const tags = routeTags(r).map((t) => `<span class="ml-1 px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-xs">${esc(t)}</span>`).join("");
+      return `<label class="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" data-route-box="${r.id}" ${selected.includes(r.id) ? "checked" : ""} class="rounded border-gray-300 text-indigo-600"><span>${esc(r.display_name)}${tags}</span></label>`;
+    })
+    .join("");
+  const inheritedNames = choices.filter((r) => inherited.includes(r.id) && !selected.includes(r.id)).map((r) => esc(r.display_name));
+  return `${boxes ? `<div class="grid sm:grid-cols-2 gap-2">${boxes}</div>` : `<p class="text-sm text-gray-500">${emptyHint}</p>`}
+    ${inheritedNames.length ? `<p class="text-xs text-gray-500 mt-2">Rute dari kategori (otomatis berlaku): <b>${inheritedNames.join(", ")}</b>.</p>` : ""}`;
+}
+
+/**
+ * Peringatan efek rute terpilih. `scope`: "produk" atau "kategori". `support` (produk tersimpan): { bom: Set, seller: Set, tmplId } untuk memeriksa
+ * pemasok dan BoM yang dibutuhkan aturan Beli dan Produksi.
+ */
+export function routeWarningsHtml(choices, selected, { scope = "produk", support = null } = {}) {
+  const chosen = choices.filter((r) => selected.includes(r.id));
+  const who = scope === "kategori" ? "produk di kategori ini" : "produk ini";
+  const out = [];
+  for (const r of chosen) {
+    if (!r.rules) out.push([`Rute <b>${esc(r.display_name)}</b> belum punya aturan aktif, jadi tidak berbuat apa-apa. Tambahkan aturan di <a href="#/route/${r.id}" class="underline">Routes</a>.`, "warn"]);
+    if (r.mto) out.push([`Rute <b>${esc(r.display_name)}</b> memakai metode MTO (Picu aturan lain): pengiriman Sales Order ${esc(who)} tidak mengambil dari stok, melainkan menunggu dokumen pengadaan (RFQ atau MO) yang dibuat saat Sales Order dikonfirmasi.`, "warn"]);
+    else if (r.mtsMto) out.push([`Rute <b>${esc(r.display_name)}</b>: stok dipakai bila ada, kekurangannya memicu pengadaan (RFQ atau MO) saat Sales Order dikonfirmasi.`, "info"]);
+    if (r.actions.has("buy")) {
+      if (support && !support.seller.has(support.tmplId)) out.push([`Rute <b>${esc(r.display_name)}</b> membeli, tetapi produk ini belum punya pemasok (Vendor Price list): RFQ tidak bisa dibuat.`, "warn"]);
+      else if (!support) out.push([`Rute <b>${esc(r.display_name)}</b> membeli: ${esc(who)} perlu punya pemasok (Vendor Price list) agar RFQ bisa dibuat.`, "info"]);
+    }
+    if (r.actions.has("manufacture")) {
+      if (support && !support.bom.has(support.tmplId)) out.push([`Rute <b>${esc(r.display_name)}</b> memproduksi, tetapi produk ini belum punya BoM: MO dibuat tanpa komponen.`, "warn"]);
+      else if (!support) out.push([`Rute <b>${esc(r.display_name)}</b> memproduksi: ${esc(who)} perlu punya BoM agar MO membawa komponen.`, "info"]);
+    }
+  }
+  if (chosen.length > 1) out.push(["Beberapa rute dipilih: Odoo memakai rute berurutan terkecil (lihat Routes) yang punya aturan cocok untuk lokasi yang dibutuhkan.", "info"]);
+  if (chosen.length) out.push(["Rute pada produk atau kategori mengalahkan rute bawaan gudang (Beli, Produksi, pengiriman) untuk barang itu.", "info"]);
+  return out.map(([html, tone]) => note(html, tone)).join("");
+}

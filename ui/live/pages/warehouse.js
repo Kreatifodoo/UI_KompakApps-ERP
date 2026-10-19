@@ -149,14 +149,14 @@ async function warehouseDetail(wh) {
     .map((t) => `<tr><td class="py-2 px-4 text-sm">${esc(t.display_name)}</td><td class="py-2 px-4 text-sm">${esc(CODE[t.code] ?? t.code)}</td><td class="py-2 px-4 text-sm">${esc(t.default_location_src_id?.[1] ?? "-")} -> ${esc(t.default_location_dest_id?.[1] ?? "-")}</td></tr>`)
     .join("");
   const routeItems = routes
-    .map((r) => `<li>${esc(r.display_name)}${r.supplier_wh_id ? ` <span class="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">suplai dari ${esc(r.supplier_wh_id[1])}</span>` : ""}</li>`)
+    .map((r) => `<li><a href="#/route/${r.id}" class="text-indigo-700 hover:underline">${esc(r.display_name)}</a>${r.supplier_wh_id ? ` <span class="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">suplai dari ${esc(r.supplier_wh_id[1])}</span>` : ""}</li>`)
     .join("");
   return `<section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 overflow-x-auto">
       <div class="px-4 py-3 border-b border-gray-200 text-sm font-semibold">Operasi yang terbentuk</div>
       <table class="w-full text-left"><thead class="bg-gray-50"><tr>${["Tipe Operasi", "Jenis", "Dari -> Ke"].map((h) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase">${h}</th>`).join("")}</tr></thead><tbody class="divide-y divide-gray-100">${typeRows}</tbody></table></section>
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 p-4"><div class="text-sm font-semibold mb-2">Rute</div>
       ${routeItems ? `<ul class="list-disc list-inside text-sm text-gray-700 space-y-0.5">${routeItems}</ul>` : '<p class="text-sm text-gray-500">Belum ada rute khusus.</p>'}
-      <p class="text-xs text-gray-500 mt-2">Rute "Supply Product from ..." dipilih pada Reorder Level; Odoo membuat transfer keluar dari gudang pemasok ke lokasi transit, lalu penerimaan di gudang ini.</p></section>`;
+      <p class="text-xs text-gray-500 mt-2">Semua rute dan aturan dikelola di <a href="#/route" class="text-indigo-700 hover:underline">Routes</a>; rute lain bisa dipasang ke gudang dari form rute. Rute "Supply Product from ..." dipilih pada Reorder Level; Odoo membuat transfer keluar dari gudang pemasok ke lokasi transit, lalu penerimaan di gudang ini.</p></section>`;
 }
 
 async function codeTaken(code, exceptId) {
