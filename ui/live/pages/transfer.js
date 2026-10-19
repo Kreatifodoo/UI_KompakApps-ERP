@@ -6,7 +6,7 @@ import {
   INPUT, app, call, esc, fieldBlock, guarded, pageHeader, registerLookup, runLookup, searchRead, selectOptions, toast,
 } from "../common.js";
 import { createPickingPage } from "./pickings.js";
-import { stockAt, stockText } from "../stockqty.js";
+import { blockOverStock, stockAt, stockText } from "../stockqty.js";
 
 const INTERNAL = {
   route: "transfer", code: "internal", returnRoute: null, title: "Transfer Internal", noun: "Transfer", partner: "Kontak", qty: "Jumlah Dipindah", qtyLabel: "dipindah",
@@ -132,6 +132,16 @@ async function save() {
     if (!(qty > 0)) throw new Error(`Baris ${i + 1}: jumlah harus lebih dari 0.`);
     return [0, 0, { product_id: l.product.id, product_uom_qty: qty, location_id: form.src, location_dest_id: form.dest }];
   });
+  if (await blockOverStock()) {
+    // opsi "Blokir jumlah melebihi stok" (Inventory Setting): jumlah per produk (semua baris) dibandingkan dengan stok tersedia di lokasi asal
+    const wanted = new Map();
+    for (const l of lines) wanted.set(l.product.id, { name: l.product.display_name, qty: (wanted.get(l.product.id)?.qty ?? 0) + Number(l.qty) });
+    const stock = await stockAt([...wanted.keys()], form.src);
+    const over = [...wanted].filter(([pid, w]) => w.qty > (stock.get(pid)?.available ?? 0) + 1e-9);
+    if (over.length) {
+      throw new Error(`Jumlah melebihi stok tersedia di ${srcName()}: ${over.map(([pid, w]) => `${w.name} (diminta ${w.qty}, tersedia ${stock.get(pid)?.available ?? 0})`).join("; ")}. Kurangi jumlah, atau matikan "Blokir jumlah melebihi stok" di Inventory Setting.`);
+    }
+  }
   const [id] = await call("stock.picking", "create", { vals_list: [{ picking_type_id: form.type, location_id: form.src, location_dest_id: form.dest, move_ids: moves }] });
   await call("stock.picking", "action_confirm", { ids: [id] });
   return id;

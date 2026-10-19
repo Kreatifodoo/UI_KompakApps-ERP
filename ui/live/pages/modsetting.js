@@ -3,9 +3,19 @@
 // lalu execute, hanya untuk nilai yang diubah. Kunci periode akuntansi ditulis langsung ke perusahaan. Pengaturan yang memasang modul
 // baru sengaja tidak ditawarkan di sini.
 import { INPUT, app, call, ctx, esc, fieldBlock, guarded, pageHeader, readOne, resetReferences, toast } from "../common.js";
+import { BLOCK_OVER_STOCK, resetBlockOverStock } from "../stockqty.js";
 
 const MONTHS = { 1: "Januari", 2: "Februari", 3: "Maret", 4: "April", 5: "Mei", 6: "Juni", 7: "Juli", 8: "Agustus", 9: "September", 10: "Oktober", 11: "November", 12: "Desember" };
 const monthOptions = Object.entries(MONTHS).map(([k, l]) => [String(k), l]);
+
+/** Parameter sistem milik UI (ir.config_parameter, bukan res.config.settings), nilai "1" atau kosong; dipakai di `params` modul. */
+const PARAMS = {
+  blockOverStock: {
+    key: BLOCK_OVER_STOCK,
+    label: "Blokir jumlah melebihi stok tersedia",
+    about: "Bila aktif, Scrap, Transfer Internal, Physical Inventory (hasil hitung di bawah jumlah yang sudah dicadangkan), dan Replenishment rute suplai antar gudang menolak jumlah yang melebihi stok tersedia. Bila mati, formulir hanya menandainya merah.",
+  },
+};
 
 /** kind: bool | select | number | integer. options menimpa label bawaan Odoo bila ada. */
 const MODULES = {
@@ -39,6 +49,7 @@ const MODULES = {
   },
   inventory: {
     title: "Inventory Setting",
+    params: [PARAMS.blockOverStock],
     sections: [
       {
         title: "Gudang",
@@ -155,7 +166,7 @@ const LOCK_FIELDS = [
   ["hard_lock_date", "Kunci permanen", "Tidak bisa dibatalkan atau dimajukan mundur oleh siapa pun, termasuk Advisor."],
 ];
 
-let state = null; // { key, values, initial, meta, lock, lockInitial }
+let state = null; // { key, values, initial, meta, lock, lockInitial, params, paramsInitial }
 let last = { sub: "purchase", query: new URLSearchParams() };
 export const leave = () => {
   state = null;
@@ -181,7 +192,9 @@ export async function render(sub, query) {
     const company = await readOne("res.company", ctx.company.id, LOCK_FIELDS.map(([k]) => k));
     lock = Object.fromEntries(LOCK_FIELDS.map(([k]) => [k, company[k] || ""]));
   }
-  state = { key, values: { ...values }, initial: { ...values }, meta, lock, lockInitial: lock ? { ...lock } : null };
+  const params = {};
+  for (const p of def.params ?? []) params[p.key] = (await call("ir.config_parameter", "get_param", { key: p.key }).catch(() => false)) === "1";
+  state = { key, values: { ...values }, initial: { ...values }, meta, lock, lockInitial: lock ? { ...lock } : null, params, paramsInitial: { ...params } };
   const control = (item) => {
     if (!meta[item.key] || meta[item.key].readonly) return "";
     const v = state.values[item.key];
@@ -196,6 +209,11 @@ export async function render(sub, query) {
       return body ? `<section class="bg-white rounded-xl shadow-sm border border-gray-200 p-5 mb-4"><div class="text-sm font-semibold mb-3">${esc(s.title)}</div><div class="grid md:grid-cols-2 gap-x-8 gap-y-4">${body}</div></section>` : "";
     })
     .join("");
+  const paramHtml = (def.params ?? []).length
+    ? `<section class="bg-white rounded-xl shadow-sm border border-gray-200 p-5 mb-4"><div class="text-sm font-semibold mb-3">Kontrol Stok</div><div class="grid md:grid-cols-2 gap-x-8 gap-y-4">${def.params
+        .map((p) => `<label class="flex items-start gap-3 text-sm"><input type="checkbox" data-param="${esc(p.key)}" ${params[p.key] ? "checked" : ""} class="mt-1 rounded border-gray-300 text-indigo-600"><span><span class="font-medium text-gray-900">${esc(p.label)}</span>${p.about ? `<span class="block text-xs text-gray-500">${esc(p.about)}</span>` : ""}</span></label>`)
+        .join("")}</div></section>`
+    : "";
   const lockHtml = lock
     ? `<section class="bg-white rounded-xl shadow-sm border border-gray-200 p-5 mb-4"><div class="text-sm font-semibold mb-1">Kunci Periode</div>
         <p class="text-xs text-gray-500 mb-3">Mencegah perubahan pada periode yang sudah ditutup. Kosongkan tanggal untuk membuka kunci (tidak berlaku untuk kunci permanen).</p>
@@ -205,8 +223,8 @@ export async function render(sub, query) {
   app.innerHTML =
     pageHeader(def.title, links) +
     (def.intro ? `<p class="mb-4 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3">${esc(def.intro)}</p>` : "") +
-    sections + lockHtml +
-    (keys.length || lock ? '<div class="mt-2"><button data-action="apply" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan Pengaturan</button></div>' : "") +
+    sections + paramHtml + lockHtml +
+    (keys.length || lock || (def.params ?? []).length ? '<div class="mt-2"><button data-action="apply" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan Pengaturan</button></div>' : "") +
     '<p class="mt-3 text-xs text-gray-500">Pengaturan berlaku untuk seluruh perusahaan. Fitur yang diaktifkan menambah menu dan kolom terkait di modulnya.</p>';
 }
 
@@ -216,6 +234,7 @@ export function onInput(event, el) {
     const key = el.dataset.set;
     state.values[key] = el.type === "checkbox" ? el.checked : el.dataset.kind === "number" ? Number(el.value) : el.dataset.kind === "integer" ? Math.trunc(Number(el.value)) : el.value;
   } else if (el.dataset.lock) state.lock[el.dataset.lock] = el.value;
+  else if (el.dataset.param) state.params[el.dataset.param] = el.checked;
 }
 
 export async function onClick(event, el) {
@@ -235,7 +254,10 @@ export async function onClick(event, el) {
       if (lockChanges.hard_lock_date && !window.confirm("Kunci permanen tidak bisa dibatalkan atau dimundurkan oleh siapa pun. Lanjutkan?")) return false;
       if (lockChanges.hard_lock_date === false) throw new Error("Kunci permanen tidak bisa dibuka.");
     }
-    if (!Object.keys(changed).length && !Object.keys(lockChanges).length) throw new Error("Belum ada perubahan.");
+    const paramChanges = Object.entries(state.params).filter(([k, v]) => v !== state.paramsInitial[k]);
+    if (!Object.keys(changed).length && !Object.keys(lockChanges).length && !paramChanges.length) throw new Error("Belum ada perubahan.");
+    for (const [key, on] of paramChanges) await call("ir.config_parameter", "set_param", { key, value: on ? "1" : false });
+    if (paramChanges.length) resetBlockOverStock();
     if (Object.keys(changed).length) {
       const [id] = await call("res.config.settings", "create", { vals_list: [changed] });
       await call("res.config.settings", "execute", { ids: [id] });

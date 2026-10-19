@@ -5,6 +5,7 @@ import {
   INPUT, app, badge, call, cell, esc, fieldBlock, guarded, pageHeader, readOne, registerLookup, rowLink, runLookup, searchBox, searchRead,
   selectOptions, table, toast, button,
 } from "../common.js";
+import { stockAt, stockText } from "../stockqty.js";
 import { effectiveKind, loadRoutes, productSupport, routeWarning, routesFor } from "../routes.js";
 
 const nf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 3 });
@@ -26,8 +27,12 @@ const reload = () => render(last.sub, last.query);
 
 registerLookup("op-product", {
   pageSize: PRODUCT_PAGE,
-  search: (q, _input, page) => searchProducts(q, page, { domain: [["is_storable", "=", true]], fields: ["display_name", "uom_id", "product_tmpl_id"] }),
-  sub: (r) => r.uom_id?.[1] ?? "",
+  search: async (q, _input, page) => {
+    const { items, total } = await searchProducts(q, page, { domain: [["is_storable", "=", true]], fields: ["display_name", "uom_id", "product_tmpl_id"] });
+    const stock = await stockAt(items.map((i) => i.id), form?.location);
+    return { items: items.map((i) => ({ ...i, stock: stock.get(i.id) ?? { onhand: 0, available: 0 } })), total };
+  },
+  sub: (r) => (r.stock ? stockText(r.stock, r.uom_id?.[1], refs?.locations.find((l) => l.id === form?.location)?.display_name) : (r.uom_id?.[1] ?? "")),
   isChosen: (input) => form?.product?.display_name === input.value,
   choose: (input, item) => {
     form.product = item;

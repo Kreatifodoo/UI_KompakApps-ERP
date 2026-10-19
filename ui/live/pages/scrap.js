@@ -1,17 +1,19 @@
 // Scrap (stock.scrap): membuang barang dari stok. Draft bisa diubah atau dihapus; Validasi memindahkan stok ke
 // lokasi Scrap (bawaan; lokasi lain berjenis inventory bisa dipilih). Nilainya dicatat pada pergerakan stok dan dijurnal bila lokasi tujuan
-// punya akun valuasi (Dr Beban Barang Rusak, Cr Persediaan, D69).
+// punya akun valuasi (Dr Beban Barang Rusak, Cr Persediaan, D69). Di bawah Jumlah tampil stok tersedia di lokasi asal (per lot bila produk berlacak);
+// jumlah di atas stok ditandai merah, Validasi ditolak, dan Simpan juga ditolak bila "Blokir jumlah melebihi stok" aktif di Inventory Setting (D70).
 import {
   PRODUCT_PAGE, searchProducts,
   INPUT, app, badge, call, cell, dateTimeText, esc, fieldBlock, guarded, pageHeader, readOne, readonlyValue, registerLookup, rowLink, runLookup,
   searchBox, searchRead, selectOptions, statusbar, table, toast, button, filterSelect, chatterHtml, loadMessages,
 } from "../common.js";
+import { blockOverStock, stockAt, stockText } from "../stockqty.js";
 
 const STATES = { draft: ["Draft", "muted"], done: ["Selesai", "success"] };
 const FILTERS = [["", "Semua"], ["draft", "Draft"], ["done", "Selesai"]];
 const nf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 3 });
 
-let form = null; // { id, product, qty, location, scrapLocation, origin }
+let form = null; // { id, product, qty, location, scrapLocation, origin, lot, stock }
 let refs = null;
 let last = { sub: "", query: new URLSearchParams() };
 export const leave = () => {
@@ -28,12 +30,47 @@ registerLookup("scrap-product", {
     const wasTracked = form.product?.tracking && form.product.tracking !== "none";
     form.product = item;
     form.lot = null;
+    form.stock = null;
     input.value = item.display_name;
     if (wasTracked || item.tracking !== "none") reload(); // pilihan lot bergantung pada produk
+    else loadStock();
   },
 });
 
 const isTracked = (product) => Boolean(product?.tracking) && product.tracking !== "none";
+
+const locationName = () => refs?.internal.find((l) => l.id === form?.location)?.display_name ?? "";
+
+/** Stok tepat di lokasi asal (Odoo memeriksa lokasi itu saja, tanpa sublokasi), per lot bila produk berlacak; null bila produk atau lot belum dipilih. */
+async function fetchStock() {
+  const f = form;
+  if (!f?.product || !f.location || (isTracked(f.product) && !f.lot)) return null;
+  const stock = await stockAt([f.product.id], f.location, { lotId: isTracked(f.product) ? f.lot : null, strict: true });
+  return stock.get(f.product.id) ?? { onhand: 0, available: 0 };
+}
+
+/** Teks stok di bawah Jumlah; merah dan bertanda "melebihi stok tersedia" bila jumlah lebih besar dari stok tersedia. */
+function stockLine() {
+  const f = form;
+  if (!f?.product) return "";
+  if (isTracked(f.product) && !f.lot) return '<div class="text-xs mt-1 text-gray-500">Pilih lot atau nomor seri untuk melihat stoknya.</div>';
+  if (!f.stock) return "";
+  const over = Number(f.qty) > f.stock.available + 1e-9;
+  return `<div class="text-xs mt-1 ${over ? "text-rose-600" : "text-gray-500"}">${esc(stockText(f.stock, f.product.uom_id?.[1], locationName()))}${over ? " · melebihi stok tersedia" : ""}</div>`;
+}
+function paintStock() {
+  const box = document.getElementById("scrap-stock");
+  if (box) box.innerHTML = stockLine();
+}
+async function loadStock() {
+  if (!form) return;
+  const f = form;
+  const stock = await fetchStock();
+  if (form === f) {
+    f.stock = stock;
+    paintStock();
+  }
+}
 
 /** Lot yang punya stok di lokasi asal, untuk dipilih pada produk berlacak. */
 async function lotChoices(product, location) {
@@ -103,10 +140,11 @@ async function renderForm(id) {
       : { id: null, product: null, qty: "", location: r.internal[0]?.id ?? null, scrapLocation: (r.scrap.find((l) => /scrap$/i.test(l.display_name)) ?? r.scrap[0])?.id ?? null, origin: "", lot: null };
   }
   const f = form;
+  if (editable) f.stock = await fetchStock();
   const choices = editable && isTracked(f.product) ? await lotChoices(f.product, f.location) : [];
   const fields = editable
     ? `${fieldBlock("Produk", `<input data-lookup="scrap-product" autocomplete="off" role="combobox" aria-autocomplete="list" value="${esc(f.product?.display_name ?? "")}" placeholder="Cari produk yang dilacak stoknya..." class="${INPUT}">`)}
-       ${fieldBlock("Jumlah", `<input type="number" min="0" step="any" data-scrap="qty" value="${esc(f.qty)}" class="${INPUT} text-right">`)}
+       ${fieldBlock("Jumlah", `<input type="number" min="0" step="any" data-scrap="qty" value="${esc(f.qty)}" class="${INPUT} text-right"><div id="scrap-stock">${stockLine()}</div>`)}
        ${fieldBlock("Dari Lokasi", `<select data-scrap="location" class="${INPUT}">${selectOptions(r.internal, f.location)}</select>`)}
        ${isTracked(f.product) ? fieldBlock(f.product.tracking === "serial" ? "Nomor Seri" : "Lot", `<select data-scrap="lot" class="${INPUT}">${selectOptions(choices, f.lot, "Pilih...")}</select>`) : ""}
        ${fieldBlock("Lokasi Scrap", `<select data-scrap="scrapLocation" class="${INPUT}">${selectOptions(r.scrap, f.scrapLocation)}</select>`)}
@@ -128,13 +166,27 @@ async function renderForm(id) {
   if (scrap) loadMessages("stock.scrap", scrap.id);
 }
 
-async function persist() {
+/** Jumlah melebihi stok: Validasi selalu ditolak bila di atas on hand lokasi (Odoo juga menolak); Simpan ditolak bila di atas stok tersedia dan opsi blokir aktif. */
+async function checkStock(f, qty, validating) {
+  const stock = await fetchStock();
+  f.stock = stock;
+  paintStock();
+  if (!stock) return;
+  const where = locationName();
+  if (validating && qty > stock.onhand + 1e-9) throw new Error(`Jumlah ${nf.format(qty)} melebihi stok di ${where} (on hand ${nf.format(stock.onhand)}). Kurangi jumlah atau lakukan penerimaan lebih dulu.`);
+  if (qty > stock.available + 1e-9 && (await blockOverStock())) {
+    throw new Error(`Jumlah ${nf.format(qty)} melebihi stok tersedia di ${where} (${nf.format(stock.available)}). Kurangi jumlah, atau matikan "Blokir jumlah melebihi stok" di Inventory Setting.`);
+  }
+}
+
+async function persist(validating = false) {
   const f = form;
   if (!f.product) throw new Error("Pilih produk dari kotak saran.");
   const qty = Number(f.qty);
   if (!(qty > 0)) throw new Error("Jumlah harus lebih dari 0.");
   if (!f.location || !f.scrapLocation) throw new Error("Pilih lokasi asal dan lokasi scrap.");
   if (isTracked(f.product) && !f.lot) throw new Error(`Pilih ${f.product.tracking === "serial" ? "nomor seri" : "lot"} yang di-scrap.`);
+  await checkStock(f, qty, validating);
   const vals = { product_id: f.product.id, scrap_qty: qty, product_uom_id: f.product.uom_id[0], location_id: f.location, scrap_location_id: f.scrapLocation, origin: f.origin || false, lot_id: isTracked(f.product) ? f.lot : false };
   if (f.id) {
     await call("stock.scrap", "write", { ids: [f.id], vals });
@@ -159,7 +211,7 @@ export async function onClick(event, el) {
     }
   } else if (action === "validate") {
     const ok = await guarded(el, async () => {
-      if (form?.id === id) await persist();
+      if (form?.id === id) await persist(true);
       const result = await call("stock.scrap", "action_validate", { ids: [id] });
       if (result && typeof result === "object") throw new Error("Stok tidak cukup untuk di-scrap. Kurangi jumlah atau lakukan penerimaan lebih dulu.");
       return true;
@@ -182,17 +234,21 @@ export async function onClick(event, el) {
 
 export function onInput(event, el) {
   if (!form) return;
-  if (el.dataset.scrap) form[el.dataset.scrap] = ["location", "scrapLocation", "lot"].includes(el.dataset.scrap) ? Number(el.value) || null : el.value;
-  else if (el.dataset.lookup === "scrap-product") {
+  if (el.dataset.scrap) {
+    form[el.dataset.scrap] = ["location", "scrapLocation", "lot"].includes(el.dataset.scrap) ? Number(el.value) || null : el.value;
+    if (el.dataset.scrap === "qty") paintStock();
+  } else if (el.dataset.lookup === "scrap-product") {
     form.product = null;
     runLookup(el, 250);
   }
 }
 
 export function onChange(event, el) {
+  if (!form) return;
   // Lokasi asal menentukan lot yang punya stok; muat ulang pilihannya.
-  if (form && el.dataset.scrap === "location" && isTracked(form.product)) {
+  if (el.dataset.scrap === "location" && isTracked(form.product)) {
     form.lot = null;
+    form.stock = null;
     reload();
-  }
+  } else if (el.dataset.scrap === "location" || el.dataset.scrap === "lot") loadStock();
 }
