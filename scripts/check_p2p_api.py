@@ -240,6 +240,7 @@ def main():
     check_multi_company(api)
     check_hr_attendance(api)
     check_hr_timeoff(api)
+    check_hr_expenses(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -4673,6 +4674,58 @@ def check_hr_timeoff(api):
         check(False, "pengajuan melebihi saldo ditolak")
     except RuntimeError:
         check(True, "pengajuan melebihi saldo ditolak")
+
+
+def check_hr_expenses(api):
+    """Expenses (D83): biaya dibayar karyawan dari draft sampai dibayar (tanda terima Dr akun biaya, Dr PPN masukan, Cr hutang usaha ke karyawan), penolakan lewat wizard, dan lampiran."""
+    import base64
+    import random
+
+    step("HR: Expenses (ajukan, setujui, tolak, posting, bayar, lampiran)")
+    tag = f"{random.randint(0, 99999):05d}"
+    [emp] = api.call("hr.employee", "create", vals_list=[{"name": f"Biaya Regresi {tag}"}])
+    [category] = api.call("product.product", "create", vals_list=[{"name": f"Biaya Regresi {tag}", "can_be_expensed": True, "standard_price": 0.0}])
+    [account] = [a["id"] for a in api.search("account.account", [["account_type", "=", "expense"], ["code", "=like", "6%"]], ["id"], limit=1)]
+    [tax] = [t["id"] for t in api.search("account.tax", [["type_tax_use", "=", "purchase"], ["amount", "=", 12.0], ["amount_type", "=", "percent"]], ["id"], limit=1)]
+    vals = {"name": f"Makan siang {tag}", "employee_id": emp, "product_id": category, "total_amount_currency": 111_000.0, "account_id": account, "tax_ids": [[6, 0, [tax]]], "payment_mode": "own_account"}
+    [exp] = api.call("hr.expense", "create", vals_list=[vals])
+    row = api.read("hr.expense", exp, ["state", "total_amount", "untaxed_amount", "tax_amount", "account_id"])
+    check(row["state"] == "draft" and abs(row["untaxed_amount"] - 99_107.14) < 0.5 and abs(row["tax_amount"] - 11_892.86) < 0.5, "biaya baru draft; total 111.000 sudah termasuk PPN 12% (dasar 99.107, pajak 11.893)")
+    check(row["account_id"][0] == account, "akun biaya yang dipilih tersimpan")
+    api.call("ir.attachment", "create", vals_list=[{"name": "struk.txt", "datas": base64.b64encode(b"struk").decode(), "res_model": "hr.expense", "res_id": exp, "type": "binary"}])
+    check(len(api.read("hr.expense", exp, ["attachment_ids"])["attachment_ids"]) == 1, "lampiran struk tersimpan pada biaya")
+    api.call("hr.expense", "action_submit", ids=[exp])
+    check(api.read("hr.expense", exp, ["state"])["state"] in ("submitted", "approved"), "diajukan (tanpa penyetuju langsung disetujui)")
+    if api.read("hr.expense", exp, ["state"])["state"] == "submitted":
+        api.call("hr.expense", "action_approve", ids=[exp])
+    check(api.read("hr.expense", exp, ["state"])["state"] == "approved", "biaya disetujui")
+    context = {"active_ids": [exp], "validate_analytic": True}
+    [wizard] = api.call("hr.expense.post.wizard", "create", vals_list=[{}], context=context)
+    api.call("hr.expense.post.wizard", "action_post_entry", ids=[wizard], context=context)
+    row = api.read("hr.expense", exp, ["state", "account_move_id"])
+    check(row["state"] == "posted" and bool(row["account_move_id"]), "diposting: terbentuk entri jurnal")
+    move_id = row["account_move_id"][0]
+    items = api.search("account.move.line", [["move_id", "=", move_id]], ["account_id", "debit", "credit", "partner_id"])
+    check(abs(sum(i["debit"] for i in items) - 111_000.0) < 0.5 and abs(sum(i["credit"] for i in items) - 111_000.0) < 0.5, "jurnal biaya seimbang sebesar 111.000")
+    check(any(i["account_id"][0] == account and abs(i["debit"] - 99_107.14) < 0.5 for i in items), "akun beban yang dipilih didebit sebesar dasar pajak")
+    payable = [i for i in items if i["credit"]]
+    check(len(payable) == 1 and payable[0]["partner_id"], "hutang usaha dikredit atas nama karyawan")
+    pay_context = {"active_model": "account.move", "active_ids": [move_id]}
+    [pay] = api.call("account.payment.register", "create", vals_list=[{}], context=pay_context)
+    api.call("account.payment.register", "action_create_payments", ids=[pay], context=pay_context)
+    check(api.read("hr.expense", exp, ["state"])["state"] == "paid", "pembayaran dicatat: biaya berstatus Dibayar")
+    [other] = api.call("hr.expense", "create", vals_list=[{**vals, "name": f"Tolak {tag}"}])
+    api.call("hr.expense", "write", ids=[other], vals={"manager_id": api.call("res.users", "context_get")["uid"]})
+    api.call("hr.expense", "action_submit", ids=[other])
+    check(api.read("hr.expense", other, ["state"])["state"] == "submitted", "dengan penyetuju, pengajuan menunggu persetujuan")
+    refuse_context = {"active_ids": [other], "active_model": "hr.expense"}
+    [refuse] = api.call("hr.expense.refuse.wizard", "create", vals_list=[{"reason": "Tanpa struk", "expense_ids": [[6, 0, [other]]]}], context=refuse_context)
+    api.call("hr.expense.refuse.wizard", "action_refuse", ids=[refuse], context=refuse_context)
+    check(api.read("hr.expense", other, ["state"])["state"] == "refused", "ditolak lewat wizard dengan alasan")
+    api.call("hr.expense", "action_reset", ids=[other])
+    check(api.read("hr.expense", other, ["state"])["state"] == "draft", "dikembalikan ke draft")
+    api.call("hr.expense", "unlink", ids=[other])
+    check(not api.search("hr.expense", [["id", "=", other]], ["id"]), "biaya draft bisa dihapus")
 
 
 def bill_total(api, bill_id):

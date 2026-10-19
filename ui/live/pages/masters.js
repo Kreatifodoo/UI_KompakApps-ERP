@@ -238,6 +238,7 @@ export function createMasterPage(config) {
   }
 
   function onChange(event, el) {
+    if (config.onChangeExtra?.(event, el, { reload })) return;
     if (!form) return;
     if (el.dataset.mm) {
       form.values[el.dataset.mm] = [...document.querySelectorAll(`[data-mm="${el.dataset.mm}"]:checked`)].map((b) => Number(b.value)).sort((a, b) => a - b);
