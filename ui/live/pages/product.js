@@ -171,8 +171,8 @@ function vendorsTable(sellers, productId) {
     ${table([{ label: "Pemasok" }, { label: "Kode Pemasok" }, { label: "Jml Min", right: true }, { label: "Harga", right: true }, { label: "Diskon", right: true }, { label: "Lead Time", right: true }], rows, "Belum ada vendor. Tambahkan harga vendor agar RFQ terisi otomatis.")}</section>`;
 }
 
-/** Akun yang didebit saat tagihan vendor produk ini diposting, menurut tipe produk dan valuasi kategorinya. */
-function accountingNote(v, category) {
+/** Akun yang terkena transaksi stok dan tagihan produk ini, menurut tipe produk, valuasi kategorinya, dan Akun Loss lokasi (D69, D75). */
+function accountingNote(v, category, lossLocations = []) {
   if (!category) {
     return { tone: "warn", html: "Produk belum punya kategori: Odoo memakai akun bawaan perusahaan, dan barang stok tidak masuk ke akun Persediaan. Pilih kategori." };
   }
@@ -180,7 +180,19 @@ function accountingNote(v, category) {
   const stock = category.property_stock_valuation_account_id?.[1] ?? "akun Persediaan";
   if (v.type === "consu" && v.is_storable) {
     if (category.property_valuation === "real_time") {
-      return { tone: "info", html: `Valuasi <b>perpetual</b>, biaya ${COSTING[category.property_cost_method] ?? ""}: tagihan vendor mendebit <b>${esc(stock)}</b>.` };
+      const input = category.kompakapps_stock_input_account_id?.[1];
+      const output = category.kompakapps_stock_output_account_id?.[1];
+      const losses = lossLocations.filter((l) => l.usage === "inventory").map((l) => `${l.complete_name.split("/").pop()}: <b>${esc(l.valuation_account_id[1])}</b>`);
+      const loss = losses.length
+        ? `Opname dan scrap: lawan <b>${esc(stock)}</b> adalah Akun Loss lokasi (${losses.join(", ")}; atur di <a href="#/location?state=all" class="underline">Lokasi Gudang</a>).`
+        : `Opname dan scrap belum dijurnal: lokasi Inventory Loss belum punya Akun Loss (atur di <a href="#/location?state=all" class="underline">Lokasi Gudang</a>).`;
+      if (category.property_cost_method !== "standard" && input && output) {
+        return {
+          tone: "info",
+          html: `Valuasi <b>perpetual</b>, biaya ${COSTING[category.property_cost_method] ?? ""}, dijurnal pada setiap transaksi: penerimaan Dr <b>${esc(stock)}</b>, Cr <b>${esc(input)}</b> (tagihan vendor mendebit <b>${esc(input)}</b>); pengiriman Dr <b>${esc(output)}</b>, Cr ${esc(stock)} (faktur mendebit <b>${esc(expense)}</b>). ${loss}`,
+        };
+      }
+      return { tone: "info", html: `Valuasi <b>perpetual</b>, biaya ${COSTING[category.property_cost_method] ?? ""}: tagihan vendor mendebit <b>${esc(stock)}</b>. ${loss}` };
     }
     return {
       tone: "warn",
@@ -272,11 +284,12 @@ function tilesHtml(product, counts) {
 async function renderForm(id) {
   closeLookup();
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
-  const [uoms, categories, saleTaxes, purchaseTaxes, typeOptions, policyOptions, defaults, categoryDetails, lotsOn] = await Promise.all([
+  const [uoms, categories, saleTaxes, purchaseTaxes, typeOptions, policyOptions, defaults, categoryDetails, lotsOn, lossLocations] = await Promise.all([
     referenceUoms(), referenceCategories(), referenceTaxes("sale"), referenceTaxes("purchase"),
     referenceSelection("product.template", "type"), referenceSelection("product.template", "purchase_method"), referenceDefaultCategories(),
-    searchRead("product.category", [], ["display_name", "property_valuation", "property_cost_method", "property_stock_valuation_account_id", "property_account_expense_categ_id"]),
+    searchRead("product.category", [], ["display_name", "property_valuation", "property_cost_method", "property_stock_valuation_account_id", "property_account_expense_categ_id", "kompakapps_stock_input_account_id", "kompakapps_stock_output_account_id"]),
     hasGroup("stock.group_production_lot"),
+    searchRead("stock.location", [["usage", "in", ["inventory", "production"]], ["valuation_account_id", "!=", false]], ["complete_name", "usage", "valuation_account_id"], { order: "complete_name" }),
   ]);
   let product = null;
   let sellers = [];
@@ -311,7 +324,7 @@ async function renderForm(id) {
   const number = (key) => `<input type="number" min="0" step="any" data-value="${key}" data-kind="number" value="${esc(v[key])}" class="${INPUT}">`;
   const types = typeOptions.filter(([k]) => k !== "combo" || v.type === "combo");
   const title = product ? esc(product.name) : "Produk Baru";
-  const note = accountingNote(v, categoryDetails.find((c) => c.id === v.categ_id));
+  const note = accountingNote(v, categoryDetails.find((c) => c.id === v.categ_id), lossLocations);
   const accountOverride = (key) =>
     fieldBlock(
       `${ACCOUNT_KEYS[key].label} (menimpa kategori)`,

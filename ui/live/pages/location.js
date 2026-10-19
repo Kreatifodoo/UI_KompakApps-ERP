@@ -1,11 +1,26 @@
-// Lokasi gudang (stock.location): hierarki lokasi internal di dalam gudang (rak, zona), dengan tipe, induk, dan arsip.
+// Lokasi gudang (stock.location): hierarki lokasi internal di dalam gudang (rak, zona), dengan tipe, induk, dan arsip. Lokasi bertipe Inventory Loss
+// (opname dan scrap) dan Produksi punya Akun Loss atau Akun Produksi: akun lawan dari akun Persediaan pada Product Category saat stok masuk atau keluar
+// lewat lokasi itu (D69, D75).
 import {
-  INPUT, REMOVAL_HELP, app, call, cell, esc, fieldBlock, filterSelect, guarded, pageHeader, readOne, registerLookup, referenceRemovals, removalSelect, rowLink, runLookup, searchBox, searchRead, table,
-  toast, button,
+  ACCOUNT_TYPE_LABELS, INPUT, REMOVAL_HELP, app, call, cell, closeLookup, esc, fieldBlock, filterSelect, guarded, pageHeader, readOne, registerLookup, referenceRemovals, removalSelect, rowLink, runLookup,
+  searchAccounts, searchBox, searchRead, table, toast, button,
 } from "../common.js";
 
 const USAGE = { internal: "Internal", view: "Virtual (induk)", supplier: "Pemasok", customer: "Pelanggan", inventory: "Inventory Loss", production: "Produksi", transit: "Transit" };
 const FILTERS = [["internal", "Lokasi internal"], ["all", "Semua tipe"], ["archived", "Diarsipkan"]];
+// Tipe yang punya akun valuasi lawan (`valuation_account_id`): selisih opname dan scrap, serta barang dalam proses.
+const ACCOUNT_USAGE = {
+  inventory: {
+    label: "Akun Loss",
+    types: ["expense", "expense_direct_cost", "expense_other", "income_other"],
+    help: "Lawan akun Persediaan (dari Product Category) pada opname dan scrap yang lewat lokasi ini: stok berkurang = Dr Akun Loss, Cr Persediaan; stok bertambah = Dr Persediaan, Cr Akun Loss. Kosong = opname dan scrap lewat lokasi ini tidak dijurnal.",
+  },
+  production: {
+    label: "Akun Produksi",
+    types: ["asset_current", "asset_non_current", "expense", "expense_direct_cost"],
+    help: "Barang Dalam Proses: komponen yang dipakai MO mendebit akun ini (Cr Persediaan), barang jadi yang masuk mengkreditnya (Dr Persediaan). Kosong = produksi tidak dijurnal.",
+  },
+};
 
 let removals = [];
 let form = null; // { id, values, initial }
@@ -18,6 +33,17 @@ export const leave = () => {
   form = null;
 };
 const reload = () => render(last.sub, last.query);
+
+registerLookup("location-account", {
+  search: (q) => searchAccounts(q, ACCOUNT_USAGE[form?.values.usage]?.types ?? null),
+  sub: (r) => ACCOUNT_TYPE_LABELS[r.account_type] ?? "",
+  isChosen: (input) => form?.values.account?.display_name === input.value,
+  choose: (input, item) => {
+    form.values.account = item;
+    form.pendingAccount = false;
+    input.value = item.display_name;
+  },
+});
 
 registerLookup("location-parent", {
   search: (q) => searchRead("stock.location", [["usage", "in", ["internal", "view"]], ...(q ? [["complete_name", "ilike", q]] : [])], ["display_name"], { limit: 10, order: "complete_name" }),
@@ -60,7 +86,7 @@ async function renderForm(id) {
   removals = await referenceRemovals();
   let loc = null;
   if (id) {
-    loc = await readOne("stock.location", id, ["name", "complete_name", "usage", "location_id", "warehouse_id", "active", "removal_strategy_id", "replenish_location"]);
+    loc = await readOne("stock.location", id, ["name", "complete_name", "usage", "location_id", "warehouse_id", "active", "removal_strategy_id", "replenish_location", "valuation_account_id"]);
     if (!loc) {
       app.innerHTML = '<p class="text-sm text-rose-600">Lokasi tidak ditemukan.</p>';
       return;
@@ -68,9 +94,15 @@ async function renderForm(id) {
   }
   if (!form || form.id !== (loc?.id ?? null)) {
     const values = loc
-      ? { name: loc.name, usage: loc.usage, removal: loc.removal_strategy_id?.[0] ?? null, replenish: Boolean(loc.replenish_location), parent: loc.location_id ? { id: loc.location_id[0], display_name: loc.location_id[1] } : null }
-      : { name: "", usage: "internal", removal: null, replenish: false, parent: null };
-    form = { id: loc?.id ?? null, values, initial: loc ? { name: values.name, usage: values.usage, removal: values.removal, replenish: values.replenish, parent: values.parent?.id ?? null } : null };
+      ? {
+          name: loc.name, usage: loc.usage, removal: loc.removal_strategy_id?.[0] ?? null, replenish: Boolean(loc.replenish_location), parent: loc.location_id ? { id: loc.location_id[0], display_name: loc.location_id[1] } : null,
+          account: loc.valuation_account_id ? { id: loc.valuation_account_id[0], display_name: loc.valuation_account_id[1] } : null,
+        }
+      : { name: "", usage: "internal", removal: null, replenish: false, parent: null, account: null };
+    form = {
+      id: loc?.id ?? null, values, pendingAccount: false,
+      initial: loc ? { name: values.name, usage: values.usage, removal: values.removal, replenish: values.replenish, parent: values.parent?.id ?? null, account: values.account?.id ?? null } : null,
+    };
   }
   const v = form.values;
   app.innerHTML = `
@@ -84,19 +116,35 @@ async function renderForm(id) {
       ${fieldBlock("Gudang", `<div class="py-2 text-sm font-medium text-gray-900">${esc(loc?.warehouse_id?.[1] ?? "Mengikuti lokasi induk")}</div>`)}
       ${fieldBlock("Strategi Pengeluaran", removalSelect(removals, v.removal, 'data-loc="removal"', "Mengikuti lokasi induk (bawaan: FIFO)"))}
       <p class="text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3 self-end" id="removal-note">${esc(removalHelp(v.removal))}</p>
+      <div id="account-box" class="md:col-span-2">${accountBox(v)}</div>
       ${`<label class="md:col-span-2 flex items-start gap-3 text-sm"><input type="checkbox" data-loc="replenish" ${v.replenish ? "checked" : ""} class="mt-1 rounded border-gray-300 text-indigo-600"><span><span class="font-medium text-gray-900">Lokasi pengisian ulang</span><span class="block text-xs text-gray-500">Replenishment membuatkan aturan manual otomatis untuk produk yang kekurangan stok di lokasi ini. Biasanya hanya Stock tiap gudang; lokasi induk dan anaknya tidak boleh sama-sama ditandai.</span></span></label>`}
     </section>
     <div class="flex gap-2 mt-4"><button data-action="save" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
       <a href="#/location" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a></div>`;
 }
 
+/** Bagian "Informasi Akuntansi" untuk tipe Inventory Loss dan Produksi: Akun Loss atau Akun Produksi beserta penjelasan lawannya. */
+function accountBox(v) {
+  const cfg = ACCOUNT_USAGE[v.usage];
+  if (!cfg) return "";
+  return `<div class="border-t border-gray-100 pt-4 text-sm font-semibold text-gray-700 mb-3">Informasi Akuntansi</div>
+    <div class="grid md:grid-cols-2 gap-x-8 gap-y-4">
+      ${fieldBlock(cfg.label, `<input data-lookup="location-account" autocomplete="off" role="combobox" aria-autocomplete="list" value="${esc(v.account?.display_name ?? "")}" placeholder="Cari kode atau nama akun..." class="${INPUT}">`)}
+      <p class="text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3 self-end">${esc(cfg.help)} Akun Persediaan tiap produk mengikuti <a href="#/category" class="underline">Product Category</a> produknya (terlihat juga di Product Master).</p>
+    </div>`;
+}
+
 async function persist() {
   const v = form.values;
   if (!v.name.trim()) throw new Error("Nama lokasi wajib diisi.");
+  if (form.pendingAccount) throw new Error("Pilih akun dari kotak saran, atau kosongkan isiannya.");
   const vals = { name: v.name.trim(), usage: v.usage, location_id: v.parent?.id ?? false };
   const removal = v.removal ?? null;
+  const account = ACCOUNT_USAGE[v.usage] ? v.account?.id ?? null : null; // tipe lain tidak memakai akun ini; mengganti tipe mengosongkannya
   if (!form.id) {
-    const [id] = await call("stock.location", "create", { vals_list: [{ ...vals, location_id: v.parent?.id ?? undefined, ...(removal ? { removal_strategy_id: removal } : {}), ...(v.replenish ? { replenish_location: true } : {}) }] });
+    const [id] = await call("stock.location", "create", {
+      vals_list: [{ ...vals, location_id: v.parent?.id ?? undefined, ...(removal ? { removal_strategy_id: removal } : {}), ...(v.replenish ? { replenish_location: true } : {}), ...(account ? { valuation_account_id: account } : {}) }],
+    });
     return id;
   }
   const changed = {};
@@ -104,6 +152,7 @@ async function persist() {
   if (vals.usage !== form.initial.usage) changed.usage = vals.usage;
   if ((v.parent?.id ?? null) !== form.initial.parent) changed.location_id = v.parent?.id ?? false;
   if (removal !== form.initial.removal) changed.removal_strategy_id = removal ?? false;
+  if (account !== form.initial.account) changed.valuation_account_id = account ?? false;
   if (v.replenish !== form.initial.replenish) changed.replenish_location = v.replenish;
   if (Object.keys(changed).length) await call("stock.location", "write", { ids: [form.id], vals: changed });
   return form.id;
@@ -139,8 +188,17 @@ export function onInput(event, el) {
     form.values.removal = el.value ? Number(el.value) : null;
     document.querySelector("#removal-note").textContent = removalHelp(form.values.removal);
   } else if (el.dataset.loc === "replenish") form.values.replenish = el.checked;
-  else if (el.dataset.loc) form.values[el.dataset.loc] = el.value;
-  else if (el.dataset.lookup === "location-parent") {
+  else if (el.dataset.loc) {
+    form.values[el.dataset.loc] = el.value;
+    if (el.dataset.loc === "usage") {
+      closeLookup();
+      document.querySelector("#account-box").innerHTML = accountBox(form.values); // Akun Loss atau Produksi hanya untuk tipe tertentu
+    }
+  } else if (el.dataset.lookup === "location-account") {
+    form.values.account = null;
+    form.pendingAccount = Boolean(el.value.trim());
+    runLookup(el, 250);
+  } else if (el.dataset.lookup === "location-parent") {
     form.values.parent = null;
     runLookup(el, 250);
   }
