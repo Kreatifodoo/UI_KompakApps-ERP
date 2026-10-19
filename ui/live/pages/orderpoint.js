@@ -59,6 +59,8 @@ async function renderList(query) {
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
   const text = query.get("q") ?? "";
   const domain = text ? [["product_id.name", "ilike", text]] : [];
+  const template = Number(query.get("product")) || null; // dari tombol Reorder di halaman produk (id template produk)
+  if (template) domain.push(["product_tmpl_id", "=", template]);
   const [rows, ref] = await Promise.all([searchRead("stock.warehouse.orderpoint", domain, FIELDS, { order: "id desc", limit: 200 }), references()]);
   const routeName = (id, fallback) => ref.routes.find((x) => x.id === id)?.label ?? fallback;
   const routeText = (op) => (op.route_id ? routeName(op.route_id[0], op.route_id[1]) : op.effective_route_id ? `Otomatis: ${routeName(op.effective_route_id[0], op.effective_route_id[1])}` : "-");
@@ -78,6 +80,7 @@ async function renderList(query) {
       `${searchBox(text, "Cari produk")}
        <a href="#/orderpoint/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>Aturan Baru</a>`,
     ) +
+    (template ? `<p class="text-sm text-gray-500 mb-3">Difilter per produk. <a href="#/orderpoint" class="text-indigo-600 hover:underline">Tampilkan semua</a></p>` : "") +
     table(
       [{ label: "Produk" }, { label: "Lokasi" }, { label: "Rute" }, { label: "Min", right: true }, { label: "Maks", right: true }, { label: "Tersedia", right: true }, { label: "Prakiraan", right: true }, { label: "Perlu Dipesan", right: true }, { label: "Pemicu" }],
       body,

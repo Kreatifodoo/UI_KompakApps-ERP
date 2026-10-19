@@ -4,9 +4,13 @@
 import {
   ACCOUNT_TYPE_LABELS, INPUT, app, call, cell, changedValues, chatterHtml, checkboxField, closeLookup, esc, fieldBlock, fieldValue, filterSelect,
   guarded, hasGroup, loadMessages, money, pageHeader, readOne, referenceCategories, referenceDefaultCategories, referenceSelection, referenceTaxes,
-  referenceUoms, registerLookup, rowLink, runLookup, searchAccounts, searchBox, searchRead, selectOptions, statTiles, table, toast, button,
+  referenceUoms, registerLookup, rowLink, runLookup, searchAccounts, searchBox, searchRead, selectOptions, statTiles, table, toast, today, button,
 } from "../common.js";
 
+// Periode tombol Dibeli, Terjual, dan POS di form produk (D71); bawaan 12 bulan terakhir, sama dengan hitungan Odoo.
+const PERIODS = [["12m", "12 bulan terakhir"], ["month", "Bulan ini"], ["year", "Tahun ini"], ["all", "Semua waktu"], ["custom", "Pilih tanggal"]];
+let period = { key: "12m", from: "", to: "" };
+let tileProduct = null; // produk yang tilenya sedang tampil, untuk digambar ulang saat periode berubah
 const FILTERS = [["purchase", "Dapat dibeli"], ["sale", "Dapat dijual"], ["pos", "Dijual di POS"], ["all", "Semua produk"], ["archived", "Diarsipkan"]];
 const FIELDS = [
   "name", "type", "is_storable", "sale_ok", "purchase_ok", "purchase_request", "available_in_pos", "uom_id", "default_code", "barcode", "categ_id", "list_price",
@@ -212,6 +216,58 @@ function trackingSection(v, product, lotsOn) {
     ${warnings.map((w) => `<p class="md:col-span-2 text-sm rounded-lg px-4 py-3 border text-amber-900 bg-amber-50 border-amber-200">${w}</p>`).join("")}`;
 }
 
+/** Rentang tanggal (YYYY-MM-DD, awal dan akhir termasuk) menurut pilihan periode. */
+function periodRange(p = period, now = new Date()) {
+  const pad = (n) => String(n).padStart(2, "0");
+  const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const end = iso(now);
+  if (p.key === "month") return { from: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`, to: end };
+  if (p.key === "year") return { from: `${now.getFullYear()}-01-01`, to: end };
+  if (p.key === "all") return { from: "2000-01-01", to: end };
+  if (p.key === "custom") return { from: p.from || "2000-01-01", to: p.to || end };
+  const back = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+  return { from: iso(back), to: end };
+}
+
+/** Jumlah dibeli (PO terkonfirmasi), terjual (Sales Order dan POS, laporan penjualan), dan terjual di POS untuk satu template produk pada periode; sama dengan isi halaman tujuan tombolnya. */
+async function periodCounts(templateId, range = periodRange()) {
+  const start = `${range.from} 00:00:00`;
+  const end = `${range.to} 23:59:59`;
+  const sum = async (model, domain, field) => (await call(model, "formatted_read_group", { domain, groupby: [], aggregates: [`${field}:sum`] }))[0]?.[`${field}:sum`] ?? 0;
+  const [bought, sold, pos] = await Promise.all([
+    sum("purchase.order.line", [["product_id.product_tmpl_id", "=", templateId], ["state", "=", "purchase"], ["date_order", ">=", start], ["date_order", "<=", end]], "product_uom_qty"),
+    sum("sale.report", [["product_tmpl_id", "=", templateId], ["state", "in", ["sale", "done"]], ["date", ">=", start], ["date", "<=", end]], "product_uom_qty"),
+    sum("pos.order.line", [["product_id.product_tmpl_id", "=", templateId], ["order_id.state", "in", POS_STATES], ["order_id.date_order", ">=", start], ["order_id.date_order", "<=", end]], "qty").catch(() => 0),
+  ]);
+  return { bought, sold, pos };
+}
+const POS_STATES = ["paid", "done", "invoiced"];
+
+/** Baris pilihan periode dan tombol pintas (Vendor, Stok Tersedia, Prakiraan, Reorder, Dibeli, Terjual, POS, BoM) halaman produk. */
+function tilesHtml(product, counts) {
+  const { from, to } = periodRange();
+  const range = `from=${from}&to=${to}`;
+  const custom = period.key === "custom";
+  const control = `<div class="flex flex-wrap items-end gap-2 w-full">
+      <label class="text-xs font-medium text-gray-500 uppercase">Periode Dibeli, Terjual, POS
+        <select data-period="key" class="${INPUT} mt-1 w-48">${PERIODS.map(([k, label]) => `<option value="${k}" ${k === period.key ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+      ${custom ? `<label class="text-xs font-medium text-gray-500 uppercase">Dari<input type="date" data-period="from" value="${esc(period.from)}" max="${today()}" class="${INPUT} mt-1 w-40"></label>
+      <label class="text-xs font-medium text-gray-500 uppercase">Sampai<input type="date" data-period="to" value="${esc(period.to)}" max="${today()}" class="${INPUT} mt-1 w-40"></label>` : ""}
+      <span class="text-xs text-gray-500 pb-2">${esc(from)} sampai ${esc(to)}</span></div>`;
+  const tiles = statTiles([
+    { count: product.seller_ids.length, label: "Vendor", icon: "fa-truck", href: `#/pricelist?product=${product.id}` },
+    { count: product.is_storable ? product.qty_available : 0, label: "Stok Tersedia", icon: "fa-boxes", href: `#/stock/report?product=${product.id}`, always: product.is_storable },
+    { count: product.is_storable ? product.virtual_available : 0, label: "Prakiraan", icon: "fa-chart-line", href: `#/stock/report?product=${product.id}`, always: product.is_storable },
+    { count: product.nbr_reordering_rules, label: "Reorder", icon: "fa-rotate", href: `#/orderpoint?product=${product.id}` },
+    { count: counts.bought, label: "Dibeli", icon: "fa-shopping-cart", href: `#/analysis/poline?product=${product.id}&state=purchase&${range}`, always: product.purchase_ok },
+    { count: counts.sold, label: "Terjual", icon: "fa-tags", href: `#/analysis/soanalysis?product=${product.id}&${range}`, always: product.sale_ok },
+    { count: counts.pos, label: "POS", icon: "fa-cash-register", href: `#/posorder?product=${product.id}&${range}` },
+    { count: product.bom_count, label: "BoM", icon: "fa-sitemap", href: `#/bom?product=${product.id}` },
+  ]);
+  const makeBom = product.type === "consu" && !product.bom_count ? `<a href="#/bom/new?product=${product.id}" class="flex items-center gap-3 border border-dashed border-gray-300 bg-white rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"><i class="fas fa-sitemap text-gray-400"></i>Buat BoM</a>` : "";
+  return control + tiles + makeBom;
+}
+
 async function renderForm(id) {
   closeLookup();
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
@@ -224,7 +280,7 @@ async function renderForm(id) {
   let product = null;
   let sellers = [];
   if (id) {
-    product = await readOne("product.template", id, [...FIELDS, "active", "qty_available", "purchased_product_qty", "sales_count", "seller_ids", "bom_count"]);
+    product = await readOne("product.template", id, [...FIELDS, "active", "qty_available", "virtual_available", "nbr_reordering_rules", "seller_ids", "bom_count"]);
     if (!product) {
       app.innerHTML = '<p class="text-sm text-rose-600">Produk tidak ditemukan.</p>';
       return;
@@ -233,6 +289,8 @@ async function renderForm(id) {
       ? await searchRead("product.supplierinfo", [["id", "in", product.seller_ids]], ["partner_id", "product_code", "min_qty", "price", "discount", "currency_id", "delay"], { order: "min_qty, price" })
       : [];
   }
+  const counts = product ? await periodCounts(product.id) : null;
+  tileProduct = product ? { product, counts } : null;
   if (!form || form.id !== (product?.id ?? null)) {
     let values;
     if (product) values = normalize(product);
@@ -264,13 +322,7 @@ async function renderForm(id) {
     <div class="flex flex-wrap items-center gap-2 mb-3">
       ${product ? button("toggle-active", product.active ? "Arsipkan" : "Aktifkan Kembali", product.active ? "danger" : "primary", { id: product.id }) : ""}
     </div>
-    ${product ? `<div class="flex flex-wrap gap-2 mb-4">${statTiles([
-      { count: product.seller_ids.length, label: "Vendor", icon: "fa-truck", href: `#/pricelist?product=${product.id}` },
-      { count: product.is_storable ? product.qty_available : 0, label: "Stok Tersedia", icon: "fa-boxes", href: `#/stock/report?product=${product.id}`, always: product.is_storable },
-      { count: product.purchased_product_qty, label: "Dibeli", icon: "fa-shopping-cart", href: `#/analysis/poline?product=${product.id}&state=purchase&from=2000-01-01` },
-      { count: product.sales_count, label: "Terjual", icon: "fa-tags", href: `#/analysis/soanalysis?product=${product.id}&from=2000-01-01`, always: product.sale_ok },
-      { count: product.bom_count, label: "BoM", icon: "fa-sitemap", href: `#/bom?product=${product.id}` },
-    ])}${product.type === "consu" && !product.bom_count ? `<a href="#/bom/new?product=${product.id}" class="flex items-center gap-3 border border-dashed border-gray-300 bg-white rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"><i class="fas fa-sitemap text-gray-400"></i>Buat BoM</a>` : ""}</div>` : ""}
+    ${product ? `<div id="product-tiles" class="flex flex-wrap gap-2 mb-4">${tilesHtml(product, counts)}</div>` : ""}
     <div class="mb-3"><h1 class="text-2xl font-bold text-gray-900">${title}</h1>
       ${product && !product.active ? '<span class="mt-1 inline-block px-2 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600">Diarsipkan</span>' : ""}</div>
 
@@ -394,7 +446,25 @@ export function onInput(event, el) {
   form.values[el.dataset.value] = fieldValue(el);
 }
 
+/** Ganti periode: hanya baris tombol yang dihitung ulang dan digambar ulang, isian form yang belum disimpan tetap. */
+async function changePeriod(el) {
+  const key = el.dataset.period;
+  period[key] = el.value;
+  if (key === "key" && el.value === "custom" && !period.from && !period.to) Object.assign(period, { from: periodRange({ key: "12m" }).from, to: today() });
+  const current = tileProduct;
+  if (!current) return;
+  const counts = await periodCounts(current.product.id);
+  if (tileProduct !== current) return;
+  current.counts = counts;
+  const box = document.getElementById("product-tiles");
+  if (box) box.innerHTML = tilesHtml(current.product, counts);
+}
+
 export async function onChange(event, el) {
+  if (el.dataset.period) {
+    await changePeriod(el);
+    return;
+  }
   if (!form) return;
   if (el.dataset.tax) {
     const key = el.dataset.tax;

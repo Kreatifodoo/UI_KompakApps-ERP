@@ -207,6 +207,7 @@ def main():
     check_manufacturing(api)
     check_crm(api)
     check_pos(api, product)
+    check_smart_button_periods(api)
     check_sales_pricelist(api, product)
     check_account_reports(api)
     check_dashboards(api)
@@ -2756,6 +2757,55 @@ def check_product_smart_buttons(api):
         report = api.call("sale.report", "formatted_read_group", domain=[["product_tmpl_id", "=", product["id"]], ["state", "in", ["sale", "done"]]], groupby=[], aggregates=["product_uom_qty:sum"])
         sold_ok = sold_ok and abs((report[0]["product_uom_qty:sum"] if report else 0) - product["sales_count"]) < 1e-6
     check(sold_ok, "Terjual di tombol sama dengan jumlah Sales Order Analisis (Sales Order dan POS) yang dibuka tombolnya")
+
+
+def check_smart_button_periods(api):
+    """Periode tombol Dibeli, Terjual, dan POS di halaman produk (ui/live/pages/product.js, D71): hitungan per rentang tanggal memakai tanggal pesanan yang sama dengan
+    halaman tujuan, sehingga PO atau SO lama tidak ikut pada periode yang lebih sempit; juga Prakiraan, Reorder, dan filter produk pada POS Order dan Reorder Level."""
+    import random
+    from datetime import datetime, timedelta
+
+    step("Tombol pintas produk: periode Dibeli dan Terjual, Prakiraan, Reorder, POS")
+    tag = f"{random.randint(0, 99999):05d}"
+    now = datetime.utcnow()
+    fmt = lambda d: d.strftime("%Y-%m-%d %H:%M:%S")  # noqa: E731
+    vendor = api.search("res.partner", [["supplier_rank", ">", 0]], ["id"], limit=1) or api.search("res.partner", [], ["id"], limit=1)
+    customer = api.search("res.partner", [["customer_rank", ">", 0]], ["id"], limit=1) or api.search("res.partner", [], ["id"], limit=1)
+    [product] = api.call("product.product", "create", vals_list=[{"name": f"Q30 Periode {tag}", "is_storable": True, "type": "consu", "purchase_method": "purchase"}])
+    template = api.read("product.product", product, ["product_tmpl_id"])["product_tmpl_id"][0]
+    for days, qty in ((400, 5), (40, 3), (0, 2)):
+        [po] = api.call("purchase.order", "create", vals_list=[{"partner_id": vendor[0]["id"], "date_order": fmt(now - timedelta(days=days)), "order_line": [[0, 0, {"product_id": product, "product_qty": qty, "price_unit": 1000}]]}])
+        api.call("purchase.order", "button_confirm", ids=[po])
+    for days, qty in ((400, 4), (40, 2), (0, 1)):
+        [so] = api.call("sale.order", "create", vals_list=[{"partner_id": customer[0]["id"], "order_line": [[0, 0, {"product_id": product, "product_uom_qty": qty}]]}])
+        api.call("sale.order", "action_confirm", ids=[so])
+        api.call("sale.order", "write", ids=[so], vals={"date_order": fmt(now - timedelta(days=days))})
+
+    def counts(date_from):
+        start, end = f"{date_from} 00:00:00", f"{now:%Y-%m-%d} 23:59:59"
+        bought = api.call("purchase.order.line", "formatted_read_group", domain=[["product_id.product_tmpl_id", "=", template], ["state", "=", "purchase"], ["date_order", ">=", start], ["date_order", "<=", end]], groupby=[], aggregates=["product_uom_qty:sum"])
+        sold = api.call("sale.report", "formatted_read_group", domain=[["product_tmpl_id", "=", template], ["state", "in", ["sale", "done"]], ["date", ">=", start], ["date", "<=", end]], groupby=[], aggregates=["product_uom_qty:sum"])
+        return (bought[0]["product_uom_qty:sum"] if bought else 0, sold[0]["product_uom_qty:sum"] if sold else 0)
+
+    year_ago = f"{now - timedelta(days=365):%Y-%m-%d}"
+    check(counts("2000-01-01") == (10, 7), "semua waktu: dibeli 5 + 3 + 2 = 10 dan terjual 4 + 2 + 1 = 7")
+    check(counts(year_ago) == (5, 3), "12 bulan terakhir: PO dan SO berumur 400 hari tidak ikut (dibeli 5, terjual 3)")
+    check(counts(f"{now:%Y-%m}-01") == (2, 1), "bulan ini: hanya pesanan hari ini (dibeli 2, terjual 1)")
+    odoo = api.read("product.template", template, ["purchased_product_qty", "sales_count", "virtual_available", "qty_available", "incoming_qty", "outgoing_qty", "nbr_reordering_rules"])
+    check(odoo["purchased_product_qty"] == 10 and odoo["sales_count"] == 3, "hitungan Odoo sendiri memakai tanggal persetujuan PO (10) sehingga berbeda dari halaman tujuan pada PO lama: karena itu tombol memakai hitungan per periode")
+    check(abs(odoo["virtual_available"] - (odoo["qty_available"] + odoo["incoming_qty"] - odoo["outgoing_qty"])) < 1e-6, "Prakiraan = on hand + akan masuk - akan keluar")
+    check(odoo["nbr_reordering_rules"] == 0, "produk baru belum punya aturan reorder (tombol Reorder tersembunyi)")
+    location = api.search("stock.warehouse", [], ["lot_stock_id"], order="sequence, id", limit=1)[0]["lot_stock_id"][0]
+    api.call("stock.warehouse.orderpoint", "create", vals_list=[{"product_id": product, "location_id": location, "product_min_qty": 1, "product_max_qty": 5}])
+    check(api.read("product.template", template, ["nbr_reordering_rules"])["nbr_reordering_rules"] == 1, "aturan reorder baru dihitung tombol Reorder")
+    check(len(api.search("stock.warehouse.orderpoint", [["product_tmpl_id", "=", template]], ["id"])) == 1, "Reorder Level memfilter per template produk (parameter product)")
+    lines = api.search("pos.order.line", [["order_id.state", "in", ["paid", "done", "invoiced"]]], ["product_id", "qty"], limit=50)
+    if lines:
+        pos_template = api.read("product.product", lines[0]["product_id"][0], ["product_tmpl_id"])["product_tmpl_id"][0]
+        grouped = api.call("pos.order.line", "formatted_read_group", domain=[["product_id.product_tmpl_id", "=", pos_template], ["order_id.state", "in", ["paid", "done", "invoiced"]]], groupby=[], aggregates=["qty:sum"])
+        direct = sum(r["qty"] for r in api.search("pos.order.line", [["product_id.product_tmpl_id", "=", pos_template], ["order_id.state", "in", ["paid", "done", "invoiced"]]], ["qty"], limit=500))
+        orders = api.search("pos.order", [["lines.product_id.product_tmpl_id", "=", pos_template], ["state", "in", ["paid", "done", "invoiced"]]], ["id"])
+        check(abs(grouped[0]["qty:sum"] - direct) < 1e-6 and bool(orders), "POS: jumlah terjual dari baris pesanan sama dengan jumlah langsung, dan POS Order memfilter per produk")
 
 
 def check_bank_reconciliation(api):
