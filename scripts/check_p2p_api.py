@@ -1600,6 +1600,21 @@ def check_analysis_drill(api):
     rows = api.search("stock.move.line", mdomain(cur) + group["__extra_domain"], ["picking_id", "picking_code", "quantity"])
     check(len(rows) == group["__count"] == 2 and {r["picking_id"][0] for r in rows} <= set(pickings) and all(r["picking_code"] == "incoming" for r in rows), "drill Move Analisis: 2 baris tertaut ke penerimaan yang membuatnya")
 
+    # Kartu ringkasan laporan baris (D77): jumlah, kuantitas, dan subtotal per rentang dihitung Odoo tanpa batas 300 baris, sama dengan jumlah baris dokumen;
+    # kartu total laporan kelompok (drill "semua baris") memakai groupby kosong yang sama.
+    for name, period, n_po, qty_po, sum_po, n_so, qty_so, sum_so in (("periode ini", cur, 3, 10.0, 1_000_000.0, 3, 6.0, 900_000.0), ("tahun lalu", year, 2, 5.0, 500_000.0, 1, 1.0, 150_000.0)):
+        po_domain = [["product_id", "=", product], ["date_order", ">=", span(period)[0]], ["date_order", "<=", span(period)[1]]]
+        total = api.call("purchase.order.line", "formatted_read_group", domain=po_domain, groupby=[], aggregates=["__count", "product_qty:sum", "price_subtotal:sum"])[0]
+        check((total["__count"], total["product_qty:sum"], total["price_subtotal:sum"]) == (n_po, qty_po, sum_po), f"kartu Purchase Order Line {name}: {n_po} baris, jumlah {qty_po:g}, subtotal {sum_po:,.0f}")
+        so_domain = [["product_id", "=", product], ["order_id.date_order", ">=", span(period)[0]], ["order_id.date_order", "<=", span(period)[1]]]
+        total = api.call("sale.order.line", "formatted_read_group", domain=so_domain, groupby=[], aggregates=["__count", "product_uom_qty:sum", "price_subtotal:sum"])[0]
+        check((total["__count"], total["product_uom_qty:sum"], total["price_subtotal:sum"]) == (n_so, qty_so, sum_so), f"kartu Sales Order Line {name}: {n_so} baris, jumlah {qty_so:g}, subtotal {sum_so:,.0f}")
+    request_domain = [["date_required", ">=", "2000-01-01"]]
+    total = api.call("purchase.request.line", "formatted_read_group", domain=request_domain, groupby=[], aggregates=["__count", "product_qty:sum", "estimated_cost:sum"])[0]
+    request_lines = api.search("purchase.request.line", request_domain, ["product_qty", "estimated_cost"])
+    check(total["__count"] == len(request_lines) and abs(total["product_qty:sum"] - sum(x["product_qty"] for x in request_lines)) < 0.001 and abs(total["estimated_cost:sum"] - sum(x["estimated_cost"] for x in request_lines)) < 0.01,
+          f"kartu Purchase Request Line sama dengan jumlah {len(request_lines)} baris (jumlah dan estimasi biaya)")
+
 
 def check_settings_and_users(api):
     """Pengaturan per modul, kunci periode, data perusahaan, dan pengguna dengan peran (halaman Setting, Company Setting, Users & Access)."""
