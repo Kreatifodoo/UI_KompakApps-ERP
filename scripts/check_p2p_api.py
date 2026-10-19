@@ -197,6 +197,7 @@ def main():
     check_stock_journals(api, vendor)
     check_warehouse_master(api, product)
     check_multi_warehouse(api)
+    check_pos_station_warehouse(api)
     check_stock_picker(api)
     check_stock_limits(api)
     check_product_search(api)
@@ -567,6 +568,31 @@ def check_warehouse_master(api, product):
     check(api.call("stock.picking", "button_validate", ids=[picking]) is True, "transfer internal divalidasi tanpa dialog")
     after = api.search("stock.quant", [["product_id", "=", product["id"]], ["location_id", "=", rack]], ["quantity"])[0]["quantity"]
     check(after == start + 2.0, "stok berpindah ke lokasi tujuan")
+
+
+def check_pos_station_warehouse(api):
+    """Gudang stok stasiun POS (D80): `picking_type_id` stasiun diisi tipe operasi POS gudang pilihan (`stock.warehouse.pos_type_id`), gudangnya mengikuti; tanpa pilihan Odoo memakai gudang utama."""
+    import random
+
+    step("POS Station: gudang stok stasiun dipilih lewat tipe operasi POS gudang")
+    tag = f"{random.randint(0, 99999):05d}"
+    main = api.search("stock.warehouse", [], ["id", "pos_type_id"], order="id", limit=1)[0]
+    [second] = api.call("stock.warehouse", "create", vals_list=[{"name": f"Gudang POS Uji {tag}", "code": f"P{tag[:4]}"}])
+    second_type = api.read("stock.warehouse", second, ["pos_type_id"])["pos_type_id"][0]
+    check(second_type and second_type != main["pos_type_id"][0], "setiap gudang punya tipe operasi POS sendiri (pos_type_id)")
+    [default_config] = api.call("pos.config", "create", vals_list=[{"name": f"Stasiun Bawaan {tag}"}])
+    row = api.read("pos.config", default_config, ["picking_type_id", "warehouse_id"])
+    check(row["picking_type_id"][0] == main["pos_type_id"][0] and row["warehouse_id"][0] == main["id"], "stasiun baru tanpa pilihan memakai gudang utama")
+    [chosen] = api.call("pos.config", "create", vals_list=[{"name": f"Stasiun Gudang Kedua {tag}", "picking_type_id": second_type}])
+    row = api.read("pos.config", chosen, ["picking_type_id", "warehouse_id"])
+    check(row["picking_type_id"][0] == second_type and row["warehouse_id"][0] == second, "stasiun baru dengan tipe operasi POS gudang kedua: gudang stasiun mengikuti")
+    api.call("pos.config", "write", ids=[chosen], vals={"picking_type_id": main["pos_type_id"][0]})
+    check(api.read("pos.config", chosen, ["warehouse_id"])["warehouse_id"][0] == main["id"], "mengganti tipe operasi POS menggeser gudang stasiun kembali ke gudang utama")
+    api.call("pos.config", "write", ids=[default_config], vals={"picking_type_id": second_type})
+    check(api.read("pos.config", default_config, ["warehouse_id"])["warehouse_id"][0] == second, "stasiun yang ada dipindah ke gudang kedua lewat tipe operasi POS")
+    api.call("pos.config", "write", ids=[default_config], vals={"picking_type_id": main["pos_type_id"][0]})
+    api.call("pos.config", "write", ids=[default_config, chosen], vals={"active": False})
+    api.call("stock.warehouse", "write", ids=[second], vals={"active": False})
 
 
 def check_multi_warehouse(api):
