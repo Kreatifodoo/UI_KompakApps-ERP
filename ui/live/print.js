@@ -239,8 +239,19 @@ const BUILDERS = {
   async "mrp.production"(id) {
     const [m] = await call("mrp.production", "read", {
       ids: [id],
-      fields: ["name", "state", "product_id", "product_qty", "product_uom_id", "bom_id", "origin", "user_id", "date_start", "date_finished", "date_deadline", "picking_type_id", "location_src_id", "location_dest_id", "move_raw_ids", "workorder_ids"],
+      fields: ["name", "state", "product_id", "product_qty", "product_uom_id", "bom_id", "origin", "user_id", "date_start", "date_finished", "date_deadline", "picking_type_id", "location_src_id", "location_dest_id", "move_raw_ids", "move_finished_ids", "workorder_ids"],
     });
+    // produk sampingan (move_finished_ids yang punya byproduct_id) dan rincian lot dari baris pergerakan komponen, produk jadi, dan sampingan (D74)
+    const [finished, lotLines] = await Promise.all([
+      m.move_finished_ids.length ? call("stock.move", "search_read", { domain: [["id", "in", m.move_finished_ids]], fields: ["product_id", "product_uom_qty", "quantity", "product_uom", "byproduct_id"], order: "id" }) : [],
+      m.move_raw_ids.length || m.move_finished_ids.length
+        ? call("stock.move.line", "search_read", { domain: [["move_id", "in", [...m.move_raw_ids, ...m.move_finished_ids]], ["lot_id", "!=", false]], fields: ["move_id", "product_id", "lot_id", "quantity", "product_uom_id"], order: "id" })
+        : [],
+    ]);
+    const sideMoves = finished.filter((mv) => mv.byproduct_id);
+    const rawIds = new Set(m.move_raw_ids);
+    const sideIds = new Set(sideMoves.map((mv) => mv.id));
+    const lotKind = (line) => (rawIds.has(line.move_id[0]) ? "Komponen" : sideIds.has(line.move_id[0]) ? "Produk sampingan" : "Produk jadi");
     const [moves, orders] = await Promise.all([
       m.move_raw_ids.length ? call("stock.move", "search_read", { domain: [["id", "in", m.move_raw_ids]], fields: ["product_id", "product_uom_qty", "quantity", "product_uom"], order: "sequence, id" }) : [],
       m.workorder_ids.length ? call("mrp.workorder", "search_read", { domain: [["id", "in", m.workorder_ids]], fields: ["name", "workcenter_id", "duration_expected", "state", "date_start", "date_finished"], order: "id" }) : [],
@@ -256,13 +267,29 @@ const BUILDERS = {
       meta: [["Nomor", m.name], ["Status", state], ["Jadwal Mulai", m.date_start ? dateTimeText(m.date_start) : ""], ["Jadwal Selesai", m.date_finished ? dateTimeText(m.date_finished) : ""], ["Batas Waktu", m.date_deadline ? dateTimeText(m.date_deadline) : ""], ["Penanggung Jawab", name2(m.user_id)], ["Asal Dokumen", text(m.origin)], ["Jenis Operasi", name2(m.picking_type_id)], ["Lokasi Komponen", name2(m.location_src_id)], ["Lokasi Barang Jadi", name2(m.location_dest_id)]],
       columns: [["Komponen yang Dibutuhkan", ""], ["Dibutuhkan", "r"], ["Satuan", ""], [m.state === "done" ? "Dikonsumsi" : "Dicadangkan", "r"]],
       rows: moves.map((mv) => ({ cells: [name2(mv.product_id), num(mv.product_uom_qty), name2(mv.product_uom), num(mv.quantity)] })),
-      sections: orders.length
-        ? [{
-            title: "Work Order",
-            columns: [["Operasi", ""], ["Work Center", ""], ["Durasi Rencana (menit)", "r"], ["Mulai", ""], ["Status", ""]],
-            rows: orders.map((w) => ({ cells: [w.name, name2(w.workcenter_id), num(w.duration_expected), w.date_start ? dateTimeText(w.date_start) : "", woState[w.state] ?? w.state] })),
-          }]
-        : [],
+      sections: [
+        ...(sideMoves.length
+          ? [{
+              title: "Produk Sampingan",
+              columns: [["Produk", ""], ["Direncanakan", "r"], ["Satuan", ""], [m.state === "done" ? "Dihasilkan" : "Terdaftar", "r"]],
+              rows: sideMoves.map((mv) => ({ cells: [name2(mv.product_id), num(mv.product_uom_qty), name2(mv.product_uom), num(mv.quantity)] })),
+            }]
+          : []),
+        ...(orders.length
+          ? [{
+              title: "Work Order",
+              columns: [["Operasi", ""], ["Work Center", ""], ["Durasi Rencana (menit)", "r"], ["Mulai", ""], ["Status", ""]],
+              rows: orders.map((w) => ({ cells: [w.name, name2(w.workcenter_id), num(w.duration_expected), w.date_start ? dateTimeText(w.date_start) : "", woState[w.state] ?? w.state] })),
+            }]
+          : []),
+        ...(lotLines.length
+          ? [{
+              title: "Rincian Lot dan Nomor Seri",
+              columns: [["Jenis", ""], ["Produk", ""], ["Lot / Nomor Seri", ""], ["Jumlah", "r"], ["Satuan", ""]],
+              rows: lotLines.map((l) => ({ cells: [lotKind(l), name2(l.product_id), name2(l.lot_id), num(l.quantity), name2(l.product_uom_id)] })),
+            }]
+          : []),
+      ],
       totals: [],
       notes: [],
       signatures: ["Dibuat oleh", "Disetujui oleh", "Penanggung Jawab Produksi"],
@@ -471,6 +498,26 @@ function openPreview(loaded) {
     },
     { wide: true },
   );
+}
+
+/** Halaman struk 80 mm lengkap (logo, QR, kop, barang, pembayaran) sebuah pesanan POS; dipakai layar Kasir untuk pratinjau dan cetak otomatis (D74). */
+export async function posReceiptPage(orderId) {
+  const [doc, company] = await Promise.all([BUILDERS["pos.order"](orderId), loadCompany()]);
+  return receiptPage(doc, company);
+}
+
+/** Cetak halaman HTML lewat iframe tersembunyi (tanpa jendela pop-up, jadi bisa dipanggil otomatis setelah transaksi). */
+export function printHtml(html) {
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
+  frame.onload = () => {
+    frame.contentWindow.focus();
+    frame.contentWindow.print();
+    setTimeout(() => frame.remove(), 60_000);
+  };
+  frame.srcdoc = html;
+  document.body.append(frame);
 }
 
 /** Ganti ukuran kertas pada pratinjau yang terbuka (A4 atau struk 80 mm). */

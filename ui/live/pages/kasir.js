@@ -2,9 +2,10 @@
 // (tunai dengan kembalian), dan cetak struk. Pesanan dikirim ke pos.order lewat sync_from_ui dengan nilai pajak yang
 // dihitung server (account.tax.compute_all). Sesi harus sudah dibuka di POS Station.
 import {
-  INPUT, app, call, closeLookup, closeModal, ctx, dateTimeText, esc, guarded, money, openModal, pageHeader, readOne, registerLookup, runLookup, searchRead, toast,
+  INPUT, app, call, closeLookup, closeModal, ctx, esc, guarded, money, openModal, pageHeader, readOne, registerLookup, runLookup, searchRead, toast,
 } from "../common.js";
 import { evaluate, findCode, loadPrograms } from "../pospromo.js";
+import { posReceiptPage, printHtml } from "../print.js";
 
 const nf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 3 });
 const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -80,7 +81,8 @@ function paintAll() {
   app.innerHTML = `
     <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
       <div><h1 class="text-2xl font-bold text-gray-900">Kasir · ${esc(state.config.name)}</h1><div class="text-sm text-gray-500">Sesi ${esc(state.session.name)}</div></div>
-      <div class="flex gap-2"><a href="#/possession/${state.session.id}" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Sesi dan Tutup Kasir</a>
+      <div class="flex flex-wrap items-center gap-2"><label class="flex items-center gap-2 text-sm text-gray-600" title="Struk 80 mm langsung dikirim ke printer setelah pembayaran"><input type="checkbox" data-kasir="autoprint" ${autoPrint.get() ? "checked" : ""} class="rounded border-gray-300 text-indigo-600">Cetak struk otomatis</label>
+        <a href="#/possession/${state.session.id}" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Sesi dan Tutup Kasir</a>
         <a href="#/posorder?session=${state.session.id}" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Pesanan Sesi</a></div></div>
     <div class="grid lg:grid-cols-3 gap-4">
       <section class="lg:col-span-2">
@@ -332,56 +334,41 @@ async function submitOrder(button) {
   pay = null;
   paintCart();
   toast("Pembayaran selesai.");
-  await showReceipt(order.id, order.change);
+  await showReceipt(order.id);
 }
 
 /* ---------- Struk ---------- */
 
-/** Data dan HTML struk sebuah pesanan POS; dipakai juga oleh halaman POS Order. */
-export async function receiptHtml(orderId, change = 0) {
-  const order = await readOne("pos.order", orderId, ["name", "pos_reference", "date_order", "partner_id", "user_id", "amount_total", "amount_tax", "lines", "payment_ids", "config_id", "session_id"]);
-  const [lines, payments] = await Promise.all([
-    searchRead("pos.order.line", [["id", "in", order.lines]], ["full_product_name", "qty", "price_unit", "discount", "price_subtotal_incl"], { order: "id" }),
-    searchRead("pos.payment", [["id", "in", order.payment_ids]], ["payment_method_id", "amount", "is_change"], { order: "id" }),
-  ]);
-  const returned = change || payments.filter((p) => p.is_change).reduce((s, p) => s - p.amount, 0);
-  const row = (a, b) => `<div style="display:flex;justify-content:space-between;gap:12px"><span>${a}</span><span>${b}</span></div>`;
-  return `<div style="font-family:monospace;font-size:13px;max-width:320px;margin:0 auto">
-    <div style="text-align:center;font-weight:bold;font-size:15px">${esc(ctx.company?.name ?? "")}</div>
-    <div style="text-align:center">${esc(order.config_id?.[1] ?? "")}</div>
-    <div style="text-align:center;margin-bottom:8px">${esc(order.pos_reference || order.name)}<br>${esc(dateTimeText(order.date_order))}<br>Kasir: ${esc(order.user_id?.[1] ?? "")}${order.partner_id ? `<br>Pelanggan: ${esc(order.partner_id[1])}` : ""}</div>
-    <hr>
-    ${lines.map((l) => `<div>${esc(l.full_product_name)}</div>${row(`${esc(nf.format(l.qty))} × ${esc(money(l.price_unit))}${l.discount ? ` (−${esc(nf.format(l.discount))}%)` : ""}`, esc(money(l.price_subtotal_incl)))}`).join("")}
-    <hr>
-    ${row("Pajak", esc(money(order.amount_tax)))}
-    ${row("<b>Total</b>", `<b>${esc(money(order.amount_total))}</b>`)}
-    <hr>
-    ${payments.filter((p) => !p.is_change).map((p) => row(esc(p.payment_method_id[1]), esc(money(p.amount)))).join("")}
-    ${returned ? row("Kembalian", esc(money(returned))) : ""}
-    <div style="text-align:center;margin-top:10px">Terima kasih</div></div>`;
-}
+/** Pilihan "Cetak struk otomatis" disimpan per peramban (kenyamanan pengguna, bukan data bersama). */
+const autoPrint = {
+  get() {
+    try {
+      return localStorage.getItem("kompakapps.kasir.autoprint") === "1";
+    } catch {
+      return false;
+    }
+  },
+  set(on) {
+    try {
+      localStorage.setItem("kompakapps.kasir.autoprint", on ? "1" : "0");
+    } catch {
+      /* penyimpanan peramban boleh gagal; pilihan berlaku sampai halaman dimuat ulang */
+    }
+  },
+};
+let receiptPageHtml = ""; // struk 80 mm terakhir untuk tombol Cetak
 
-export function printReceipt(html) {
-  const w = window.open("", "_blank", "width=380,height=640");
-  if (!w) {
-    toast("Pop-up diblokir browser; izinkan pop-up untuk mencetak struk.", "error");
-    return;
-  }
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Struk</title></head><body>${html}</body></html>`);
-  w.document.close();
-  w.focus();
-  w.print();
-}
-
-async function showReceipt(orderId, change) {
-  const html = await receiptHtml(orderId, change);
+/** Struk 80 mm pesanan (logo, kop, barang, pembayaran, QR) di pratinjau; dicetak otomatis bila pilihannya aktif. */
+async function showReceipt(orderId) {
+  receiptPageHtml = await posReceiptPage(orderId);
   openModal(
     "Struk",
-    `<div id="receipt">${html}</div>`,
+    `<iframe id="receipt" title="Struk" class="border border-gray-200 rounded bg-white" style="width:340px;max-width:100%;margin:0 auto;display:block;height:60vh" srcdoc="${esc(receiptPageHtml)}"></iframe>`,
     `<button data-action="receipt-print" class="px-4 py-2 rounded-lg text-sm font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"><i class="fas fa-print mr-2"></i>Cetak</button>
      <a href="#/posorder/${orderId}" data-action="modal-close" class="px-4 py-2 rounded-lg text-sm font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50">Lihat Pesanan</a>
      <button data-action="modal-close" class="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700">Transaksi Baru</button>`,
   );
+  if (autoPrint.get()) printHtml(receiptPageHtml);
 }
 
 /* ---------- Penanganan acara ---------- */
@@ -420,7 +407,7 @@ export async function onClick(event, el) {
     state.codes.splice(i, 1);
     await recompute();
   } else if (action === "pay-confirm") await submitOrder(el);
-  else if (action === "receipt-print") printReceipt(document.querySelector("#receipt").innerHTML);
+  else if (action === "receipt-print") printHtml(receiptPageHtml);
 }
 
 async function applyPromoCode() {
@@ -454,7 +441,8 @@ async function applyPromoCode() {
 
 export function onInput(event, el) {
   if (!state) return;
-  if (el.dataset.kasir === "search") {
+  if (el.dataset.kasir === "autoprint") autoPrint.set(el.checked);
+  else if (el.dataset.kasir === "search") {
     state.search = el.value;
     clearTimeout(searchTimer);
     searchTimer = setTimeout(async () => {
