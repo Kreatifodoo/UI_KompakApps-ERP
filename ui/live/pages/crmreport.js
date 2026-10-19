@@ -1,8 +1,7 @@
 // Laporan CRM dari crm.lead dan mail.activity: Forecast (pendapatan diharapkan per bulan tenggat dan tahap), Pipeline
 // (per tahap dan per sales, menang dan kalah), Leads (asal, konversi, dan kalah), dan Activities (aktivitas terjadwal).
 import {
-  INPUT, app, badge, call, dateText, esc, guarded, money, pageHeader, referenceUsers, searchRead, selectOptions, toast,
-} from "../common.js";
+  INPUT, app, badge, call, dateText, esc, guarded, money, pageHeader, referenceUsers, searchRead, selectOptions, toast, dayBoundary,} from "../common.js";
 
 const nf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 1 });
 const MONTHS = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
@@ -87,8 +86,8 @@ async function pipeline(query, user) {
   const open = [["type", "=", "opportunity"], ["active", "=", true], ["won_status", "=", "pending"]];
   const closed = (status) => {
     const d = [["type", "=", "opportunity"], ["won_status", "=", status]];
-    if (from) d.push(["date_closed", ">=", `${from} 00:00:00`]);
-    if (to) d.push(["date_closed", "<=", `${to} 23:59:59`]);
+    if (from) d.push(["date_closed", ">=", dayBoundary(from)]);
+    if (to) d.push(["date_closed", "<=", dayBoundary(to, true)]);
     return d;
   };
   const withUser = (d) => (user ? [...d, ["user_id", "=", user]] : d);
@@ -143,8 +142,8 @@ async function leads(query, user) {
   // Semua kontak yang pernah menjadi lead: yang masih lead atau sudah dikonversi (date_conversion terisi).
   const origin = ["|", ["type", "=", "lead"], ["date_conversion", "!=", false]];
   const base = [...origin];
-  if (from) base.push(["create_date", ">=", `${from} 00:00:00`]);
-  if (to) base.push(["create_date", "<=", `${to} 23:59:59`]);
+  if (from) base.push(["create_date", ">=", dayBoundary(from)]);
+  if (to) base.push(["create_date", "<=", dayBoundary(to, true)]);
   if (user) base.push(["user_id", "=", user]);
   const converted = [...base, ["date_conversion", "!=", false]];
   const lost = [...base, ["active", "=", false], ["probability", "=", 0]];

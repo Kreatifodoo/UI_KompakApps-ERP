@@ -1,6 +1,6 @@
 // Riwayat Pergerakan Stok (stock.move.line selesai): tanggal, dokumen, produk, lot, dari dan ke lokasi, jumlah.
 // Mode "loss" menampilkan hanya pergerakan dari atau ke lokasi Inventory Loss (penyesuaian stok dan scrap).
-import { INPUT, app, dateTimeText, esc, filterSelect, pageHeader, searchBox, searchRead, table, cell, rowLink } from "../common.js";
+import { INPUT, app, dateTimeText, esc, filterSelect, pageHeader, searchBox, searchRead, table, cell, rowLink, dayBoundary } from "../common.js";
 
 const DIRECTIONS = [["", "Semua arah"], ["in", "Masuk ke gudang"], ["out", "Keluar dari gudang"], ["adjust", "Penyesuaian dan scrap"]];
 const nf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 });
@@ -24,8 +24,8 @@ export async function render(sub, query) {
   if (direction === "in") domain.push(["location_id.usage", "!=", "internal"], ["location_dest_id.usage", "=", "internal"], ["location_id.usage", "!=", "inventory"]);
   else if (direction === "out") domain.push(["location_id.usage", "=", "internal"], ["location_dest_id.usage", "!=", "internal"], ["location_dest_id.usage", "!=", "inventory"]);
   else if (direction === "adjust") domain.push("|", ["location_id.usage", "=", "inventory"], ["location_dest_id.usage", "=", "inventory"]);
-  if (from) domain.push(["date", ">=", `${from} 00:00:00`]);
-  if (to) domain.push(["date", "<=", `${to} 23:59:59`]);
+  if (from) domain.push(["date", ">=", dayBoundary(from)]);
+  if (to) domain.push(["date", "<=", dayBoundary(to, true)]);
   if (text) domain.push("|", "|", ["product_id.name", "ilike", text], ["reference", "ilike", text], ["lot_id.name", "ilike", text]);
   const rows = await searchRead(
     "stock.move.line", domain,

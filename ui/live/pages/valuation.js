@@ -2,7 +2,7 @@
 // persediaan terhadap buku besar. Sistem tidak lagi punya stock.valuation.layer; nilai tercatat pada stock.move (`value`, `is_in`,
 // `is_out`) dan nilai pada tanggal lampau dihitung Odoo dengan memutar ulang pergerakan selesai (konteks `to_date` pada product.product:
 // qty_available, avg_cost, total_value). Halaman ini memakai hitungan Odoo itu supaya hasilnya sama dengan laporan Stock Valuation bawaan.
-import { INPUT, app, call, dateText, dateTimeText, esc, filterSelect, money, pageHeader, referenceCategories, searchBox, searchRead, today } from "../common.js";
+import { INPUT, app, call, dateText, dateTimeText, esc, filterSelect, money, pageHeader, referenceCategories, searchBox, searchRead, today, dayBoundary } from "../common.js";
 import { printReport } from "../print.js";
 
 const TABS = [["asof", "Per Tanggal"], ["period", "Mutasi Periode"], ["moves", "Rincian Pergerakan"], ["account", "Per Akun Persediaan"]];
@@ -36,14 +36,14 @@ const pickDate = (text, fallback = today()) => {
 };
 /** Hari ini berarti kondisi saat ini (tanpa `to_date`), seperti laporan Stock Valuation bawaan Odoo dan Laporan Stok; tanggal lampau
  *  dihitung sampai akhir hari itu (UTC, sama dengan laporan analisis lain). */
-const dateContext = (date) => (date >= today() ? {} : { to_date: `${date} 23:59:59` });
+const dateContext = (date) => (date >= today() ? {} : { to_date: dayBoundary(date, true) });
 
 /* ---------- Data referensi ---------- */
 
 async function loadScopes() {
   const [valued, warehouses, locations] = await Promise.all([
     searchRead("stock.location", [["usage", "in", ["internal", "transit"]]], ["id"], { context: { active_test: false }, limit: 1000 }),
-    searchRead("stock.warehouse", [], ["display_name"], { order: "name" }),
+    searchRead("stock.warehouse", [], ["display_name", "view_location_id"], { order: "name" }),
     searchRead("stock.location", [["usage", "in", ["internal", "transit"]]], ["complete_name"], { order: "complete_name", limit: 500 }),
   ]);
   return { valuedIds: valued.map((l) => l.id), warehouses, locations };
@@ -54,11 +54,11 @@ function scopeOf(param, scopes) {
   const id = Number(String(param ?? "").slice(1));
   if (param?.startsWith("w")) {
     const w = scopes.warehouses.find((x) => x.id === id);
-    if (w) return { all: false, label: `Gudang ${w.display_name}`, context: { warehouse_id: w.id } };
+    if (w) return { all: false, label: `Gudang ${w.display_name}`, context: { warehouse_id: w.id }, roots: [w.view_location_id[0]] };
   }
   if (param?.startsWith("l")) {
     const l = scopes.locations.find((x) => x.id === id);
-    if (l) return { all: false, label: l.complete_name, context: { location: [l.id] } };
+    if (l) return { all: false, label: l.complete_name, context: { location: [l.id] }, roots: [l.id] };
   }
   return { all: true, label: "Semua lokasi", context: { location: scopes.valuedIds, strict: true } };
 }
@@ -87,6 +87,19 @@ function productDomain(query, prefix = "") {
   return domain;
 }
 
+/** Produk dengan valuasi per lot (`lot_valuated`): jumlah, biaya rata-rata, dan nilai tiap lot pada tanggal itu (hitungan Odoo pada stock.lot), diurutkan menurut nama lot. */
+async function lotValuation(products, date, scope) {
+  const byProduct = new Map();
+  if (!products.length) return byProduct;
+  const lots = await searchRead("stock.lot", [["product_id", "in", products.map((r) => r.id)]], ["name", "product_id", "product_qty", "avg_cost", "total_value"], { context: { active_test: false, ...dateContext(date), ...scope.context }, order: "name", limit: 2000 });
+  for (const lot of lots) {
+    if (isZero(lot.product_qty, lot.total_value)) continue;
+    const id = lot.product_id[0];
+    byProduct.set(id, [...(byProduct.get(id) ?? []), { name: lot.name, qty: lot.product_qty, cost: lot.avg_cost, value: lot.total_value }]);
+  }
+  return byProduct;
+}
+
 /* ---------- Nilai persediaan pada tanggal tertentu ---------- */
 
 /** Jumlah, biaya rata-rata, dan nilai per produk pada tanggal itu. Nilai dan biaya dari hitungan Odoo (seluruh perusahaan); untuk satu
@@ -95,7 +108,7 @@ async function valuationRows(date, query, scope) {
   const domain = [["is_storable", "=", true], ...productDomain(query)];
   const context = { active_test: false, ...dateContext(date) };
   const [qtyRows, valueRows] = await Promise.all([
-    searchRead("product.product", domain, ["display_name", "default_code", "categ_id", "uom_id", "product_tmpl_id", "qty_available"], { context: { ...context, ...scope.context }, order: "id", limit: LIMIT }),
+    searchRead("product.product", domain, ["display_name", "default_code", "categ_id", "uom_id", "product_tmpl_id", "qty_available", "lot_valuated"], { context: { ...context, ...scope.context }, order: "id", limit: LIMIT }),
     searchRead("product.product", domain, ["avg_cost", "total_value"], { context, order: "id", limit: LIMIT }),
   ]);
   const values = new Map(valueRows.map((r) => [r.id, r]));
@@ -108,6 +121,7 @@ async function valuationRows(date, query, scope) {
       categ: r.categ_id ? { id: r.categ_id[0], name: r.categ_id[1] } : { id: 0, name: "Tanpa kategori" },
       uom: r.uom_id?.[1] ?? "",
       qty: r.qty_available,
+      lotValuated: Boolean(r.lot_valuated),
       cost: v.avg_cost,
       value: scope.all ? v.total_value : r.qty_available * v.avg_cost,
     };
@@ -151,14 +165,14 @@ function tableHtml(m) {
   const groupHead = m.columns.some((c) => c.group)
     ? `<tr>${spans.map((s) => `<th colspan="${s.n}" class="pt-2 px-3 text-xs font-semibold text-gray-500 uppercase text-center ${s.label ? "border-l border-gray-200" : ""}">${esc(s.label)}</th>`).join("")}</tr>`
     : "";
-  const tone = { group: "bg-gray-100 font-semibold", row: "hover:bg-gray-50", total: "bg-gray-50 font-bold border-t-2 border-gray-300" };
+  const tone = { group: "bg-gray-100 font-semibold", row: "hover:bg-gray-50", lot: "text-gray-600 bg-gray-50/60", total: "bg-gray-50 font-bold border-t-2 border-gray-300" };
   const td = (c, col, i, r) => {
     const cellData = c && typeof c === "object" ? c : { v: c };
     const text = cellData.html ?? esc(fmt(col, cellData.v));
     const numeric = col.type !== "text";
     const negative = numeric && typeof cellData.v === "number" && cellData.v < -0.000001;
-    const faint = numeric && cellData.v === 0 && r.kind === "row";
-    return `<td class="py-2 px-3 text-sm ${numeric ? "text-right tabular-nums" : ""} ${negative ? "text-rose-700" : faint ? "text-gray-400" : ""} ${i === 0 && r.kind === "row" && m.indent ? "pl-8" : ""}">${text}</td>`;
+    const faint = numeric && cellData.v === 0 && (r.kind === "row" || r.kind === "lot");
+    return `<td class="py-2 px-3 text-sm ${numeric ? "text-right tabular-nums" : ""} ${negative ? "text-rose-700" : faint ? "text-gray-400" : ""} ${i === 0 && r.kind === "row" && m.indent ? "pl-8" : i === 0 && r.kind === "lot" ? "pl-14 text-xs" : ""}">${text}</td>`;
   };
   const body = m.rows.map((r) => `<tr class="${tone[r.kind]}">${r.cells.map((c, i) => td(c, m.columns[i], i, r)).join("")}</tr>`).join("");
   return `<div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
@@ -226,6 +240,7 @@ function movesHref(query, { product, categ, from, to }) {
   if (product) p.set("product", product);
   else if (categ) p.set("categ", categ);
   if (query.get("q") && !product) p.set("q", query.get("q"));
+  if (query.get("scope")) p.set("scope", query.get("scope"));
   p.set("from", from);
   p.set("to", to);
   return `#/valuation/moves?${p}`;
@@ -241,6 +256,7 @@ async function viewAsOf(query) {
   const accountIds = [...new Set(accountCategories.map((c) => c.property_stock_valuation_account_id?.[0]).filter(Boolean))];
   const [all, gl, chip] = await Promise.all([valuationRows(date, query, scope), glBalances(accountIds, date), productChip(query)]);
   const rows = all.filter((r) => !isZero(r.qty, r.value));
+  const lots = await lotValuation(rows.filter((r) => r.lotValuated), date, scope);
   const groups = groupByCategory(rows);
   const total = sum(rows, (r) => r.value);
   const glTotal = [...gl.values()].reduce((s, v) => s + v, 0);
@@ -256,6 +272,7 @@ async function viewAsOf(query) {
     });
     for (const r of g.rows) {
       tableRows.push({ kind: "row", category: g.name, cells: [{ v: r.name, html: link(`#/product/${r.template}`, r.name) }, r.uom, r.qty, r.cost, r.value, drillLink(movesHref(query, { product: r.template, from: "2000-01-01", to }))] });
+      for (const lot of lots.get(r.id) ?? []) tableRows.push({ kind: "lot", category: g.name, cells: [`Lot ${lot.name}`, r.uom, lot.qty, lot.cost, lot.value, ""] });
     }
   }
   const uom = commonUom(rows);
@@ -291,9 +308,25 @@ async function viewAsOf(query) {
 
 /* ---------- Tampilan 2: mutasi periode ---------- */
 
-/** Masuk dan keluar bernilai selama periode, per produk: nilai dari stock.move, jumlah dari baris pergerakan (satuan produk). */
-async function periodFlows(from, to, query) {
-  const range = [["state", "=", "done"], ["date", ">=", `${from} 00:00:00`], ["date", "<=", `${to} 23:59:59`], ...productDomain(query, "product_id.")];
+/** Pergerakan yang melintasi batas lingkup: masuk (tujuan di dalam, asal di luar) atau keluar (asal di dalam, tujuan di luar). Transfer antar gudang termasuk, transfer di dalam lingkup tidak. */
+const crossing = (roots, direction) => {
+  const inside = (field) => [field, "child_of", roots];
+  return direction === "in" ? ["&", inside("location_dest_id"), "!", inside("location_id")] : ["&", inside("location_id"), "!", inside("location_dest_id")];
+};
+
+/** Masuk dan keluar bernilai selama periode, per produk: nilai dari stock.move, jumlah dari baris pergerakan (satuan produk). Untuk satu gudang atau lokasi,
+ *  masuk dan keluar adalah pergerakan yang melintasi batas lingkup itu dan nilainya = jumlah dikali biaya rata-rata akhir periode (transfer antar gudang tidak punya nilai sendiri). */
+async function periodFlows(from, to, query, scope, costs) {
+  const range = [["state", "=", "done"], ["date", ">=", dayBoundary(from)], ["date", "<=", dayBoundary(to, true)], ...productDomain(query, "product_id.")];
+  if (!scope.all) {
+    const qty = async (direction) => {
+      const rows = await call("stock.move.line", "formatted_read_group", { domain: [...range, ...crossing(scope.roots, direction)], groupby: ["product_id"], aggregates: ["quantity_product_uom:sum"] });
+      return new Map(rows.map((g) => [g.product_id[0], g["quantity_product_uom:sum"] || 0]));
+    };
+    const [inQty, outQty] = await Promise.all([qty("in"), qty("out")]);
+    const value = (quantities) => new Map([...quantities].map(([id, q]) => [id, q * (costs.get(id) ?? 0)]));
+    return { inValue: value(inQty), outValue: value(outQty), inQty, outQty };
+  }
   const group = async (model, flag, aggregate) => {
     const rows = await call(model, "formatted_read_group", { domain: [...range, [flag, "=", true]], groupby: ["product_id"], aggregates: [aggregate] });
     return new Map(rows.map((g) => [g.product_id[0], g[aggregate] || 0]));
@@ -310,8 +343,9 @@ async function viewPeriod(query) {
   let from = pickDate(query.get("from"), `${to.slice(0, 8)}01`);
   if (from > to) from = to;
   const [scopes, categories] = await Promise.all([loadScopes(), referenceCategories()]);
-  const everywhere = scopeOf("", scopes);
-  const [opening, closing, flows, chip] = await Promise.all([valuationRows(shift(from, -1), query, everywhere), valuationRows(to, query, everywhere), periodFlows(from, to, query), productChip(query)]);
+  const scope = scopeOf(query.get("scope"), scopes);
+  const [opening, closing, chip] = await Promise.all([valuationRows(shift(from, -1), query, scope), valuationRows(to, query, scope), productChip(query)]);
+  const flows = await periodFlows(from, to, query, scope, new Map(closing.map((r) => [r.id, r.cost])));
   const open = new Map(opening.map((r) => [r.id, r]));
   const lines = closing
     .map((c) => {
@@ -353,14 +387,16 @@ async function viewPeriod(query) {
     categoryColumn: true,
     empty: "Tidak ada saldo atau pergerakan bernilai pada periode ini.",
     subtitle: `${dateText(from)} s.d. ${dateText(to)}`,
-    meta: [["Periode", `${dateText(from)} s.d. ${dateText(to)}`], ["Kategori", categories.find((c) => c.id === Number(query.get("categ")))?.display_name ?? ""], ["Pencarian", query.get("q") ?? ""]],
-    note: "Saldo akhir = saldo awal + masuk - keluar. Masuk dan keluar adalah pergerakan yang melintasi batas perusahaan (penerimaan, pengiriman, produksi, penyesuaian, scrap); transfer antar lokasi internal tidak dihitung.",
+    meta: [["Periode", `${dateText(from)} s.d. ${dateText(to)}`], ["Lokasi", scope.label], ["Kategori", categories.find((c) => c.id === Number(query.get("categ")))?.display_name ?? ""], ["Pencarian", query.get("q") ?? ""]],
+    note: scope.all
+      ? "Saldo akhir = saldo awal + masuk - keluar. Masuk dan keluar adalah pergerakan yang melintasi batas perusahaan (penerimaan, pengiriman, produksi, penyesuaian, scrap); transfer antar lokasi internal tidak dihitung."
+      : `Saldo akhir = saldo awal + masuk - keluar untuk ${scope.label}. Masuk dan keluar adalah pergerakan yang melintasi batas lokasi itu, termasuk transfer dari dan ke gudang atau lokasi lain; nilainya jumlah dikali biaya rata-rata akhir periode, sehingga selisih biaya terlihat di kolom Koreksi.`,
     file: `inventory-valuation-mutasi-${from}-${to}`,
   };
   const totalOf = (pick) => sum(lines, pick);
   return {
     m,
-    controls: `${searchBox(query.get("q") ?? "", "Cari produk atau kode")}${categorySelect(categories, Number(query.get("categ")) || null)}${dateInput("from", "Dari", from)}${dateInput("to", "Sampai", to)}${exportButtons}`,
+    controls: `${searchBox(query.get("q") ?? "", "Cari produk atau kode")}${categorySelect(categories, Number(query.get("categ")) || null)}${scopeSelect(scopes, query.get("scope") ?? "")}${dateInput("from", "Dari", from)}${dateInput("to", "Sampai", to)}${exportButtons}`,
     html:
       chip +
       `<div class="grid md:grid-cols-4 gap-4 mb-4">
@@ -410,13 +446,43 @@ async function relatedJournals(moves) {
   return result;
 }
 
+const MOVE_FIELDS = [
+  "date", "reference", "picking_id", "picking_code", "production_id", "raw_material_production_id", "scrap_id", "is_inventory", "product_id", "location_id", "location_dest_id", "quantity", "product_uom",
+  "value", "is_in", "is_out", "account_move_id", "purchase_line_id", "sale_line_id",
+];
+
+/** Pergerakan yang melintasi batas gudang atau lokasi terpilih (D72): masuk dan keluar dibaca terpisah. Pergerakan tanpa nilai (transfer antar gudang) dinilai jumlah dikali biaya rata-rata
+ *  pada tanggal akhir; yang bernilai memakai nilai pergerakannya. */
+async function scopedMoves(domain, direction, adjust, scope, to) {
+  const kinds = direction === "in" ? ["in"] : direction === "out" ? ["out"] : ["in", "out"];
+  const where = (kind) => [...domain, ...crossing(scope.roots, kind), ...(direction === "adjust" ? adjust : [])];
+  const flagOf = (kind) => (kind === "in" ? "is_in" : "is_out");
+  const costOf = async (ids) => new Map((ids.length ? await searchRead("product.product", [["id", "in", ids]], ["avg_cost"], { context: { active_test: false, ...dateContext(to) }, limit: ids.length }) : []).map((r) => [r.id, r.avg_cost]));
+  const lists = await Promise.all(kinds.map((kind) => searchRead("stock.move", where(kind), MOVE_FIELDS, { order: "date desc, id desc", limit: MOVE_LIMIT })));
+  const totals = await Promise.all(kinds.map(async (kind) => {
+    const [valued] = await call("stock.move", "formatted_read_group", { domain: [...where(kind), [flagOf(kind), "=", true]], groupby: [], aggregates: ["value:sum", "__count"] });
+    const loose = await call("stock.move", "formatted_read_group", { domain: [...where(kind), [flagOf(kind), "=", false]], groupby: ["product_id"], aggregates: ["quantity:sum", "__count"] });
+    return { valued, loose };
+  }));
+  const costs = await costOf([...new Set([...lists.flat().map((m) => m.product_id[0]), ...totals.flatMap((t) => t.loose.map((g) => g.product_id[0]))])]);
+  const moves = lists.flatMap((list, i) => list.map((m) => ({ ...m, value: m[flagOf(kinds[i])] ? m.value : m.quantity * (costs.get(m.product_id[0]) ?? 0), is_in: kinds[i] === "in", is_out: kinds[i] === "out" })))
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.id - a.id)).slice(0, MOVE_LIMIT);
+  const sumOf = ({ valued, loose }) => ({
+    value: (valued?.["value:sum"] || 0) + loose.reduce((acc, g) => acc + (g["quantity:sum"] || 0) * (costs.get(g.product_id[0]) ?? 0), 0),
+    count: (valued?.__count || 0) + loose.reduce((acc, g) => acc + g.__count, 0),
+  });
+  const result = Object.fromEntries(kinds.map((kind, i) => [kind, sumOf(totals[i])]));
+  return { moves, totalIn: result.in ?? { value: 0, count: 0 }, totalOut: result.out ?? { value: 0, count: 0 } };
+}
+
 async function viewMoves(query) {
   const to = pickDate(query.get("to"));
   let from = validDate(query.get("from")) || `${to.slice(0, 8)}01`;
   if (from > to) from = to;
   const direction = query.get("state") ?? "";
-  const categories = await referenceCategories();
-  const base = [["state", "=", "done"], ["date", ">=", `${from} 00:00:00`], ["date", "<=", `${to} 23:59:59`], ...productDomain(query, "product_id.")];
+  const [scopes, categories] = await Promise.all([loadScopes(), referenceCategories()]);
+  const scope = scopeOf(query.get("scope"), scopes);
+  const base = [["state", "=", "done"], ["date", ">=", dayBoundary(from)], ["date", "<=", dayBoundary(to, true)], ...productDomain(query, "product_id.")];
   const adjust = ["|", ["location_id.usage", "=", "inventory"], ["location_dest_id.usage", "=", "inventory"]];
   const scoped = direction === "in" ? [["is_in", "=", true]] : direction === "out" ? [["is_out", "=", true]] : ["|", ["is_in", "=", true], ["is_out", "=", true]];
   const domain = [...base, ...scoped, ...(direction === "adjust" ? adjust : [])];
@@ -424,12 +490,11 @@ async function viewMoves(query) {
     const [g] = await call("stock.move", "formatted_read_group", { domain: [...domain, [flag, "=", true]], groupby: [], aggregates: ["value:sum", "__count"] });
     return { value: g?.["value:sum"] || 0, count: g?.__count || 0 };
   };
-  const [moves, totalIn, totalOut, chip] = await Promise.all([
-    searchRead("stock.move", domain, [
-      "date", "reference", "picking_id", "picking_code", "production_id", "raw_material_production_id", "scrap_id", "is_inventory", "product_id", "location_id", "location_dest_id", "quantity", "product_uom",
-      "value", "is_in", "is_out", "account_move_id", "purchase_line_id", "sale_line_id",
-    ], { order: "date desc, id desc", limit: MOVE_LIMIT }),
-    totalOf("is_in"), totalOf("is_out"), productChip(query),
+  const [{ moves, totalIn, totalOut }, chip] = await Promise.all([
+    scope.all
+      ? Promise.all([searchRead("stock.move", domain, MOVE_FIELDS, { order: "date desc, id desc", limit: MOVE_LIMIT }), totalOf("is_in"), totalOf("is_out")]).then(([m, i, o]) => ({ moves: m, totalIn: i, totalOut: o }))
+      : scopedMoves(base, direction, adjust, scope, to),
+    productChip(query),
   ]);
   const journals = await relatedJournals(moves);
   const tableRows = moves.map((mv) => {
@@ -463,13 +528,13 @@ async function viewMoves(query) {
     rows: tableRows,
     empty: "Tidak ada pergerakan bernilai pada rentang ini.",
     subtitle: `${dateText(from)} s.d. ${dateText(to)}`,
-    meta: [["Periode", `${dateText(from)} s.d. ${dateText(to)}`], ["Jenis", DIRECTIONS.find(([k]) => k === direction)?.[1] ?? ""], ["Kategori", categories.find((c) => c.id === Number(query.get("categ")))?.display_name ?? ""], ["Pencarian", query.get("q") ?? ""]],
+    meta: [["Periode", `${dateText(from)} s.d. ${dateText(to)}`], ["Jenis", DIRECTIONS.find(([k]) => k === direction)?.[1] ?? ""], ["Lokasi", scope.label], ["Kategori", categories.find((c) => c.id === Number(query.get("categ")))?.display_name ?? ""], ["Pencarian", query.get("q") ?? ""]],
     note: `Masuk ${money(totalIn.value)}, keluar ${money(totalOut.value)}, bersih ${money(net)} (${totalIn.count + totalOut.count} pergerakan${moves.length >= MOVE_LIMIT ? `; ${MOVE_LIMIT} terbaru ditampilkan` : ""}).`,
     file: `inventory-valuation-pergerakan-${from}-${to}`,
   };
   return {
     m,
-    controls: `${searchBox(query.get("q") ?? "", "Cari produk atau kode")}${categorySelect(categories, Number(query.get("categ")) || null)}${filterSelect(DIRECTIONS, direction)}${dateInput("from", "Dari", from)}${dateInput("to", "Sampai", to)}${exportButtons}`,
+    controls: `${searchBox(query.get("q") ?? "", "Cari produk atau kode")}${categorySelect(categories, Number(query.get("categ")) || null)}${scopeSelect(scopes, query.get("scope") ?? "")}${filterSelect(DIRECTIONS, direction)}${dateInput("from", "Dari", from)}${dateInput("to", "Sampai", to)}${exportButtons}`,
     html:
       chip +
       `<div class="grid md:grid-cols-3 gap-4 mb-4">
@@ -487,9 +552,9 @@ async function viewMoves(query) {
 async function viewAccount(query) {
   const date = pickDate(query.get("date"));
   const [scopes, categories] = await Promise.all([loadScopes(), valuationCategories()]);
-  const everywhere = scopeOf("", scopes);
+  const scope = scopeOf(query.get("scope"), scopes);
   const accountIds = [...new Set(categories.map((c) => c.property_stock_valuation_account_id?.[0]).filter(Boolean))];
-  const [rows, gl] = await Promise.all([valuationRows(date, new URLSearchParams(), everywhere), glBalances(accountIds, date)]);
+  const [rows, gl] = await Promise.all([valuationRows(date, new URLSearchParams(), scope), glBalances(accountIds, date)]);
   const valueOf = new Map();
   const countOf = new Map();
   for (const r of rows) {
@@ -516,7 +581,7 @@ async function viewAccount(query) {
   for (const a of [...accounts.values()].sort((x, y) => x.name.localeCompare(y.name, "id"))) {
     const cats = a.cats.filter((c) => Math.abs(valueOf.get(c.id) ?? 0) >= 0.000001 || countOf.has(c.id));
     const stock = sum(cats, (c) => valueOf.get(c.id) ?? 0);
-    const balance = a.id ? gl.get(a.id) ?? 0 : null;
+    const balance = scope.all && a.id ? gl.get(a.id) ?? 0 : null; // buku besar tidak dipisah per gudang atau lokasi
     if (!cats.length && !(balance && Math.abs(balance) >= EPS)) continue;
     stockTotal += stock;
     glTotal += balance ?? 0;
@@ -530,27 +595,30 @@ async function viewAccount(query) {
       });
     }
   }
-  tableRows.push({ kind: "total", cells: ["Total", "", stockTotal, glTotal, stockTotal - glTotal] });
-  csvRows.push(["Total", "", stockTotal, glTotal, stockTotal - glTotal]);
+  tableRows.push({ kind: "total", cells: ["Total", "", stockTotal, scope.all ? glTotal : "", scope.all ? stockTotal - glTotal : ""] });
+  csvRows.push(["Total", "", stockTotal, scope.all ? glTotal : "", scope.all ? stockTotal - glTotal : ""]);
   const m = {
     columns: [{ label: "Akun / Kategori", type: "text" }, { label: "Metode", type: "text" }, { label: "Nilai Stok", type: "money" }, { label: "Saldo Buku Besar", type: "money" }, { label: "Selisih", type: "money" }],
     rows: tableRows,
     csv: { header: ["Akun", "Kategori", "Nilai Stok", "Saldo Buku Besar", "Selisih"], rows: csvRows },
     empty: "Belum ada kategori dengan akun persediaan.",
     subtitle: `Per ${dateText(date)}`,
-    meta: [["Tanggal", dateText(date)]],
+    meta: [["Tanggal", dateText(date)], ["Lokasi", scope.label]],
     note: "Selisih wajar untuk transaksi yang tidak dijurnal pada saat terjadinya: yang terjadi sebelum jurnal per transaksi aktif, produk berbiaya standar, atau lokasi opname, scrap, dan produksi yang belum punya akun valuasi.",
     file: `inventory-valuation-akun-${date}`,
   };
   const difference = stockTotal - glTotal;
   return {
     m,
-    controls: `${dateInput("date", "Per tanggal", date)}${exportButtons}`,
+    controls: `${scopeSelect(scopes, query.get("scope") ?? "")}${dateInput("date", "Per tanggal", date)}${exportButtons}`,
     html:
       `<div class="grid md:grid-cols-3 gap-4 mb-4">
         ${card("Nilai stok", esc(money(stockTotal)), `per ${esc(dateText(date))}, ${accountRows} akun`)}
-        ${card("Saldo buku besar", esc(money(glTotal)), "jurnal terposting pada akun persediaan sampai tanggal itu")}
-        ${card("Selisih", esc(money(difference)), Math.abs(difference) < EPS ? "sama" : "perlu dijelaskan; lihat catatan di bawah", Math.abs(difference) < EPS ? "text-emerald-700" : "text-amber-700")}
+        ${scope.all
+          ? `${card("Saldo buku besar", esc(money(glTotal)), "jurnal terposting pada akun persediaan sampai tanggal itu")}
+        ${card("Selisih", esc(money(difference)), Math.abs(difference) < EPS ? "sama" : "perlu dijelaskan; lihat catatan di bawah", Math.abs(difference) < EPS ? "text-emerald-700" : "text-amber-700")}`
+          : `${card("Saldo buku besar", "-", "buku besar tidak dipisah per gudang atau lokasi; pilih Semua lokasi untuk membandingkan")}
+        ${card("Lingkup", esc(scope.label), "nilai stok = jumlah di sana dikali biaya rata-rata perusahaan")}`}
       </div>` +
       tableHtml(m) +
       `<div class="text-xs text-gray-600 mt-3 space-y-1">
@@ -568,10 +636,10 @@ function tabsHtml(active, query) {
   const href = (key) => {
     const p = new URLSearchParams();
     for (const k of ["categ", "q", "product"]) if (query.get(k) && key !== "account") p.set(k, query.get(k));
+    if (query.get("scope")) p.set("scope", query.get("scope"));
     if (key === "asof" || key === "account") {
       const date = query.get("date") ?? query.get("to");
       if (date) p.set("date", date);
-      if (key === "asof" && query.get("scope")) p.set("scope", query.get("scope"));
     } else {
       if (query.get("from") && query.get("from") !== "2000-01-01") p.set("from", query.get("from"));
       const to = query.get("to") ?? query.get("date");

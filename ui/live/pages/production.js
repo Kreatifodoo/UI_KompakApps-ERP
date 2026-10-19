@@ -1,6 +1,6 @@
 // Production Analysis: ringkasan produksi dari Manufacturing Order yang selesai pada rentang tanggal, per produk dan per
 // bulan, dengan nilai barang jadi dan biaya komponen dari pergerakan stok.
-import { INPUT, app, esc, money, pageHeader, searchRead } from "../common.js";
+import { INPUT, app, esc, money, pageHeader, searchRead, dayBoundary } from "../common.js";
 
 const nf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 });
 const pad = (n) => String(n).padStart(2, "0");
@@ -19,8 +19,8 @@ export async function render(sub, query) {
   const from = query.get("from") ?? "";
   const to = query.get("to") ?? "";
   const range = [];
-  if (from) range.push(["date_finished", ">=", `${from} 00:00:00`]);
-  if (to) range.push(["date_finished", "<=", `${to} 23:59:59`]);
+  if (from) range.push(["date_finished", ">=", dayBoundary(from)]);
+  if (to) range.push(["date_finished", "<=", dayBoundary(to, true)]);
   const [done, open, cancelled] = await Promise.all([
     searchRead("mrp.production", [["state", "=", "done"], ...range], ["name", "product_id", "product_qty", "date_finished", "duration"], { order: "date_finished", limit: 1000 }),
     searchRead("mrp.production", [["state", "in", ["draft", "confirmed", "progress", "to_close"]]], ["id"], { limit: 1000 }),

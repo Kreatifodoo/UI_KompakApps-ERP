@@ -60,6 +60,16 @@ export const today = () => {
   const d = new Date();
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
+
+/** Zona waktu pengguna: zona waktu peramban, sama dengan yang dipakai `dateTimeText` untuk menampilkan waktu. Dikirim ke Odoo sebagai `context.tz` agar pengelompokan bulan atau hari mengikutinya (D72). */
+export const userTz = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
+/** Awal atau akhir hari sebuah tanggal kalender (YYYY-MM-DD) menurut zona waktu pengguna, sebagai teks UTC "YYYY-MM-DD HH:MM:SS" untuk domain tanggal-waktu Odoo. */
+export function dayBoundary(date, end = false) {
+  const [y, m, d] = String(date).split("-").map(Number);
+  const local = new Date(y, m - 1, d, end ? 23 : 0, end ? 59 : 0, end ? 59 : 0);
+  return `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())} ${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}:${pad(local.getUTCSeconds())}`;
+}
 /** Nilai Odoo (UTC) ke <input type="datetime-local"> (waktu setempat), dan sebaliknya. */
 export function toInputDateTime(value) {
   const d = parseOdooDate(value);
