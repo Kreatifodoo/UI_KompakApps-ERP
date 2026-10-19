@@ -1,4 +1,4 @@
-// Impor Data (CSV dan Excel .xlsx): memasukkan data master dan saldo awal dari berkas lewat mesin impor bawaan Odoo (model base_import.import).
+// Impor Data (CSV, Excel .xlsx dan .xls, LibreOffice .ods): memasukkan data master dan saldo awal dari berkas lewat mesin impor bawaan Odoo (model base_import.import).
 // Alurnya sama dengan impor Odoo: baca berkas dan petakan kolom (parse_preview), uji tanpa menyimpan (execute_import dengan dryrun),
 // lalu impor sungguhan. Uji tanpa simpan dan impor memakai pemetaan yang sama, dan galat apa pun membatalkan seluruh impor.
 // CSV dikirim sebagai teks UTF-8. Excel (.xlsx) dikirim sebagai base64 lewat kompakapps_create_from_file (addons/kompakapps_base/models/base_import.py)
@@ -9,6 +9,9 @@ import { buildXlsx } from "../xlsx.js";
 const MAX_BYTES = 5 * 1024 * 1024;
 const MAX_XLSX_BYTES = 3 * 1024 * 1024; // base64 menambah sepertiga dan nginx membatasi badan permintaan 5 MB
 const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+// Excel lama (.xls) dan LibreOffice (.ods) dibaca server oleh pembaca bawaan Odoo (xlrd dan odfpy) lewat kompakapps_create_from_file seperti .xlsx (D74)
+const EXCEL_TYPES = { xlsx: XLSX_TYPE, xls: "application/vnd.ms-excel", ods: "application/vnd.oasis.opendocument.spreadsheet" };
+const excelExt = (name) => String(name ?? "").match(/\.(xlsx|xls|ods)$/i)?.[1].toLowerCase() ?? "";
 
 /** f = nama field Odoo (judul kolom CSV), req = wajib, ex = isi contoh pada baris-baris template. */
 export const TARGETS = {
@@ -230,7 +233,7 @@ function downloadTemplate(target, kind = "csv") {
   URL.revokeObjectURL(url);
 }
 
-const isExcel = () => /\.xlsx$/i.test(st.fileName);
+const isExcel = () => Boolean(excelExt(st.fileName));
 
 function toBase64(buffer) {
   const bytes = new Uint8Array(buffer);
@@ -285,7 +288,7 @@ const FRIENDLY = [
   [/The entry is not balanced/i, () => "Jurnal tidak seimbang: total debit harus sama dengan total kredit."],
   [/Invalid date/i, () => "Tanggal tidak valid. Periksa format tanggal yang dipilih."],
   [/list index out of range|Import file has no content or is corrupt/i, () => "Lembar atau berkas ini kosong atau hanya berisi judul kolom. Pilih lembar lain atau isi datanya."],
-  [/Unable to read file .* as 'xlsx'/s, () => "Berkas Excel tidak bisa dibaca. Pastikan formatnya .xlsx dan tidak dilindungi kata sandi."],
+  [/Unable to read file .* as '(xlsx|xls|ods)'/s, () => "Berkas spreadsheet tidak bisa dibaca. Pastikan formatnya .xlsx, .xls, atau .ods dan tidak dilindungi kata sandi."],
   [/Invalid cell value at row (\d+), column (\d+): (.*)/s, (m) => `Sel baris ${m[1]} kolom ${m[2]} berisi galat Excel (${m[3]}). Perbaiki rumusnya lalu simpan ulang.`],
   [/Invalid cell format at row (\d+), column (\d+)/s, (m) => `Format sel baris ${m[1]} kolom ${m[2]} tidak didukung. Ubah menjadi format Tanggal atau Teks.`],
 ];
@@ -349,10 +352,10 @@ function fileCard() {
   ];
   const hint = excel
     ? `Baris pertama lembar berisi judul kolom. Angka dan tanggal diambil dari nilai sel (rumus memakai hasil hitung terakhir yang tersimpan di berkas), dan baris yang sepenuhnya kosong dilewati. Maksimal ${kb(MAX_XLSX_BYTES)} untuk Excel dan 5.000 baris per lembar.`
-    : `Dari Excel: Simpan Sebagai, pilih CSV UTF-8, atau pilih berkas .xlsx langsung. Maksimal ${kb(MAX_BYTES)} untuk CSV dan 5.000 baris per berkas.`;
+    : `Dari Excel: Simpan Sebagai, pilih CSV UTF-8, atau pilih berkas .xlsx, .xls, atau .ods langsung. Maksimal ${kb(MAX_BYTES)} untuk CSV dan 5.000 baris per berkas.`;
   return card(
     "2. Pilih berkas CSV atau Excel",
-    `<input type="file" accept=".csv,.txt,.xlsx,text/csv,${XLSX_TYPE}" data-imp-file class="text-sm">${fileInfo}
+    `<input type="file" accept=".csv,.txt,.xlsx,.xls,.ods,text/csv,${XLSX_TYPE},${EXCEL_TYPES.xls},${EXCEL_TYPES.ods}" data-imp-file class="text-sm">${fileInfo}
      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">${options.join("")}</div>
      <div class="text-xs text-gray-500 mt-2">${hint}</div>
      <div class="mt-4">${primary("imp-read", st.preview ? "Baca ulang berkas" : "Baca berkas dan cocokkan kolom", !st.bytes)}</div>`,
@@ -416,7 +419,7 @@ function resultCard() {
 function draw() {
   app.innerHTML =
     pageHeader("Import Data") +
-    `<p class="text-sm text-gray-600 mb-4 max-w-3xl">Masukkan data master dan saldo awal dari CSV atau Excel (.xlsx). Setiap berkas diuji dulu tanpa menyimpan; bila ada satu galat saja, tidak ada data yang masuk.</p>` +
+    `<p class="text-sm text-gray-600 mb-4 max-w-3xl">Masukkan data master dan saldo awal dari CSV, Excel (.xlsx atau .xls), atau LibreOffice (.ods). Setiap berkas diuji dulu tanpa menyimpan; bila ada satu galat saja, tidak ada data yang masuk.</p>` +
     targetCard() +
     fileCard() +
     (st.preview && !st.done ? mappingCard() : "") +
@@ -463,7 +466,7 @@ async function readFile(btn) {
     let id;
     let sheets = [];
     if (excel) {
-      ({ id, sheets } = await call("base_import.import", "kompakapps_create_from_file", { res_model: target.model, file_name: st.fileName, file_type: XLSX_TYPE, data: toBase64(st.bytes) }));
+      ({ id, sheets } = await call("base_import.import", "kompakapps_create_from_file", { res_model: target.model, file_name: st.fileName, file_type: EXCEL_TYPES[excelExt(st.fileName)], data: toBase64(st.bytes) }));
     } else {
       [id] = await call("base_import.import", "create", { vals_list: [{ res_model: target.model, file: text, file_type: "text/csv", file_name: st.fileName || "impor.csv" }] });
     }
@@ -536,7 +539,7 @@ export function onChange(event, el) {
   if (el.dataset.impFile !== undefined) {
     const file = el.files?.[0];
     if (!file) return;
-    const limit = /\.xlsx$/i.test(file.name) ? MAX_XLSX_BYTES : MAX_BYTES;
+    const limit = excelExt(file.name) ? MAX_XLSX_BYTES : MAX_BYTES;
     if (file.size > limit) {
       toast(`Berkas maksimal ${kb(limit)}.`, "error");
       el.value = "";
