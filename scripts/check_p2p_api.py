@@ -230,6 +230,7 @@ def main():
     check_valuation_scope(api, vendor)
     check_replenish_routes(api, vendor)
     check_replenish_extras(api)
+    check_routes_rules(api, vendor)
     check_bill_invoice_create(api, vendor)
     check_payment_receipt_create(api, vendor)
     check_journal_entry_create(api, vendor)
@@ -3709,6 +3710,113 @@ def check_replenish_extras(api):
     api.call("stock.warehouse.orderpoint", "action_open_orderpoints")
     made = api.search("stock.warehouse.orderpoint", [["product_id", "=", product]], ["location_id", "qty_to_order"])
     check(len(made) == 1 and made[0]["location_id"][0] == location and made[0]["qty_to_order"] == 5, "kebutuhan 5 unit di lokasi pengisian ulang tambahan menghasilkan aturan manual di lokasi itu")
+
+
+def check_routes_rules(api, vendor):
+    """Routes dan Rules di Inventory (ui/live/pages/route.js, rule.js, routerules.js, D81): rute dan aturan buatan sendiri lewat API, dipasang ke produk dan kategori,
+    memicu pengadaan (RFQ lewat aturan Beli, pengiriman menunggu lewat aturan MTO), arsip menurunkan aturannya, aturan terpakai tidak bisa dihapus, dan penanda rute bawaan gudang."""
+    import random
+
+    step("Routes dan Rules: rute buatan sendiri, penugasan ke produk dan kategori, pengadaan, arsip, rute bawaan")
+    tag = f"{random.randint(0, 99999):05d}"
+    customer = api.search("res.partner", [["name", "=", "PT Pelanggan Nusantara"]], ["id"], limit=1)[0]["id"]
+    wh = api.search("stock.warehouse", [], ["id", "lot_stock_id", "in_type_id", "out_type_id", "reception_route_id", "delivery_route_id", "buy_pull_id", "mto_pull_id", "manufacture_pull_id"], order="sequence, id", limit=1)[0]
+    stock = wh["lot_stock_id"][0]
+    customers = api.search("stock.location", [["usage", "=", "customer"]], ["id"], limit=1)[0]["id"]
+    fields = api.call("stock.route", "fields_get", attributes=["type"])
+    cleanup = {"so": [], "po": [], "picking": []}
+
+    # 1. rute dan aturan lewat API (yang dikirim form Routes dan Rules)
+    route_vals = {"name": f"Beli Uji {tag}", "product_selectable": True, "product_categ_selectable": True, "sequence": 3}
+    if "sale_selectable" in fields:
+        route_vals["sale_selectable"] = True
+    [route_buy] = api.call("stock.route", "create", vals_list=[route_vals])
+    [rule_buy] = api.call("stock.rule", "create", vals_list=[{"name": f"Beli Uji {tag}", "route_id": route_buy, "action": "buy", "picking_type_id": wh["in_type_id"][0], "location_dest_id": stock}])
+    [route_mto] = api.call("stock.route", "create", vals_list=[{"name": f"Kirim MTO Uji {tag}", "product_selectable": True}])
+    [rule_mto] = api.call("stock.rule", "create", vals_list=[{
+        "name": f"Kirim MTO Uji {tag}", "route_id": route_mto, "action": "pull", "picking_type_id": wh["out_type_id"][0], "location_src_id": stock, "location_dest_id": customers,
+        "procure_method": "make_to_order", "delay": 2,
+    }])
+    info = api.read("stock.route", route_buy, ["name", "active", "sequence", "rule_ids", "product_selectable", "product_categ_selectable", "warehouse_selectable", "company_id"])
+    check(info["rule_ids"] == [rule_buy] and info["active"] and info["product_selectable"] and info["product_categ_selectable"] and not info["warehouse_selectable"], "rute buatan sendiri punya satu aturan dan penanda 'dapat dipilih pada' sesuai isian")
+    saved = api.read("stock.rule", rule_buy, ["action", "procure_method", "auto", "delay", "company_id", "location_src_id", "picking_type_id", "warehouse_id"])
+    check(saved["action"] == "buy" and saved["procure_method"] == "make_to_stock" and saved["auto"] == "manual" and saved["company_id"] and not saved["location_src_id"], "aturan Beli: bawaan ambil dari stok, gerakan manual, tanpa lokasi asal, perusahaan terisi")
+    check(api.read("stock.rule", rule_mto, ["delay", "procure_method"]) == {"id": rule_mto, "delay": 2, "procure_method": "make_to_order"}, "aturan Tarik menyimpan penundaan 2 hari dan metode MTO")
+    check(any(r["id"] == route_buy for r in api.search("stock.route", [["product_selectable", "=", True]], ["id"])), "rute baru muncul pada pilihan rute produk")
+    for rows, label in (
+        (api.search("stock.rule", [["route_id", "=", route_buy], ["action", "=", "buy"]], ["id"]), "filter aturan menurut rute dan aksi"),
+        (api.search("stock.rule", [["picking_type_id", "=", wh["out_type_id"][0]], ["name", "ilike", f"Uji {tag}"]], ["id"]), "pencarian aturan menurut nama dan tipe operasi"),
+    ):
+        check(len(rows) == 1, label)
+
+    # 2. penanda rute bawaan: rute gudang dan rute modul bukan milik pengguna
+    xml = {r["res_id"] for r in api.search("ir.model.data", [["model", "=", "stock.route"], ["module", "not in", ["__export__", "__import__", "kompakapps_base"]]], ["res_id"], limit=2000)}
+    generated = {wh["reception_route_id"][0], wh["delivery_route_id"][0]} | xml
+    check(wh["reception_route_id"][0] in generated and wh["delivery_route_id"][0] in generated and wh["buy_pull_id"] and wh["mto_pull_id"], "rute penerimaan dan pengiriman gudang, serta aturan Beli dan MTO gudang, terdeteksi sebagai bawaan")
+    buy_builtin = api.read("stock.rule", wh["buy_pull_id"][0], ["route_id"])["route_id"][0]
+    check(buy_builtin in xml and route_buy not in generated and route_mto not in generated, "rute Beli bawaan punya id eksternal modul; rute buatan sendiri tidak ditandai bawaan")
+
+    # 3. pasang ke produk: MTO dan Beli memicu pengadaan dari Sales Order
+    [tmpl] = api.call("product.template", "create", vals_list=[{
+        "name": f"Barang Rute {tag}", "type": "consu", "is_storable": True, "standard_price": 1000.0, "list_price": 2000.0, "route_ids": [[6, 0, [route_buy, route_mto]]],
+        "seller_ids": [[0, 0, {"partner_id": vendor["id"], "min_qty": 1.0, "price": 900.0}]],
+    }])
+    product = api.read("product.template", tmpl, ["product_variant_id", "route_ids"])
+    check(sorted(product["route_ids"]) == sorted([route_buy, route_mto]) and tmpl in api.read("stock.route", route_buy, ["product_ids"])["product_ids"], "produk memegang dua rute (m2m) dan rute melihat produknya")
+    [so] = api.call("sale.order", "create", vals_list=[{"partner_id": customer, "order_line": [[0, 0, {"product_id": product["product_variant_id"][0], "product_uom_qty": 4.0}]]}])
+    api.call("sale.order", "action_confirm", ids=[so])
+    cleanup["so"].append(so)
+    pickings = api.read("sale.order", so, ["picking_ids"])["picking_ids"]
+    cleanup["picking"].extend(pickings)
+    moves = api.search("stock.move", [["picking_id", "in", pickings]], ["procure_method", "rule_id", "state"])
+    check(len(moves) == 1 and moves[0]["procure_method"] == "make_to_order" and moves[0]["rule_id"][0] == rule_mto and moves[0]["state"] == "waiting", "aturan MTO: pengiriman SO menunggu dokumen pengadaan (Waiting Another Operation)")
+    lines = api.search("purchase.order.line", [["product_id", "=", product["product_variant_id"][0]]], ["order_id", "product_qty", "price_unit"])
+    orders = api.search("purchase.order", [["id", "in", [ln["order_id"][0] for ln in lines]]], ["state", "partner_id"])
+    cleanup["po"].extend(o["id"] for o in orders)
+    check(len(lines) == 1 and lines[0]["product_qty"] == 4.0 and lines[0]["price_unit"] == 900.0 and orders[0]["state"] == "draft" and orders[0]["partner_id"][0] == vendor["id"], "aturan Beli rute buatan sendiri: RFQ draft 4 unit ke pemasok dengan harga Vendor Price list")
+
+    # 4. rute pada kategori produk menang atas rute bawaan gudang
+    [route_cat] = api.call("stock.route", "create", vals_list=[{"name": f"Beli Kategori Uji {tag}", "product_selectable": False, "product_categ_selectable": True}])
+    api.call("stock.rule", "create", vals_list=[{"name": f"Beli Kategori Uji {tag}", "route_id": route_cat, "action": "buy", "picking_type_id": wh["in_type_id"][0], "location_dest_id": stock}])
+    [category] = api.call("product.category", "create", vals_list=[{"name": f"Kategori Rute {tag}", "route_ids": [[6, 0, [route_cat]]]}])
+    check(api.read("product.category", category, ["route_ids", "total_route_ids"])["total_route_ids"] == [route_cat], "kategori memegang rute (hanya rute 'dapat dipilih pada kategori') dan menurunkannya ke produknya")
+    [tmpl2] = api.call("product.template", "create", vals_list=[{
+        "name": f"Barang Kategori {tag}", "type": "consu", "is_storable": True, "categ_id": category, "standard_price": 1000.0, "list_price": 2000.0,
+        "seller_ids": [[0, 0, {"partner_id": vendor["id"], "min_qty": 1.0, "price": 800.0}]],
+    }])
+    variant2 = api.read("product.template", tmpl2, ["product_variant_id"])["product_variant_id"][0]
+    [so2] = api.call("sale.order", "create", vals_list=[{"partner_id": customer, "order_line": [[0, 0, {"product_id": variant2, "product_uom_qty": 5.0}]]}])
+    api.call("sale.order", "action_confirm", ids=[so2])
+    cleanup["so"].append(so2)
+    cleanup["picking"].extend(api.read("sale.order", so2, ["picking_ids"])["picking_ids"])
+    api.call("stock.warehouse.orderpoint", "action_open_orderpoints")
+    [rule2] = api.search("stock.warehouse.orderpoint", [["product_id", "=", variant2]], ["id", "effective_route_id", "qty_to_order"])
+    check(rule2["effective_route_id"] and rule2["effective_route_id"][0] == route_cat and rule2["qty_to_order"] == 5.0, "produk tanpa rute sendiri memakai rute kategorinya sebagai rute berlaku, bukan Beli bawaan gudang")
+    notice = api.call("stock.warehouse.orderpoint", "action_replenish", ids=[rule2["id"]])
+    labels = [link["label"] for link in notice.get("params", {}).get("links", [])] if isinstance(notice, dict) else []
+    rfq = api.search("purchase.order", [["name", "in", labels]], ["id", "state"]) if labels else []
+    cleanup["po"].extend(o["id"] for o in rfq)
+    check(len(rfq) == 1 and rfq[0]["state"] == "draft", f"rute kategori memicu RFQ lewat aturan Beli rute itu: {labels}")
+
+    # 5. arsip dan hapus: arsip rute menonaktifkan aturannya; aturan yang sudah dipakai pergerakan stok tidak bisa dihapus
+    api.call("stock.route", "write", ids=[route_mto], vals={"active": False})
+    check(not api.search("stock.rule", [["id", "=", rule_mto]], ["id"]) and api.search("stock.rule", [["id", "=", rule_mto]], ["active"], context={"active_test": False})[0]["active"] is False, "mengarsipkan rute ikut mengarsipkan aturannya")
+    api.call("stock.route", "write", ids=[route_mto], vals={"active": True})
+    check(bool(api.search("stock.rule", [["id", "=", rule_mto], ["active", "=", True]], ["id"])), "mengaktifkan kembali rute mengaktifkan aturannya")
+    check(fails_with(lambda: api.call("stock.rule", "unlink", ids=[rule_mto]), "another model is using"), "aturan yang sudah dipakai pergerakan stok tidak bisa dihapus (arsipkan saja)")
+    check(api.call("stock.move", "search_count", domain=[["rule_id", "=", rule_mto]]) == 1, "jumlah pergerakan dari aturan dihitung untuk menu Hapus atau Arsip")
+    api.call("stock.rule", "unlink", ids=[rule_buy])
+    check(api.read("stock.route", route_buy, ["rule_ids"])["rule_ids"] == [], "aturan yang belum dipakai pergerakan stok bisa dihapus")
+
+    # bersihkan: batalkan dokumen uji, arsipkan rute uji
+    for picking in dict.fromkeys(cleanup["picking"]):
+        api.call("stock.picking", "action_cancel", ids=[picking])
+    for po in dict.fromkeys(cleanup["po"]):
+        api.call("purchase.order", "button_cancel", ids=[po])
+    for sale in cleanup["so"]:
+        api.call("sale.order", "action_cancel", ids=[sale])
+    api.call("stock.route", "write", ids=[route_buy, route_mto, route_cat], vals={"active": False})
+    check(not api.search("stock.route", [["id", "in", [route_buy, route_mto, route_cat]]], ["id"]), "rute uji diarsipkan dan hilang dari daftar aktif")
 
 
 def check_bill_invoice_create(api, vendor):
