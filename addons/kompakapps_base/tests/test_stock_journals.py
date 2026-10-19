@@ -378,4 +378,3 @@ class TestStockJournals(AccountTestInvoicingCommon):
         self._count(self.product, 8.0)
         self.assertEqual(self.env["account.move"].search_count([]), journals, "Tanpa Akun Loss opname tidak dijurnal")
         self.assertEqual(self._balance(self.stock_account), 900000.0)
-

@@ -171,7 +171,7 @@ function vendorsTable(sellers, productId) {
     ${table([{ label: "Pemasok" }, { label: "Kode Pemasok" }, { label: "Jml Min", right: true }, { label: "Harga", right: true }, { label: "Diskon", right: true }, { label: "Lead Time", right: true }], rows, "Belum ada vendor. Tambahkan harga vendor agar RFQ terisi otomatis.")}</section>`;
 }
 
-/** Akun yang terkena transaksi stok dan tagihan produk ini, menurut tipe produk, valuasi kategorinya, dan Akun Loss lokasi (D69, D73). */
+/** Akun yang terkena transaksi stok dan tagihan produk ini, menurut tipe produk, valuasi kategorinya, dan Akun Loss lokasi (D69, D74). */
 function accountingNote(v, category, lossLocations = []) {
   if (!category) {
     return { tone: "warn", html: "Produk belum punya kategori: Odoo memakai akun bawaan perusahaan, dan barang stok tidak masuk ke akun Persediaan. Pilih kategori." };
