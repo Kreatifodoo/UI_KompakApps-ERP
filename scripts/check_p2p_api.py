@@ -241,6 +241,7 @@ def main():
     check_hr_attendance(api)
     check_hr_timeoff(api)
     check_hr_expenses(api)
+    check_hr_contracts(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -4726,6 +4727,42 @@ def check_hr_expenses(api):
     check(api.read("hr.expense", other, ["state"])["state"] == "draft", "dikembalikan ke draft")
     api.call("hr.expense", "unlink", ids=[other])
     check(not api.search("hr.expense", [["id", "=", other]], ["id"]), "biaya draft bisa dihapus")
+
+
+def check_hr_contracts(api):
+    """Contracts lewat hr.version (D83): versi baru di dalam kontrak, tanggal kontrak tersinkron antarversi, kontrak berikutnya, tumpang tindih ditolak."""
+    import random
+
+    step("HR: Contracts (hr.version: versi, akhir kontrak, kontrak berikutnya, tumpang tindih)")
+    tag = f"{random.randint(0, 99999):05d}"
+    [emp] = api.call("hr.employee", "create", vals_list=[{"name": f"Kontrak Regresi {tag}", "contract_date_start": "2026-01-01", "wage": 8_000_000}])
+    [first] = [v["id"] for v in api.search("hr.version", [["employee_id", "=", emp]], ["id"])]
+    [contract_type] = [t["id"] for t in api.search("hr.contract.type", [], ["id"], limit=1)]
+    api.call("hr.version", "write", ids=[first], vals={"contract_type_id": contract_type})
+    versions = api.call("hr.employee", "create_version", ids=[emp], values={"date_version": "2026-07-01", "wage": 9_000_000})
+    row = api.read("hr.version", versions[0], ["wage", "contract_date_start", "contract_date_end", "date_version"])
+    check(row["wage"] == 9_000_000 and row["contract_date_start"] == "2026-01-01" and row["date_version"] == "2026-07-01", "versi baru di dalam kontrak: gaji baru, periode kontrak sama")
+    check(api.read("hr.version", first, ["wage"])["wage"] == 8_000_000, "versi lama tetap bergaji lama (riwayat)")
+    api.call("hr.version", "write", ids=[first], vals={"contract_date_end": "2026-12-31"})
+    ends = {v["contract_date_end"] for v in api.search("hr.version", [["employee_id", "=", emp]], ["contract_date_end"])}
+    check(ends == {"2026-12-31"}, "akhir kontrak disinkronkan ke semua versi pada kontrak yang sama")
+    try:
+        api.call("hr.employee", "create_version", ids=[emp], values={"date_version": "2026-08-01", "contract_date_start": "2026-08-01"})
+        check(False, "kontrak tumpang tindih ditolak")
+    except RuntimeError as error:
+        check("contract running" in str(error) or "already" in str(error), "kontrak yang periodenya tumpang tindih ditolak")
+    second = api.call("hr.employee", "create_version", ids=[emp], values={"date_version": "2027-01-01", "contract_date_start": "2027-01-01", "wage": 10_000_000})
+    row = api.read("hr.version", second[0], ["contract_date_start", "contract_date_end", "wage"])
+    check(row["contract_date_start"] == "2027-01-01" and not row["contract_date_end"] and row["wage"] == 10_000_000, "kontrak berikutnya setelah kontrak lama berakhir")
+    current = api.read("hr.employee", emp, ["wage", "current_version_id"])
+    check(current["current_version_id"][0] in (first, versions[0], second[0]), "karyawan menunjuk versi berjalan")
+    future = api.search("hr.version", [["employee_id", "=", emp], ["contract_date_start", ">", "2026-12-31"]], ["id"])
+    check([f["id"] for f in future] == [second[0]], "filter kontrak akan datang menemukan kontrak 2027")
+    try:
+        api.call("hr.version", "unlink", ids=[v["id"] for v in api.search("hr.version", [["employee_id", "=", emp]], ["id"])])
+        check(False, "karyawan harus punya minimal satu versi")
+    except RuntimeError:
+        check(True, "karyawan harus punya minimal satu versi")
 
 
 def bill_total(api, bill_id):

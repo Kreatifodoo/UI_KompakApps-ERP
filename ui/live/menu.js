@@ -148,7 +148,7 @@ export const MENU = [
       { title: "Attendance", route: "attendance" },
       { title: "Time Off", items: [{ title: "Leave Requests", route: "timeoff" }, { title: "Allocations", route: "leavealloc" }, { title: "Balance", route: "leavebalance" }, { title: "Leave Types", route: "leavetype" }] },
       { title: "Expenses", route: "expense" },
-      { title: "Contracts" },
+      { title: "Contracts", route: "contract" },
       { title: "Payroll" },
     ],
   },

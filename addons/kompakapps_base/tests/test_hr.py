@@ -220,3 +220,50 @@ class TestExpenses(AccountTestInvoicingCommon):
         expense = self._expense()
         with self.assertRaises(UserError):
             expense.action_post()
+
+
+@tagged("post_install", "-at_install", "kompakapps")
+class TestEmployeeContracts(TransactionCase):
+    """Contracts lewat hr.version (D83): versi di dalam kontrak, perubahan tanggal kontrak disinkronkan, kontrak berikutnya, dan tumpang tindih ditolak."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.employee = cls.env["hr.employee"].create(
+            {"name": "Kontrak Uji", "contract_date_start": datetime.date(2026, 1, 1), "wage": 8_000_000}
+        )
+        cls.first = cls.employee.current_version_id
+
+    def _versions(self):
+        return self.employee.with_context(active_test=False).version_ids.sorted("date_version")
+
+    def test_new_version_inside_contract_keeps_period(self):
+        new = self.employee.create_version({"date_version": datetime.date(2026, 7, 1), "wage": 9_000_000})
+        self.assertEqual(new.wage, 9_000_000)
+        self.assertEqual(new.contract_date_start, datetime.date(2026, 1, 1))
+        self.assertEqual(self.first.wage, 8_000_000)
+        self.assertEqual(len(self._versions()), 2)
+
+    def test_contract_end_syncs_across_versions(self):
+        self.employee.create_version({"date_version": datetime.date(2026, 7, 1), "wage": 9_000_000})
+        self.first.write({"contract_date_end": datetime.date(2026, 12, 31)})
+        self.assertEqual(set(self._versions().mapped("contract_date_end")), {datetime.date(2026, 12, 31)})
+
+    def test_next_contract_after_end(self):
+        self.first.write({"contract_date_end": datetime.date(2026, 12, 31)})
+        second = self.employee.create_version(
+            {"date_version": datetime.date(2027, 1, 1), "contract_date_start": datetime.date(2027, 1, 1), "wage": 10_000_000}
+        )
+        self.assertEqual(second.contract_date_start, datetime.date(2027, 1, 1))
+        self.assertFalse(second.contract_date_end)
+        self.assertEqual(self.first.contract_date_end, datetime.date(2026, 12, 31))
+
+    def test_overlapping_contract_rejected(self):
+        with self.assertRaises(ValidationError):
+            self.employee.create_version(
+                {"date_version": datetime.date(2026, 8, 1), "contract_date_start": datetime.date(2026, 8, 1), "wage": 9_000_000}
+            )
+
+    def test_last_version_cannot_be_deleted(self):
+        with self.assertRaises(ValidationError):
+            self.first.unlink()
