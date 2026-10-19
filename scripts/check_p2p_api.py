@@ -238,6 +238,7 @@ def main():
     check_bank_match_docs(api, vendor)
     check_activities(api)
     check_multi_company(api)
+    check_hr_attendance(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -4593,6 +4594,45 @@ def check_bank_match_docs(api, vendor):
     # 7. Batalkan rekonsiliasi mengembalikan faktur ke terbuka
     api.call("account.bank.statement.line", "unreconcile_bank_line", ids=[line["id"]])
     check(not api.read("account.move.line", entry_line["id"], ["reconciled"])["reconciled"], "pembatalan rekonsiliasi membuka kembali baris jurnal entry")
+
+
+def check_hr_attendance(api):
+    """Human Resources (D83): departemen, posisi, karyawan dengan data kerja pada hr.version, check in/out, entri manual, jam kerja dan lembur."""
+    import random
+    from datetime import datetime, timedelta
+
+    step("HR: karyawan lewat hr.version, kehadiran (check in/out dan entri manual)")
+    tag = f"{random.randint(0, 99999):05d}"
+    [dept] = api.call("hr.department", "create", vals_list=[{"name": f"Dept Regresi {tag}"}])
+    [job] = api.call("hr.job", "create", vals_list=[{"name": f"Posisi Regresi {tag}", "department_id": dept}])
+    [emp] = api.call("hr.employee", "create", vals_list=[{"name": f"Karyawan Regresi {tag}", "department_id": dept, "job_id": job, "contract_date_start": "2026-01-01", "wage": 7_500_000}])
+    info = api.read("hr.employee", emp, ["current_version_id", "department_id", "job_id", "wage", "attendance_state"])
+    version = api.read("hr.version", info["current_version_id"][0], ["department_id", "job_id", "wage", "contract_date_start", "employee_id"])
+    check(version["employee_id"][0] == emp and version["wage"] == 7_500_000 and version["contract_date_start"] == "2026-01-01", "gaji dan tanggal kontrak tersimpan pada versi karyawan")
+    check(version["department_id"][0] == dept and version["job_id"][0] == job and info["attendance_state"] == "checked_out", "departemen dan posisi pada versi; status awal belum hadir")
+    fmt = "%Y-%m-%d %H:%M:%S"
+    now = datetime.utcnow().replace(microsecond=0)
+    [att] = api.call("hr.attendance", "create", vals_list=[{"employee_id": emp, "check_in": (now - timedelta(minutes=5)).strftime(fmt)}])
+    check(api.read("hr.employee", emp, ["attendance_state"])["attendance_state"] == "checked_in", "check in: karyawan berstatus sedang hadir")
+    open_rows = api.search("hr.attendance", [["employee_id", "=", emp], ["check_out", "=", False]], ["id"])
+    check([r["id"] for r in open_rows] == [att], "catatan yang belum check out ditemukan untuk check out")
+    api.call("hr.attendance", "write", ids=[att], vals={"check_out": now.strftime(fmt)})
+    row = api.read("hr.attendance", att, ["worked_hours"])
+    check(api.read("hr.employee", emp, ["attendance_state"])["attendance_state"] == "checked_out" and 0.07 < row["worked_hours"] < 0.1, "check out: status kembali dan jam kerja sekitar 5 menit")
+    day = (now - timedelta(days=3)).replace(hour=1, minute=0, second=0)
+    [manual] = api.call("hr.attendance", "create", vals_list=[{"employee_id": emp, "check_in": day.strftime(fmt), "check_out": (day + timedelta(hours=11)).strftime(fmt)}])
+    row = api.read("hr.attendance", manual, ["worked_hours", "overtime_hours", "overtime_status"])
+    check(abs(row["worked_hours"] - 11.0) < 0.01, "entri manual 11 jam: jam kerja 11")
+    check(row["overtime_hours"] >= 0 and row["overtime_status"] in ("to_approve", "approved", "refused"), "lembur dan statusnya terbaca")
+    try:
+        api.call("hr.attendance", "create", vals_list=[{"employee_id": emp, "check_in": (day + timedelta(hours=2)).strftime(fmt)}])
+        check(False, "kehadiran yang tumpang tindih ditolak")
+    except RuntimeError:
+        check(True, "kehadiran yang tumpang tindih ditolak")
+    api.call("hr.attendance", "unlink", ids=[manual])
+    check(not api.search("hr.attendance", [["id", "=", manual]], ["id"]), "catatan kehadiran bisa dihapus")
+    api.call("hr.employee", "action_archive", ids=[emp])
+    check(not api.search("hr.employee", [["id", "=", emp]], ["id"]), "karyawan diarsipkan hilang dari daftar aktif")
 
 
 def bill_total(api, bill_id):

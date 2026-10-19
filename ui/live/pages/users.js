@@ -13,6 +13,10 @@ const APPS = [
   { key: "sale", label: "Sales dan CRM", levels: [["user", "Salesperson", "sales_team.group_sale_salesman"], ["manager", "Manajer", "sales_team.group_sale_manager"]] },
   { key: "pos", label: "POS", levels: [["user", "Kasir", "point_of_sale.group_pos_user"], ["manager", "Manajer", "point_of_sale.group_pos_manager"]] },
   { key: "audit", label: "Audit Log", levels: [["user", "Pembaca log", "auditlog.group_auditlog_user"], ["manager", "Pengelola aturan audit", "auditlog.group_auditlog_manager"]] },
+  { key: "hr", label: "Human Resources (karyawan, kontrak)", levels: [["user", "Petugas HR", "hr.group_hr_user"], ["manager", "Administrator HR", "hr.group_hr_manager"]] },
+  { key: "attendance", label: "Attendance (kehadiran)", levels: [["officer", "Petugas", "hr_attendance.group_hr_attendance_officer"], ["manager", "Manajer", "hr_attendance.group_hr_attendance_manager"]] },
+  { key: "holidays", label: "Time Off (cuti)", levels: [["responsible", "Penyetuju tim", "hr_holidays.group_hr_holidays_responsible"], ["user", "Petugas", "hr_holidays.group_hr_holidays_user"], ["manager", "Administrator", "hr_holidays.group_hr_holidays_manager"]] },
+  { key: "expense", label: "Expenses (biaya karyawan)", levels: [["team", "Penyetuju tim", "hr_expense.group_hr_expense_team_approver"], ["user", "Petugas", "hr_expense.group_hr_expense_user"], ["manager", "Administrator", "hr_expense.group_hr_expense_manager"]] },
   { key: "account", label: "Accounting", levels: [["invoice", "Penagihan (faktur dan tagihan)", "account.group_account_invoice"], ["user", "Akuntan", "account.group_account_user"], ["manager", "Advisor (penuh)", "account.group_account_manager"]] },
 ];
 const ADMIN_GROUP = "base.group_system";

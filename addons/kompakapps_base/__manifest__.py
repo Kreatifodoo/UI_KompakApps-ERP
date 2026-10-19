@@ -1,7 +1,7 @@
 {
     "name": "KompakApps Base",
     "summary": "Fondasi KompakApps: dependensi modul inti, OCA, dan lokalisasi Indonesia",
-    "version": "19.0.1.1.0",
+    "version": "19.0.1.2.0",
     "category": "Uncategorized",
     "author": "KompakApps",
     "license": "LGPL-3",
@@ -20,6 +20,10 @@
         "loyalty",  # program promosi, kupon, kartu loyalti, aturan dan hadiah
         "sale_loyalty",  # penerapan promosi dan hadiah pada Sales Order
         "pos_loyalty",  # penerapan promosi dan hadiah pada pesanan kasir POS
+        "hr",  # karyawan, departemen, jabatan, dan versi karyawan (kontrak) di Odoo 19 (D83)
+        "hr_attendance",  # kehadiran: check in/out, jam kerja, lembur
+        "hr_holidays",  # Time Off: pengajuan, alokasi, jenis cuti
+        "hr_expense",  # klaim biaya karyawan
         # OCA (purchase-workflow)
         "purchase_request",
         # OCA akuntansi: Community tidak membawa laporan keuangan, aset, atau rekonsiliasi bank.

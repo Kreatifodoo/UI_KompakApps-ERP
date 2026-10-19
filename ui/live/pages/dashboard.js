@@ -169,6 +169,23 @@ const BUILDERS = {
     };
   },
 
+  async hr() {
+    const dayStart = utc(startOfDay());
+    const [employees, present, todayAtt, ot] = await Promise.all([
+      count("hr.employee", []),
+      count("hr.attendance", [["check_out", "=", false]]),
+      count("hr.attendance", [["check_in", ">=", dayStart]]),
+      count("hr.attendance", [["overtime_hours", ">", 0], ["overtime_status", "=", "to_approve"]]),
+    ]);
+    const series = await monthly("hr.attendance", [], "check_in", "worked_hours");
+    return {
+      title: "Dashboard Human Resources",
+      html: shortcuts([["Karyawan Baru", "#/employee/new", "fa-user-plus"], ["Kehadiran", "#/attendance", "fa-user-clock"], ["Departemen", "#/department", "fa-sitemap"]]) +
+        `<div class="grid md:grid-cols-4 gap-4 mb-4">${tile("Karyawan aktif", employees, { href: "#/employee" })}${tile("Sedang hadir", present, { href: "#/attendance?period=open" })}${tile("Check in hari ini", todayAtt, { href: "#/attendance?period=today" })}${tile("Lembur menunggu persetujuan", ot, { href: "#/attendance?ot=to_approve", tone: ot ? "text-amber-700" : "" })}</div>` +
+        `<div class="grid lg:grid-cols-2 gap-4">${bars("Jam Kerja per Bulan", series, { format: (v) => `${nf.format(v)} j` })}</div>`,
+    };
+  },
+
   async pos() {
     const todayStart = utc(startOfDay());
     const paid = [["state", "in", ["paid", "done", "invoiced"]]];
@@ -244,7 +261,7 @@ const BUILDERS = {
 };
 
 let last = "sales";
-const KEYS = { pr: "pr", purchase: "purchase", inventory: "inventory", manufacture: "manufacture", crm: "crm", pos: "pos", sales: "sales", accounting: "accounting" };
+const KEYS = { pr: "pr", purchase: "purchase", inventory: "inventory", manufacture: "manufacture", crm: "crm", pos: "pos", sales: "sales", accounting: "accounting", hr: "hr" };
 
 export async function render(sub) {
   const key = KEYS[sub] ?? "sales";

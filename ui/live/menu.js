@@ -140,6 +140,18 @@ export const MENU = [
       { title: "Setting", route: "modsetting/accounting" },
     ],
   },
+  {
+    title: "Human Resources", icon: "fas fa-user-tie",
+    items: [
+      { title: "Dashboard", route: "dashboard/hr" },
+      { title: "Master", items: [{ title: "Employees", route: "employee" }, { title: "Departments", route: "department" }, { title: "Jobs", route: "job" }] },
+      { title: "Attendance", route: "attendance" },
+      { title: "Time Off" },
+      { title: "Expenses" },
+      { title: "Contracts" },
+      { title: "Payroll" },
+    ],
+  },
   { title: "General Setting", icon: "fas fa-cog", items: [{ title: "Company Setting", route: "company" }, { title: "Perusahaan", route: "companies" }, { title: "Users & Access", route: "users" }, { title: "Import Data", route: "dataimport" }, { title: "Audit Log", route: "auditlog" }] },
 ];
 
