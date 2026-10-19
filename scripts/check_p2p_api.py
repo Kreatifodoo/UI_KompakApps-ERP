@@ -239,6 +239,7 @@ def main():
     check_activities(api)
     check_multi_company(api)
     check_hr_attendance(api)
+    check_hr_timeoff(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -4633,6 +4634,45 @@ def check_hr_attendance(api):
     check(not api.search("hr.attendance", [["id", "=", manual]], ["id"]), "catatan kehadiran bisa dihapus")
     api.call("hr.employee", "action_archive", ids=[emp])
     check(not api.search("hr.employee", [["id", "=", emp]], ["id"]), "karyawan diarsipkan hilang dari daftar aktif")
+
+
+def check_hr_timeoff(api):
+    """Time Off (D83): jenis cuti, jatah disetujui, pengajuan (hari penuh dan setengah hari) dengan saldo dari Odoo, setujui, tolak, kembali ke persetujuan."""
+    import random
+
+    step("HR: Time Off (jenis, jatah, pengajuan, persetujuan, saldo)")
+    tag = f"{random.randint(0, 99999):05d}"
+    [emp] = api.call("hr.employee", "create", vals_list=[{"name": f"Cuti Regresi {tag}"}])
+    [ltype] = api.call("hr.leave.type", "create", vals_list=[{"name": f"Cuti Regresi {tag}", "request_unit": "half_day", "requires_allocation": True, "leave_validation_type": "hr"}])
+    [alloc] = api.call("hr.leave.allocation", "create", vals_list=[{"employee_id": emp, "holiday_status_id": ltype, "number_of_days": 10, "date_from": "2026-01-01", "name": "Jatah regresi"}])
+    check(api.read("hr.leave.allocation", alloc, ["state"])["state"] == "confirm", "jatah baru menunggu persetujuan")
+
+    def balance():
+        return api.call("hr.leave.type", "read", ids=[ltype], fields=["max_leaves", "leaves_taken", "virtual_remaining_leaves"], context={"employee_id": emp})[0]
+
+    check(balance()["max_leaves"] == 0, "jatah belum disetujui belum menambah saldo")
+    api.call("hr.leave.allocation", "action_approve", ids=[alloc])
+    check(api.read("hr.leave.allocation", alloc, ["state"])["state"] == "validate" and balance()["max_leaves"] == 10, "jatah disetujui: saldo 10 hari")
+    payload = {"employee_id": emp, "holiday_status_id": ltype, "request_date_from": "2026-11-09", "request_date_to": "2026-11-10", "request_date_from_period": "am", "request_date_to_period": "pm"}
+    [leave] = api.call("hr.leave", "create", vals_list=[payload])
+    row = api.read("hr.leave", leave, ["state", "number_of_days"])
+    check(row["state"] == "confirm" and row["number_of_days"] == 2, "pengajuan 2 hari kerja menunggu persetujuan")
+    api.call("hr.leave", "action_approve", ids=[leave])
+    check(api.read("hr.leave", leave, ["state"])["state"] == "validate" and balance()["virtual_remaining_leaves"] == 8, "disetujui: sisa saldo 8 hari")
+    [half] = api.call("hr.leave", "create", vals_list=[{**payload, "request_date_from": "2026-11-11", "request_date_to": "2026-11-11", "request_date_to_period": "am"}])
+    check(api.read("hr.leave", half, ["number_of_days"])["number_of_days"] == 0.5, "setengah hari (Pagi sampai Pagi) = 0,5 hari")
+    api.call("hr.leave", "action_refuse", ids=[half])
+    check(api.read("hr.leave", half, ["state"])["state"] == "refuse" and balance()["virtual_remaining_leaves"] == 8, "ditolak: saldo tidak berkurang")
+    api.call("hr.leave", "action_back_to_approval", ids=[leave])
+    check(api.read("hr.leave", leave, ["state"])["state"] == "confirm", "kembali ke persetujuan dari status disetujui")
+    api.call("hr.leave", "action_refuse", ids=[leave])
+    api.call("hr.leave", "unlink", ids=[leave, half])
+    check(not api.search("hr.leave", [["id", "in", [leave, half]]], ["id"]), "pengajuan ditolak bisa dihapus")
+    try:
+        api.call("hr.leave", "create", vals_list=[{**payload, "request_date_from": "2026-11-16", "request_date_to": "2026-12-04"}])
+        check(False, "pengajuan melebihi saldo ditolak")
+    except RuntimeError:
+        check(True, "pengajuan melebihi saldo ditolak")
 
 
 def bill_total(api, bill_id):

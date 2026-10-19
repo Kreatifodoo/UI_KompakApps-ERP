@@ -87,12 +87,16 @@ import * as employee from "./pages/employee.js";
 import * as department from "./pages/department.js";
 import * as job from "./pages/job.js";
 import * as attendance from "./pages/attendance.js";
+import * as timeoff from "./pages/timeoff.js";
+import * as leavealloc from "./pages/leavealloc.js";
+import * as leavetype from "./pages/leavetype.js";
+import * as leavebalance from "./pages/leavebalance.js";
 
 const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, bank, stock, moves, count, scrap, orderpoint, replenish, warehouse, location: location_, uom, putaway, lot, bom, workcenter, mo, schedule, production, lead, opportunity, crmsetting, crmreport, posconfig, possession, posorder, kasir, salespricelist, acctreport, dashboard, account, tax, currency, analytic, analyticplan, assetprofile, asset, journalmaster, analysis, modsetting, users, company, companies, dataimport, auditlog, budgetplan, budget, budgetreport, transfer, soon };
 Object.assign(PAGES, { loyalty });
 Object.assign(PAGES, { valuation });
 Object.assign(PAGES, { route: routes, rule: rules });
-Object.assign(PAGES, { employee, department, job, attendance });
+Object.assign(PAGES, { employee, department, job, attendance, timeoff, leavealloc, leavetype, leavebalance });
 let currentId = "pr";
 
 function parseHash() {
