@@ -35,6 +35,7 @@ export const MENU = [
           { title: "Reorder Level", route: "orderpoint" }, { title: "Put away Rules", route: "putaway" },
           { title: "Unit of Measurement Master", route: "uom" }, { title: "Lot & Serial Number Master", route: "lot" },
           { title: "Warehouse & Location Master", route: "warehouse" },
+          { title: "Routes", route: "route" }, { title: "Rules", route: "rule" },
         ],
       },
       {
