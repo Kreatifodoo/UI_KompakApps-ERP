@@ -224,6 +224,7 @@ def main():
     check_loyalty(api, product)
     check_analysis_drill(api)
     check_inventory_valuation(api, vendor)
+    check_valuation_scope(api, vendor)
     check_replenish_routes(api, vendor)
     check_bill_invoice_create(api, vendor)
     check_payment_receipt_create(api, vendor)
@@ -3187,6 +3188,87 @@ def check_inventory_valuation(api, vendor):
     check(abs(stock_a(7) - 2_200_000) < 0.5 and abs(gl(7) - 2_200_000) < 0.5, "hari -7: stok dan buku besar 2.200.000 (kedua tagihan terposting)")
     check(abs(stock_a(0) - gl(0) + 550_000) < 0.5, "hari ini: selisih stok terhadap buku besar = -550.000, yaitu pengiriman yang belum dijurnal (penyesuaian 220.000 sudah dijurnal lewat akun lokasi)")
     check(abs(gl(0) - 1_980_000) < 0.5, "saldo buku besar akun uji hari ini 1.980.000 (dua tagihan 2.200.000 dikurangi penyesuaian 220.000)")
+
+
+def check_valuation_scope(api, vendor):
+    """Inventory Valuation (ui/live/pages/valuation.js, D72): filter gudang atau lokasi di semua tampilan (pergerakan yang melintasi batas lingkup), valuasi per lot,
+    dan zona waktu pengguna (batas hari dan bucket bulan mengikuti `tz`, bukan UTC)."""
+    import random
+    from datetime import datetime, timedelta
+
+    step("Inventory Valuation: lingkup gudang, valuasi per lot, zona waktu pengguna")
+    tag = f"{random.randint(0, 99999):05d}"
+    goods = api.search("product.category", [["name", "=", "Goods"]], ["id"], limit=1)[0]["id"]
+    wh1 = api.search("stock.warehouse", [], ["lot_stock_id", "view_location_id"], order="sequence, id", limit=1)[0]
+    [wh2_id] = api.call("stock.warehouse", "create", vals_list=[{"name": f"Gudang Valuasi {tag}", "code": f"V{tag[:4]}"}])
+    wh2 = api.read("stock.warehouse", wh2_id, ["lot_stock_id", "view_location_id"])
+    [product] = api.call("product.product", "create", vals_list=[{"name": f"Valuasi Lingkup {tag}", "type": "consu", "is_storable": True, "categ_id": goods, "purchase_method": "purchase"}])
+    [order] = api.call("purchase.order", "create", vals_list=[{"partner_id": vendor["id"], "order_line": [[0, 0, {"product_id": product, "product_qty": 10, "price_unit": 1000.0}]]}])
+    api.call("purchase.order", "button_confirm", ids=[order])
+    receipt = api.search("stock.picking", [["purchase_id", "=", order]], ["id"])[0]["id"]
+    api.call("stock.move", "write", ids=[m["id"] for m in api.search("stock.move", [["picking_id", "=", receipt]], ["id"])], vals={"quantity": 10, "picked": True})
+    check(api.call("stock.picking", "button_validate", ids=[receipt]) is True, "penerimaan 10 unit @1.000 divalidasi")
+    internal = api.search("stock.picking.type", [["code", "=", "internal"], ["warehouse_id", "=", api.search("stock.warehouse", [["view_location_id", "=", wh1["view_location_id"][0]]], ["id"])[0]["id"]]], ["id"], limit=1)[0]["id"]
+    [transfer] = api.call("stock.picking", "create", vals_list=[{"picking_type_id": internal, "location_id": wh1["lot_stock_id"][0], "location_dest_id": wh2["lot_stock_id"][0], "move_ids": [[0, 0, {
+        "product_id": product, "product_uom_qty": 4, "location_id": wh1["lot_stock_id"][0], "location_dest_id": wh2["lot_stock_id"][0]}]]}])
+    api.call("stock.picking", "action_confirm", ids=[transfer])
+    api.call("stock.picking", "action_assign", ids=[transfer])
+    check(api.call("stock.picking", "button_validate", ids=[transfer]) is True, "transfer 4 unit dari gudang utama ke gudang kedua divalidasi")
+
+    def qty_in(scope_context):
+        return api.call("product.product", "read", ids=[product], fields=["qty_available"], context=scope_context)[0]["qty_available"]
+
+    check(qty_in({"warehouse_id": wh1_id(api, wh1)}) == 6 and qty_in({"warehouse_id": wh2_id}) == 4, "jumlah per gudang (konteks warehouse_id): gudang utama 6, gudang kedua 4")
+    check(qty_in({"location": [wh2["lot_stock_id"][0]]}) == 4, "jumlah per lokasi (konteks location): 4 di lokasi stok gudang kedua")
+
+    def flow(roots, direction):
+        inside = lambda field: [field, "child_of", roots]  # noqa: E731
+        crossing = ["&", inside("location_dest_id"), "!", inside("location_id")] if direction == "in" else ["&", inside("location_id"), "!", inside("location_dest_id")]
+        rows = api.call("stock.move.line", "formatted_read_group", domain=[["state", "=", "done"], ["product_id", "=", product], *crossing], groupby=["product_id"], aggregates=["quantity_product_uom:sum"])
+        return rows[0]["quantity_product_uom:sum"] if rows else 0
+
+    roots1, roots2 = [wh1["view_location_id"][0]], [wh2["view_location_id"][0]]
+    check((flow(roots1, "in"), flow(roots1, "out")) == (10, 4), "gudang utama: masuk 10 (penerimaan), keluar 4 (transfer ke gudang kedua)")
+    check((flow(roots2, "in"), flow(roots2, "out")) == (4, 0), "gudang kedua: masuk 4 (transfer dari gudang utama), keluar 0")
+    moves = api.search("stock.move", [["product_id", "=", product], ["state", "=", "done"]], ["value", "is_in", "is_out", "quantity"])
+    check(sorted((m["quantity"], m["value"], m["is_in"], m["is_out"]) for m in moves) == [(4.0, 0.0, False, False), (10.0, 10000.0, True, False)],
+          "pergerakan perusahaan: penerimaan bernilai 10.000 (is_in), transfer antar gudang tidak bernilai (dinilai jumlah x biaya rata-rata oleh laporan)")
+
+    # valuasi per lot
+    [lot_product] = api.call("product.product", "create", vals_list=[{"name": f"Valuasi Lot {tag}", "type": "consu", "is_storable": True, "categ_id": goods, "purchase_method": "purchase", "tracking": "lot", "lot_valuated": True}])
+    check(api.read("product.product", lot_product, ["lot_valuated"])["lot_valuated"], "valuasi per lot bisa dinyalakan pada produk berlacak lot")
+    [lot_order] = api.call("purchase.order", "create", vals_list=[{"partner_id": vendor["id"], "order_line": [[0, 0, {"product_id": lot_product, "product_qty": 10, "price_unit": 1000.0}]]}])
+    api.call("purchase.order", "button_confirm", ids=[lot_order])
+    lot_picking = api.search("stock.picking", [["purchase_id", "=", lot_order]], ["id"])[0]["id"]
+    api.call("stock.picking", "action_assign", ids=[lot_picking])
+    [lot_move] = api.search("stock.move", [["picking_id", "=", lot_picking]], ["id"])
+    api.call("stock.move.line", "unlink", ids=[m["id"] for m in api.search("stock.move.line", [["picking_id", "=", lot_picking]], ["id"])])
+    for name, qty in ((f"LA{tag}", 6), (f"LB{tag}", 4)):
+        api.call("stock.move.line", "create", vals_list=[{"move_id": lot_move["id"], "picking_id": lot_picking, "product_id": lot_product, "quantity": qty, "lot_name": name, "location_id": api.read("stock.picking", lot_picking, ["location_id"])["location_id"][0], "location_dest_id": wh1["lot_stock_id"][0]}])
+    check(api.call("stock.picking", "button_validate", ids=[lot_picking]) is True, "penerimaan 10 unit dua lot (6 dan 4) divalidasi")
+    horizon = (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+    lots = api.call("stock.lot", "search_read", domain=[["product_id", "=", lot_product]], fields=["name", "product_qty", "avg_cost", "total_value"], order="name", context={"to_date": horizon})
+    check([(l["product_qty"], l["total_value"]) for l in lots] == [(6.0, 6000.0), (4.0, 4000.0)], "nilai per lot: 6 unit Rp 6.000 dan 4 unit Rp 4.000")
+    total = api.call("product.product", "read", ids=[lot_product], fields=["total_value"], context={"to_date": horizon})[0]["total_value"]
+    check(abs(total - sum(l["total_value"] for l in lots)) < 0.005, "jumlah nilai lot sama dengan nilai produk")
+
+    # zona waktu: PO bertanggal 30 September 20:00 UTC = 1 Oktober 03:00 di Asia/Jakarta
+    [po] = api.call("purchase.order", "create", vals_list=[{"partner_id": vendor["id"], "date_order": "2025-09-30 20:00:00", "order_line": [[0, 0, {"product_id": product, "product_qty": 1, "price_unit": 1.0}]]}])
+
+    def bucket(tz):
+        rows = api.call("purchase.order", "formatted_read_group", domain=[["id", "=", po]], groupby=["date_order:month"], aggregates=["__count"], context={"tz": tz} if tz else {})
+        return rows[0]["date_order:month"]
+
+    # dengan tz, Odoo mengembalikan awal bucket dalam UTC ("2025-09-30 17:00:00") dan label bulan lokal; UI mengubah awal bucket itu ke tanggal kalender zona waktu pengguna
+    check(bucket("Asia/Jakarta") == ["2025-09-30 17:00:00", "October 2025"] and bucket("UTC")[1] == "September 2025",
+          "bucket bulan mengikuti context.tz: Asia/Jakarta = Oktober (awal bucket 30 September 17:00 UTC), UTC = September")
+    in_range = lambda start, end: len(api.search("purchase.order", [["id", "=", po], ["date_order", ">=", start], ["date_order", "<=", end]], ["id"]))  # noqa: E731
+    check(in_range("2025-09-30 17:00:00", "2025-10-01 16:59:59") == 1 and in_range("2025-10-01 00:00:00", "2025-10-01 23:59:59") == 0,
+          "batas hari 1 Oktober menurut Asia/Jakarta (UTC 30 September 17:00 sampai 1 Oktober 16:59) memuat pesanan itu, batas UTC polos tidak")
+
+
+def wh1_id(api, wh1):
+    return api.search("stock.warehouse", [["view_location_id", "=", wh1["view_location_id"][0]]], ["id"])[0]["id"]
 
 
 def check_replenish_routes(api, vendor):

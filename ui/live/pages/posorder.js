@@ -2,8 +2,7 @@
 // dan pembuatan faktur untuk pesanan yang punya pelanggan.
 import {
   app, badge, button, call, cell, dateTimeText, esc, fieldBlock, filterSelect, guarded, money, pageHeader, readOne, readonlyValue, rowLink,
-  searchBox, searchRead, statTiles, statusbar, table, toast, chatterHtml, loadMessages,
-} from "../common.js";
+  searchBox, searchRead, statTiles, statusbar, table, toast, chatterHtml, loadMessages, dayBoundary,} from "../common.js";
 import { printButton } from "../print.js";
 
 const STATES = { draft: ["Baru", "muted"], paid: ["Dibayar", "info"], done: ["Selesai", "success"], invoiced: ["Difaktur", "success"], cancel: ["Dibatalkan", "danger"] };
@@ -33,8 +32,8 @@ async function renderList(query) {
   if (template) {
     domain.push(["lines.product_id.product_tmpl_id", "=", template]);
     if (!filter) domain.push(["state", "in", ["paid", "done", "invoiced"]]);
-    if (query.get("from")) domain.push(["date_order", ">=", `${query.get("from")} 00:00:00`]);
-    if (query.get("to")) domain.push(["date_order", "<=", `${query.get("to")} 23:59:59`]);
+    if (query.get("from")) domain.push(["date_order", ">=", dayBoundary(query.get("from"))]);
+    if (query.get("to")) domain.push(["date_order", "<=", dayBoundary(query.get("to"), true)]);
   }
   if (query.get("ids")) domain.push(["id", "in", query.get("ids").split(",").map(Number).filter(Boolean)]);
   if (text) domain.push("|", "|", ["pos_reference", "ilike", text], ["name", "ilike", text], ["partner_id.name", "ilike", text]);

@@ -4,8 +4,7 @@
 import {
   ACCOUNT_TYPE_LABELS, INPUT, app, call, cell, changedValues, chatterHtml, checkboxField, closeLookup, esc, fieldBlock, fieldValue, filterSelect,
   guarded, hasGroup, loadMessages, money, pageHeader, readOne, referenceCategories, referenceDefaultCategories, referenceSelection, referenceTaxes,
-  referenceUoms, registerLookup, rowLink, runLookup, searchAccounts, searchBox, searchRead, selectOptions, statTiles, table, toast, today, button,
-} from "../common.js";
+  referenceUoms, registerLookup, rowLink, runLookup, searchAccounts, searchBox, searchRead, selectOptions, statTiles, table, toast, today, button, dayBoundary,} from "../common.js";
 
 // Periode tombol Dibeli, Terjual, dan POS di form produk (D71); bawaan 12 bulan terakhir, sama dengan hitungan Odoo.
 const PERIODS = [["12m", "12 bulan terakhir"], ["month", "Bulan ini"], ["year", "Tahun ini"], ["all", "Semua waktu"], ["custom", "Pilih tanggal"]];
@@ -15,7 +14,7 @@ const FILTERS = [["purchase", "Dapat dibeli"], ["sale", "Dapat dijual"], ["pos",
 const FIELDS = [
   "name", "type", "is_storable", "sale_ok", "purchase_ok", "purchase_request", "available_in_pos", "uom_id", "default_code", "barcode", "categ_id", "list_price",
   "standard_price", "taxes_id", "supplier_taxes_id", "purchase_method", "description_purchase", "description_sale",
-  "property_account_expense_id", "property_account_income_id", "tracking", "use_expiration_date", "expiration_time", "use_time", "removal_time", "alert_time",
+  "property_account_expense_id", "property_account_income_id", "tracking", "use_expiration_date", "lot_valuated", "expiration_time", "use_time", "removal_time", "alert_time",
 ];
 // Akun yang menimpa akun kategori; kosong berarti mengikuti kategori.
 const ACCOUNT_KEYS = {
@@ -74,6 +73,7 @@ const normalize = (record) => {
   values.type = record.type || "consu";
   values.tracking = record.tracking || "none";
   values.use_expiration_date = Boolean(record.use_expiration_date);
+  values.lot_valuated = Boolean(record.lot_valuated);
   for (const [key] of EXPIRY_KEYS) values[key] = record[key] ?? 0;
   values.purchase_method = record.purchase_method || "receive";
   values.list_price = record.list_price ?? 0;
@@ -203,7 +203,8 @@ function trackingSection(v, product, lotsOn) {
   }
   const expiry =
     v.tracking !== "none"
-      ? `${checkboxField("use_expiration_date", "Pakai tanggal kedaluwarsa", v.use_expiration_date)}`
+      ? `${checkboxField("use_expiration_date", "Pakai tanggal kedaluwarsa", v.use_expiration_date)}
+         ${checkboxField("lot_valuated", "Valuasi per lot", v.lot_valuated)}`
       : "";
   const times =
     v.tracking !== "none" && v.use_expiration_date
@@ -231,8 +232,8 @@ function periodRange(p = period, now = new Date()) {
 
 /** Jumlah dibeli (PO terkonfirmasi), terjual (Sales Order dan POS, laporan penjualan), dan terjual di POS untuk satu template produk pada periode; sama dengan isi halaman tujuan tombolnya. */
 async function periodCounts(templateId, range = periodRange()) {
-  const start = `${range.from} 00:00:00`;
-  const end = `${range.to} 23:59:59`;
+  const start = dayBoundary(range.from);
+  const end = dayBoundary(range.to, true);
   const sum = async (model, domain, field) => (await call(model, "formatted_read_group", { domain, groupby: [], aggregates: [`${field}:sum`] }))[0]?.[`${field}:sum`] ?? 0;
   const [bought, sold, pos] = await Promise.all([
     sum("purchase.order.line", [["product_id.product_tmpl_id", "=", templateId], ["state", "=", "purchase"], ["date_order", ">=", start], ["date_order", "<=", end]], "product_uom_qty"),
@@ -379,7 +380,10 @@ async function persist() {
     v.tracking = "none";
     v.use_expiration_date = false;
   }
-  if (v.tracking === "none") v.use_expiration_date = false;
+  if (v.tracking === "none") {
+    v.use_expiration_date = false;
+    v.lot_valuated = false; // Odoo hanya mengizinkan valuasi per lot pada produk berlacak lot atau seri
+  }
   if (v.use_expiration_date) {
     for (const [key, label] of EXPIRY_KEYS) {
       if (v[key] === "") v[key] = 0;

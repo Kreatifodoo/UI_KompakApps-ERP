@@ -1,7 +1,7 @@
 // Laporan analisis untuk menu Report di modul Purchase Request, Purchase, Inventory, Sales, dan POS. Satu mesin melayani dua bentuk:
 // "kelompok" (ringkasan per dimensi dengan ukuran dan batang, pada rentang tanggal) dan "baris" (daftar baris dokumen dengan filter
 // dan pencarian). Tiap laporan hanya konfigurasi model, dimensi, ukuran, dan kolom. Semua bisa diunduh sebagai CSV.
-import { INPUT, app, call, dateText, dateTimeText, esc, filterSelect, money, pageHeader, searchBox, searchRead } from "../common.js";
+import { INPUT, app, call, dateText, dateTimeText, esc, filterSelect, money, pageHeader, searchBox, searchRead, dayBoundary, userTz } from "../common.js";
 
 const nf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 });
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
@@ -244,10 +244,17 @@ export const leave = () => {
 
 const monthLabel = (key) => `${MONTHS[Number(key.slice(5, 7)) - 1]} ${key.slice(0, 4)}`;
 const dayLabel = (key) => dateText(key.slice(0, 10));
-const utc = (value, end) => `${value} ${end ? "23:59:59" : "00:00:00"}`;
+const utc = (value, end) => dayBoundary(value, end);
+/** Awal bucket waktu dari Odoo menjadi tanggal kalender di zona waktu pengguna: kolom tanggal-waktu dengan `context.tz` mengembalikan awal bucket dalam UTC ("2025-09-30 17:00:00" = 1 Oktober di Jakarta), kolom tanggal polos tidak berjam dan dipakai apa adanya. */
+const bucketDate = (value) => {
+  const text = String(value);
+  if (text.length <= 10) return text;
+  const d = new Date(`${text.replace(" ", "T")}Z`);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 const timeUnit = (by) => (by.endsWith(":month") ? "month" : by.endsWith(":day") ? "day" : "");
 /** Kunci kelompok yang stabil dan aman di URL: id relasi, nilai pilihan, tanggal bucket, atau "false" bila kosong. */
-const groupKey = (by, value) => (Array.isArray(value) ? (timeUnit(by) ? String(value[0]).slice(0, 10) : String(value[0])) : value === false || value == null ? "false" : String(value));
+const groupKey = (by, value) => (Array.isArray(value) ? (timeUnit(by) ? bucketDate(value[0]) : String(value[0])) : value === false || value == null ? "false" : String(value));
 
 export async function render(sub, query) {
   const key = REPORTS[sub] ? sub : "prline";
@@ -274,7 +281,8 @@ function groupSetup(cfg, query) {
   const productId = cfg.productField ? Number(query.get("product")) || null : null;
   return { dimKey, dim: cfg.dims[dimKey], base: [...cfg.base, ...filter, ...(productId ? [[cfg.productField, "=", productId]] : [])], productId };
 }
-const readGroups = (cfg, dim, base, from, to, aggregates) => call(cfg.model, "formatted_read_group", { domain: [...base, ...dateDomain(cfg, from, to)], groupby: [dim.by], aggregates });
+// tz: bucket bulan atau hari mengikuti zona waktu pengguna (D72); tanpa ini Odoo memakai UTC karena pengguna API tidak punya zona waktu
+const readGroups = (cfg, dim, base, from, to, aggregates) => call(cfg.model, "formatted_read_group", { domain: [...base, ...dateDomain(cfg, from, to)], groupby: [dim.by], aggregates, context: { tz: userTz() } });
 const readMeta = async (cfg, dim) => {
   const field = dim.by.split(":")[0];
   return (await call(cfg.model, "fields_get", { allfields: [field], attributes: ["type", "selection"] }))[field];
@@ -282,7 +290,7 @@ const readMeta = async (cfg, dim) => {
 function labeler(dim, meta) {
   const selection = new Map((meta?.selection ?? []).map(([k, l]) => [k, l]));
   return (v) => {
-    if (Array.isArray(v)) return dim.by.endsWith(":month") ? monthLabel(String(v[0])) : dim.by.endsWith(":day") ? dayLabel(String(v[0])) : v[1];
+    if (Array.isArray(v)) return dim.by.endsWith(":month") ? monthLabel(bucketDate(v[0])) : dim.by.endsWith(":day") ? dayLabel(bucketDate(v[0])) : v[1];
     if (typeof v === "string" && v) return SELECTION_LABELS[dim.by]?.[v] ?? selection.get(v) ?? v;
     return "Tanpa data";
   };
