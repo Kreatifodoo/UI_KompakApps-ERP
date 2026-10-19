@@ -14,6 +14,22 @@ const FIELDS = [
   "product_id", "warehouse_id", "location_id", "product_min_qty", "product_max_qty", "qty_on_hand", "qty_forecast", "qty_to_order", "trigger", "route_id",
   "supplier_id", "product_uom", "product_tmpl_id", "effective_route_id",
 ];
+const PAGE_SIZE = 100;
+/** Alamat daftar dengan nomor halaman (mulai 0) dan parameter lain yang sama. */
+const pageHash = (query, page) => {
+  const params = new URLSearchParams(query);
+  if (page > 0) params.set("p", String(page + 1));
+  else params.delete("p");
+  const qs = params.toString();
+  return `#/orderpoint${qs ? `?${qs}` : ""}`;
+};
+/** Keterangan jumlah dan tautan halaman; hanya muncul bila aturan lebih banyak dari satu halaman. */
+const pagerHtml = (query, page, shown, total) => {
+  const pages = Math.ceil(total / PAGE_SIZE);
+  if (pages <= 1) return "";
+  const link = (label, target, disabled) => (disabled ? `<span class="px-3 py-1 border border-gray-200 rounded-lg text-gray-400">${label}</span>` : `<a href="${pageHash(query, target)}" class="px-3 py-1 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">${label}</a>`);
+  return `<div class="flex flex-wrap items-center gap-3 my-2 text-sm text-gray-600"><span>Menampilkan ${page * PAGE_SIZE + 1}-${page * PAGE_SIZE + shown} dari ${total} aturan (halaman ${page + 1} dari ${pages})</span>${link("Sebelumnya", page - 1, page === 0)}${link("Berikutnya", page + 1, page + 1 >= pages)}</div>`;
+};
 const BLANK_ROUTE = "Otomatis (ikuti pengaturan produk)";
 
 let form = null; // { id, product, warehouse, location, min, max, trigger, route }
@@ -61,7 +77,16 @@ async function renderList(query) {
   const domain = text ? [["product_id.name", "ilike", text]] : [];
   const template = Number(query.get("product")) || null; // dari tombol Reorder di halaman produk (id template produk)
   if (template) domain.push(["product_tmpl_id", "=", template]);
-  const [rows, ref] = await Promise.all([searchRead("stock.warehouse.orderpoint", domain, FIELDS, { order: "id desc", limit: 200 }), references()]);
+  const page = Math.max(0, (Number(query.get("p")) || 1) - 1);
+  const [rows, ref, total] = await Promise.all([
+    searchRead("stock.warehouse.orderpoint", domain, FIELDS, { order: "id desc", limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
+    references(),
+    call("stock.warehouse.orderpoint", "search_count", { domain }),
+  ]);
+  if (!rows.length && page > 0) {
+    location.hash = pageHash(query, 0); // pencarian baru membuat halaman ini kosong
+    return;
+  }
   const routeName = (id, fallback) => ref.routes.find((x) => x.id === id)?.label ?? fallback;
   const routeText = (op) => (op.route_id ? routeName(op.route_id[0], op.route_id[1]) : op.effective_route_id ? `Otomatis: ${routeName(op.effective_route_id[0], op.effective_route_id[1])}` : "-");
   const body = rows
@@ -80,6 +105,7 @@ async function renderList(query) {
       `${searchBox(text, "Cari produk")}
        <a href="#/orderpoint/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>Aturan Baru</a>`,
     ) +
+    pagerHtml(query, page, rows.length, total) +
     (template ? `<p class="text-sm text-gray-500 mb-3">Difilter per produk. <a href="#/orderpoint" class="text-indigo-600 hover:underline">Tampilkan semua</a></p>` : "") +
     table(
       [{ label: "Produk" }, { label: "Lokasi" }, { label: "Rute" }, { label: "Min", right: true }, { label: "Maks", right: true }, { label: "Tersedia", right: true }, { label: "Prakiraan", right: true }, { label: "Perlu Dipesan", right: true }, { label: "Pemicu" }],
