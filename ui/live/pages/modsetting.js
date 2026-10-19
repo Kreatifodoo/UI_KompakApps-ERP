@@ -54,8 +54,8 @@ const MODULES = {
       {
         title: "Gudang",
         items: [
-          { key: "group_stock_multi_locations", label: "Storage Locations", kind: "bool", about: "Lokasi di dalam gudang dan transfer internal." },
-          { key: "group_stock_adv_location", label: "Multi-Step Routes", kind: "bool", about: "Penerimaan dan pengiriman lebih dari satu langkah, serta rute khusus." },
+          { key: "group_stock_multi_locations", label: "Storage Locations", kind: "bool", about: "Lokasi di dalam gudang dan transfer internal; juga lokasi asal dan tujuan pada aturan di Master > Rules." },
+          { key: "group_stock_adv_location", label: "Multi-Step Routes", kind: "bool", about: "Penerimaan dan pengiriman lebih dari satu langkah, serta rute khusus. Rute dan aturannya dikelola di Master > Routes dan Rules." },
           { key: "group_stock_tracking_lot", label: "Kemasan (packages)", kind: "bool" },
           { key: "group_stock_tracking_owner", label: "Konsinyasi (pemilik stok)", kind: "bool" },
           { key: "group_uom", label: "Satuan ukuran dan kemasan", kind: "bool" },
