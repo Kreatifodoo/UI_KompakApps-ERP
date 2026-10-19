@@ -8,6 +8,7 @@ import {
 } from "../common.js";
 import { deliveryJournals, receiptJournals } from "../stockjournal.js";
 import { printButton } from "../print.js";
+import { createResupply, receiptPanel } from "../subcontract.js";
 
 const STATES = {
   draft: ["Draft", "muted"],
@@ -156,10 +157,11 @@ export function createPickingPage(config) {
     moves = await searchRead(
       "stock.move",
       [["picking_id", "=", id]],
-      ["product_id", "description_picking", "product_uom_qty", "quantity", "product_uom", "picked", "state", "value", "has_tracking", "location_id", "location_dest_id", "move_orig_ids", "move_dest_ids", "account_move_id"],
+      ["product_id", "description_picking", "product_uom_qty", "quantity", "product_uom", "picked", "state", "value", "has_tracking", "location_id", "location_dest_id", "move_orig_ids", "move_dest_ids", "account_move_id", "is_subcontract"],
       { order: "id" },
     );
     const chain = await chainSteps(id, moves);
+    const subcontract = config.code === "incoming" ? await receiptPanel(pk, moves) : "";
     // jurnal sungguhan dari tagihan vendor (penerimaan) atau faktur pelanggan (pengiriman) yang memuat nilai stok ini
     const journal = pk.state === "done" && config.code === "incoming" ? await receiptJournals(pk, moves) : pk.state === "done" && config.code === "outgoing" ? await deliveryJournals(pk, moves) : "";
     edits = new Map();
@@ -224,6 +226,7 @@ export function createPickingPage(config) {
           <tbody class="divide-y divide-gray-100">${rows}</tbody></table>
       </section>
       ${chain}
+      ${subcontract}
       ${valued && config.valuedNote ? `<p class="mt-3 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3">${config.valuedNote(pk, moves.some((m) => m.account_move_id))}</p>` : ""}
       ${journal}
       ${chatterHtml("stock.picking", pk.id)}`;
@@ -571,6 +574,9 @@ export function createPickingPage(config) {
       }
     } else if (action === "serials-confirm") confirmSerials(Number(el.dataset.move));
     else if (action === "validate") await validate(el, id);
+    else if (action === "sbc-resupply") {
+      if (await createResupply(el, id) === undefined) el.disabled = false;
+    }
     else if (action === "return") await openReturn(el, id);
     else if (action === "return-confirm") await confirmReturn(el);
     else if (action === "expiry-go") pendingExpiry?.("go");

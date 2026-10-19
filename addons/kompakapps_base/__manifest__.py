@@ -14,6 +14,7 @@
         "stock",
         "product_expiry",  # tanggal kedaluwarsa pada lot dan penarikan FEFO
         "mrp",  # BoM, Manufacturing Order, work center, work order, unbuild
+        "mrp_subcontracting",  # BoM tipe Subcontracting, resupply ke subkontraktor, penerimaan membuat MO (D82); modul _account dan _purchase terpasang otomatis
         "crm",  # lead, peluang, tahap pipeline (sale_crm terpasang otomatis bersama sale)
         "point_of_sale",  # kasir, sesi, pesanan POS, metode pembayaran
         "loyalty",  # program promosi, kupon, kartu loyalti, aturan dan hadiah

@@ -11,6 +11,7 @@ import {
 import { loadTaxNames, productDefaultTaxes, registerTaxes, taxCell, taxChange, taxList } from "../taxpick.js";
 import { analyticCell, distributionChange, preloadAnalytic, readDistribution, registerAnalytic } from "../analyticpick.js";
 import { printButton } from "../print.js";
+import { purchaseLinks } from "../subcontract.js";
 import { defaultWarehouse, stockHint, stockText, storableStock } from "../stockqty.js";
 
 const STATES = {
@@ -380,6 +381,7 @@ async function renderForm(id) {
          <button data-action="save" data-id="${po?.id ?? ""}" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
          <a href="#/po" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a>
        </div>` : "";
+  const sbc = po?.incoming_picking_count ? await purchaseLinks(po.id) : { productions: [], resupply: [] };
   const showTiles = po && (
     po.incoming_picking_count > 0 || (po.invoice_count > 0 && !["draft", "sent", "to approve"].includes(po.state))
   );
@@ -392,6 +394,8 @@ async function renderForm(id) {
     </div>
     ${showTiles ? `<div class="flex flex-wrap gap-2 mb-4">${statTiles([
       { count: po.incoming_picking_count, label: "Penerimaan", icon: "fa-truck", href: `#/receipt?ids=${po.picking_ids.join(",")}` },
+      { count: sbc.productions.length, label: "MO Subkontrak", icon: "fa-industry", href: `#/mo?ids=${sbc.productions.join(",")}` },
+      { count: sbc.resupply.length, label: "Resupply Komponen", icon: "fa-truck-ramp-box", href: `#/transfer?ids=${sbc.resupply.join(",")}` },
       { count: ["draft", "sent", "to approve"].includes(po.state) ? 0 : po.invoice_count, label: "Tagihan Vendor", icon: "fa-file-invoice", href: `#/bill?ids=${po.invoice_ids.join(",")}` },
     ])}</div>` : ""}
     <div class="mb-3"><div class="text-sm text-gray-500">${kind}</div><h1 class="text-2xl font-bold text-gray-900">${title}</h1>

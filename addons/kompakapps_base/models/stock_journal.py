@@ -12,6 +12,8 @@ saat terjadinya, memakai akun dan jurnal dari Product Category (pola Odoo versi 
 | Faktur pelanggan diposting         | Dr HPP, Cr Barang Terkirim Belum Ditagih (pembersih)                   |
 | Retur penerimaan atau pengiriman   | kebalikan dari jurnal asalnya                                          |
 | Stock opname, scrap, produksi      | akun pada lokasi virtual (Inventory adjustment, Scrap, Production)     |
+| Resupply ke subkontraktor          | tidak dijurnal: lokasi Subcontracting bertipe internal, nilai tetap di Persediaan |
+| Barang jadi subkontrak (MO selesai)| komponen lewat Barang Dalam Proses seperti produksi; biaya jasa Dr Persediaan, Cr Barang Diterima Belum Ditagih |
 
 Akun Barang Diterima dan Barang Terkirim Belum Ditagih adalah dua field baru pada kategori produk. Semuanya hanya berlaku bila kedua akun terisi dan produk
 berbiaya rata-rata atau FIFO; selain itu perilaku bawaan Odoo (jurnal saat tagihan dan faktur) tidak berubah. Pesanan kasir (POS) tetap dijurnal oleh POS.
@@ -167,8 +169,38 @@ class StockMove(models.Model):
         interim = self._kompakapps_interim_accounts()
         lines = super()._get_account_move_line_vals() if not interim else self._kompakapps_interim_line_vals(interim)
         if lines and self.company_currency_id.is_zero(self._get_aml_value()):
-            return []  # gerakan bernilai nol tidak perlu jurnal
-        return lines
+            lines = []  # gerakan bernilai nol tidak perlu jurnal
+        return lines + self._kompakapps_subcontract_service_lines()
+
+    def _kompakapps_subcontract_service_value(self):
+        """Biaya jasa subkontraktor yang ikut menaikkan nilai barang jadi pada gerakan hasil MO subkontrak, atau 0.
+
+        Odoo mengeluarkan biaya jasa dari jurnal gerakan hasil MO (`mrp_subcontracting_account`) dan menunggu tagihan vendor mendebit akun valuasi. Dengan
+        jurnal per transaksi tagihan mendebit Barang Diterima Belum Ditagih, jadi biaya jasa harus lebih dulu dikreditkan ke akun itu di sini, saat barang
+        jadi diterima, supaya akun Persediaan sama dengan nilai stok dan tagihan membersihkannya.
+        """
+        self.ensure_one()
+        if not (self.production_id and self.state == "done" and self.product_id.cost_method != "standard" and "extra_cost" in self.production_id._fields):
+            return 0.0
+        if not self.move_dest_ids.filtered(lambda move: move.state == "done")[-1:].is_subcontract:
+            return 0.0
+        quantity = self.product_uom._compute_quantity(self.quantity, self.product_id.uom_id)
+        return self.company_currency_id.round(self.production_id.extra_cost * quantity)
+
+    def _kompakapps_subcontract_service_lines(self):
+        """Dr Persediaan, Cr Barang Diterima Belum Ditagih untuk biaya jasa subkontraktor (kosong bila bukan hasil MO subkontrak atau kategori tanpa jurnal per transaksi)."""
+        self.ensure_one()
+        value = self._kompakapps_subcontract_service_value()
+        interim = self.product_id.with_company(self.company_id)._kompakapps_stock_interim() if value else None
+        if not interim:
+            return []
+        name = f"Biaya jasa subkontrak {self.reference} - {self.product_id.name}"
+        debit_account, credit_account = (interim["valuation"], interim["input"]) if value > 0 else (interim["input"], interim["valuation"])
+        amount = abs(value)
+        return [
+            {"account_id": credit_account.id, "name": name, "debit": 0, "credit": amount, "product_id": self.product_id.id},
+            {"account_id": debit_account.id, "name": name, "debit": amount, "credit": 0, "product_id": self.product_id.id},
+        ]
 
     def _kompakapps_interim_line_vals(self, interim):
         """Baris jurnal penerimaan atau pengiriman: masuk Dr Valuasi, Cr lawan; keluar Dr lawan, Cr Valuasi (nilai negatif membalik sisi)."""
@@ -214,17 +246,42 @@ class StockMove(models.Model):
             moves.account_move_id = account_move.id
             for move in moves:
                 move.kompakapps_posted_value = move.value
+                if move._kompakapps_subcontract_service_lines():  # dicatat pada penerimaan subkontrak agar selisih harga tagihan dapat dikoreksi
+                    receipt = move.move_dest_ids.filtered(lambda dest: dest.state == "done" and dest.is_subcontract)[-1:]
+                    receipt.kompakapps_posted_value += move._kompakapps_subcontract_service_value()
             account_move._post()
             account_moves |= account_move
         return account_moves
+
+    def _kompakapps_post_correction(self, interim, diff):
+        """Jurnal koreksi nilai: diff positif = Dr Persediaan, Cr Barang Diterima Belum Ditagih; negatif = kebalikannya."""
+        self.ensure_one()
+        debit_account, credit_account = (interim["valuation"], interim["counter"]) if diff > 0 else (interim["counter"], interim["valuation"])
+        amount = abs(diff)
+        name = f"Koreksi nilai {self.reference} - {self.product_id.name}"
+        correction = self.env["account.move"].sudo().create(
+            {
+                "ref": f"Koreksi nilai {self.reference}"[:43],
+                "partner_id": self._get_partner_id_for_valuation_lines(),
+                "journal_id": interim["journal"].id,
+                "date": fields.Date.context_today(self),
+                "line_ids": [
+                    Command.create({"account_id": credit_account.id, "name": name, "debit": 0, "credit": amount, "product_id": self.product_id.id}),
+                    Command.create({"account_id": debit_account.id, "name": name, "debit": amount, "credit": 0, "product_id": self.product_id.id}),
+                ],
+            }
+        )
+        correction._post()
 
     def _kompakapps_true_up_value(self):
         """Jurnalkan selisih nilai penerimaan yang dinilai ulang sesudah tagihan diposting (harga tagihan berbeda dari harga PO).
 
         Odoo mengganti nilai gerakan masuk dengan nilai tagihan. Jurnal penerimaan sudah memakai nilai lama, jadi selisihnya dijurnal sebagai tambahan:
         Dr Persediaan, Cr Barang Diterima Belum Ditagih (atau kebalikannya), supaya akun Barang Diterima habis saat tagihan dan penerimaan sama besar.
+        Penerimaan barang jadi subkontrak ditangani terpisah (`_kompakapps_true_up_subcontract`).
         """
-        for move in self:
+        self.filtered("is_subcontract")._kompakapps_true_up_subcontract()
+        for move in self.filtered(lambda m: not m.is_subcontract):
             if not (move.account_move_id and move.is_in):
                 continue
             interim = move._kompakapps_interim_accounts()
@@ -233,23 +290,40 @@ class StockMove(models.Model):
             diff = move.value - move.kompakapps_posted_value
             if move.company_currency_id.is_zero(diff):
                 continue
-            debit_account, credit_account = (interim["valuation"], interim["counter"]) if diff > 0 else (interim["counter"], interim["valuation"])
-            amount = abs(diff)
-            name = f"Koreksi nilai {move.reference} - {move.product_id.name}"
-            correction = self.env["account.move"].sudo().create(
-                {
-                    "ref": f"Koreksi nilai {move.reference}"[:43],
-                    "partner_id": move._get_partner_id_for_valuation_lines(),
-                    "journal_id": interim["journal"].id,
-                    "date": fields.Date.context_today(self),
-                    "line_ids": [
-                        Command.create({"account_id": credit_account.id, "name": name, "debit": 0, "credit": amount, "product_id": move.product_id.id}),
-                        Command.create({"account_id": debit_account.id, "name": name, "debit": amount, "credit": 0, "product_id": move.product_id.id}),
-                    ],
-                }
-            )
-            correction._post()
+            move._kompakapps_post_correction(interim, diff)
             move.kompakapps_posted_value = move.value
+
+    def _kompakapps_true_up_subcontract(self):
+        """Koreksi biaya jasa subkontrak yang sudah dijurnal saat barang jadi diterima bila harga tagihan berbeda dari harga PO.
+
+        Harga satuan tagihan (rata-rata semua tagihan terposting atas baris PO) dibandingkan dengan harga satuan yang sudah dijurnal; selisihnya dikalikan
+        jumlah penerimaan yang sudah tertagih, dialokasikan ke penerimaan menurut urutan tanggal. Nilai stok (biaya barang jadi) tidak dihitung ulang,
+        sama seperti perilaku Odoo.
+        """
+        for pol in self.purchase_line_id:
+            product = pol.product_id.with_company(pol.company_id)
+            interim = product._kompakapps_stock_interim()
+            bill_lines = pol.invoice_lines.filtered(lambda line: line.move_id.state == "posted" and line.move_id.move_type in ("in_invoice", "in_refund"))
+            billed_qty = sum(
+                (-1 if line.move_id.move_type == "in_refund" else 1) * line.product_uom_id._compute_quantity(line.quantity, product.uom_id) for line in bill_lines
+            )
+            if not interim or billed_qty <= 0:
+                continue
+            unit = sum(bill_lines.mapped("balance")) / billed_qty
+            remaining = billed_qty
+            for receipt in pol.move_ids.filtered(lambda m: m.is_subcontract and m.state == "done").sorted(lambda m: (m.date, m.id)):
+                received = receipt.product_uom._compute_quantity(receipt.quantity, product.uom_id)
+                if remaining <= 0:
+                    break
+                if not received or not receipt.kompakapps_posted_value:
+                    continue
+                covered = min(remaining, received)
+                remaining -= covered
+                diff = receipt.company_currency_id.round((unit - receipt.kompakapps_posted_value / received) * covered)
+                if receipt.company_currency_id.is_zero(diff):
+                    continue
+                receipt._kompakapps_post_correction({"valuation": interim["valuation"], "counter": interim["input"], "journal": interim["journal"]}, diff)
+                receipt.kompakapps_posted_value += diff
 
 
 class AccountMove(models.Model):
@@ -260,7 +334,7 @@ class AccountMove(models.Model):
         if not self.env.context.get("move_reverse_cancel"):
             bills = self.filtered(lambda move: move.is_purchase_document())
             if bills:
-                bills.line_ids._get_stock_moves().filtered("is_in")._kompakapps_true_up_value()
+                bills.line_ids._get_stock_moves().filtered(lambda move: move.is_in or move.is_subcontract)._kompakapps_true_up_value()
         return posted
 
     def _stock_account_prepare_realtime_out_lines_vals(self):

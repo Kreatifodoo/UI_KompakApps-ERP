@@ -195,6 +195,7 @@ def main():
     check_bank_reconciliation(api)
     check_inventory(api, product)
     check_stock_journals(api, vendor)
+    check_subcontracting(api, vendor)
     check_warehouse_master(api, product)
     check_multi_warehouse(api)
     check_pos_station_warehouse(api)
@@ -538,6 +539,107 @@ def check_stock_journals(api, vendor):
     scrap_move = api.read("stock.scrap", scrap, ["move_ids"])["move_ids"][0]
     scrap_entry = api.search("account.move.line", [["move_id", "=", (api.read("stock.move", scrap_move, ["account_move_id"])["account_move_id"] or [0])[0]]], ["account_id", "debit", "credit"])
     check({i["account_id"][0] for i in scrap_entry if i["debit"]} == {scrap_location[0]["valuation_account_id"][0]}, "scrap mendebit akun Beban Barang Rusak milik lokasi Scrap")
+
+
+def check_subcontracting(api, vendor):
+    """Subkontrak pada BoM (D82): PO ke subkontraktor membuat penerimaan dan MO, resupply komponen (tanpa jurnal), validasi penerimaan menyelesaikan MO, biaya jasa
+    dijurnal Dr Persediaan Cr Barang Diterima Belum Ditagih lalu dibersihkan tagihan. Resupply dibuat dengan muatan yang sama dengan tombol UI."""
+    import random
+
+    step("Subkontrak: BoM Subcontracting, PO, resupply komponen, penerimaan, MO, jurnal, dan tagihan")
+    tag = f"{random.randint(0, 99999):05d}"
+    goods = api.search("product.category", [["name", "=", "Goods"]], ["id", "property_stock_valuation_account_id", "kompakapps_stock_input_account_id"], limit=1)[0]
+    stock_acc, input_acc = goods["property_stock_valuation_account_id"][0], goods["kompakapps_stock_input_account_id"][0]
+
+    def product(name):
+        [tmpl] = api.call("product.template", "create", vals_list=[{"name": f"{name} {tag}", "type": "consu", "is_storable": True, "categ_id": goods["id"], "standard_price": 0.0, "taxes_id": [[5, 0, 0]], "supplier_taxes_id": [[5, 0, 0]]}])
+        return api.read("product.template", tmpl, ["product_variant_id", "uom_id"]) | {"tmpl": tmpl}
+
+    comp, fin = product("Komponen Subkon"), product("Jadi Subkon")
+    cid, fid = comp["product_variant_id"][0], fin["product_variant_id"][0]
+    [subcon] = api.call("res.partner", "create", vals_list=[{"name": f"Subkon Regresi {tag}", "is_company": True, "supplier_rank": 1}])
+    [other] = api.call("res.partner", "create", vals_list=[{"name": f"Bukan Subkon {tag}", "is_company": True, "supplier_rank": 1}])
+    [bom] = api.call("mrp.bom", "create", vals_list=[{
+        "product_tmpl_id": fin["tmpl"], "type": "subcontract", "subcontractor_ids": [[6, 0, [subcon]]], "product_qty": 1.0, "product_uom_id": fin["uom_id"][0],
+        "bom_line_ids": [[0, 0, {"product_id": cid, "product_qty": 2.0, "product_uom_id": comp["uom_id"][0]}]],
+    }])
+    info = api.read("mrp.bom", bom, ["type", "subcontractor_ids"])
+    check(info["type"] == "subcontract" and info["subcontractor_ids"] == [subcon], "BoM tipe Subcontracting tersimpan dengan subkontrakternya")
+    workcenter = api.search("mrp.workcenter", [], ["id"], limit=1)
+    if workcenter:
+        try:
+            api.call("mrp.bom", "write", ids=[bom], vals={"operation_ids": [[0, 0, {"name": "Rakit", "workcenter_id": workcenter[0]["id"]}]]})
+            check(False, "BoM Subcontracting menolak operasi")
+        except RuntimeError:
+            check(True, "BoM Subcontracting menolak operasi")
+
+    def bal(account, product_id):
+        rows = api.call("account.move.line", "formatted_read_group", domain=[["account_id", "=", account], ["product_id", "=", product_id], ["parent_state", "=", "posted"]], groupby=[], aggregates=["balance:sum"])
+        return round(rows[0]["balance:sum"], 2) if rows else 0.0
+
+    # stok komponen 20 @ 10.000 (diterima dan ditagih)
+    [po0] = api.call("purchase.order", "create", vals_list=[{"partner_id": vendor["id"], "order_line": [[0, 0, {"product_id": cid, "name": "k", "product_qty": 20.0, "product_uom_id": comp["uom_id"][0], "price_unit": 10_000.0}]]}])
+    api.call("purchase.order", "button_confirm", ids=[po0])
+    pick0 = api.search("stock.picking", [["purchase_id", "=", po0]], ["id"])[0]["id"]
+    move0 = api.search("stock.move", [["picking_id", "=", pick0]], ["id"])[0]["id"]
+    api.call("stock.move", "write", ids=[move0], vals={"quantity": 20.0, "picked": True})
+    api.call("stock.picking", "button_validate", ids=[pick0])
+    api.call("purchase.order", "action_create_invoice", ids=[po0])
+    bill0 = api.read("purchase.order", po0, ["invoice_ids"])["invoice_ids"][-1]
+    api.call("account.move", "write", ids=[bill0], vals={"invoice_date": datetime.date.today().isoformat()})
+    api.call("account.move", "action_post", ids=[bill0])
+
+    # PO ke pemasok bukan subkontraktor: penerimaan biasa tanpa MO
+    [po_plain] = api.call("purchase.order", "create", vals_list=[{"partner_id": other, "order_line": [[0, 0, {"product_id": fid, "name": "x", "product_qty": 1.0, "product_uom_id": fin["uom_id"][0], "price_unit": 1.0}]]}])
+    api.call("purchase.order", "button_confirm", ids=[po_plain])
+    plain_moves = api.search("stock.move", [["purchase_line_id.order_id", "=", po_plain]], ["is_subcontract"])
+    check(plain_moves and not any(m["is_subcontract"] for m in plain_moves), "PO ke pemasok yang bukan subkontraktor menghasilkan penerimaan biasa")
+
+    # PO 5 unit @ 50.000 ke subkontraktor
+    [po] = api.call("purchase.order", "create", vals_list=[{"partner_id": subcon, "order_line": [[0, 0, {"product_id": fid, "name": "jadi", "product_qty": 5.0, "product_uom_id": fin["uom_id"][0], "price_unit": 50_000.0}]]}])
+    api.call("purchase.order", "button_confirm", ids=[po])
+    receipt = api.search("stock.picking", [["purchase_id", "=", po]], ["id", "picking_type_id"])[0]
+    rmove = api.search("stock.move", [["picking_id", "=", receipt["id"]]], ["id", "is_subcontract", "move_orig_ids"])[0]
+    check(rmove["is_subcontract"], "penerimaan dari PO subkontrak bertanda subkontrak")
+    productions = api.search("mrp.production", [["move_finished_ids", "in", rmove["move_orig_ids"]]], ["id", "state", "subcontractor_id", "move_raw_ids", "production_group_id"])
+    check(len(productions) == 1 and productions[0]["subcontractor_id"][0] == subcon and productions[0]["state"] == "confirmed", "MO subkontrak terbentuk dan terkonfirmasi untuk subkontraktor")
+    production = productions[0]
+    need = sum(m["product_uom_qty"] for m in api.search("stock.move", [["id", "in", production["move_raw_ids"]]], ["product_uom_qty"]))
+    check(need == 10.0, "kebutuhan komponen MO 10 unit (2 per unit barang jadi)")
+
+    # resupply 10 komponen: muatan sama dengan tombol "Buat Resupply Komponen"
+    wh = api.search("stock.warehouse", [["id", "=", api.read("stock.picking.type", receipt["picking_type_id"][0], ["warehouse_id"])["warehouse_id"][0]]], ["lot_stock_id", "subcontracting_resupply_type_id"])[0]
+    sub_loc = api.read("mrp.production", production["id"], ["location_src_id"])["location_src_id"][0]
+    group = production["production_group_id"][0]
+    stock_before = (bal(stock_acc, cid), bal(input_acc, cid))
+    [resupply] = api.call("stock.picking", "create", vals_list=[{
+        "picking_type_id": wh["subcontracting_resupply_type_id"][0], "partner_id": subcon, "location_id": wh["lot_stock_id"][0], "location_dest_id": sub_loc, "origin": "regresi",
+        "move_ids": [[0, 0, {"product_id": cid, "product_uom_qty": 10.0, "product_uom": comp["uom_id"][0], "location_id": wh["lot_stock_id"][0], "location_dest_id": sub_loc, "production_group_id": group}]],
+    }])
+    api.call("stock.picking", "action_confirm", ids=[resupply])
+    api.call("stock.picking", "action_assign", ids=[resupply])
+    move = api.search("stock.move", [["picking_id", "=", resupply]], ["id"])[0]["id"]
+    api.call("stock.move", "write", ids=[move], vals={"quantity": 10.0, "picked": True})
+    check(api.call("stock.picking", "button_validate", ids=[resupply]) is True, "resupply 10 komponen ke lokasi Subcontracting divalidasi")
+    check(not api.read("stock.move", move, ["account_move_id"])["account_move_id"] and (bal(stock_acc, cid), bal(input_acc, cid)) == stock_before, "resupply tidak dijurnal: nilai komponen tetap di Persediaan")
+    check(resupply in api.read("mrp.production", production["id"], ["picking_ids"])["picking_ids"], "resupply tertaut ke MO subkontrak lewat grup produksi")
+
+    # validasi penerimaan menyelesaikan MO; biaya jasa dijurnal ke Barang Diterima Belum Ditagih
+    api.call("stock.move", "write", ids=[rmove["id"]], vals={"quantity": 5.0, "picked": True})
+    check(api.call("stock.picking", "button_validate", ids=[receipt["id"]]) is True, "penerimaan subkontrak 5 unit divalidasi")
+    check(api.read("mrp.production", production["id"], ["state"])["state"] == "done", "MO subkontrak selesai otomatis saat penerimaan divalidasi")
+    check(abs(api.read("product.product", fid, ["total_value"])["total_value"] - 350_000.0) < 0.5, "nilai barang jadi 350.000 (komponen 100.000 + jasa 250.000)")
+    check(bal(input_acc, fid) == -250_000.0, "biaya jasa 250.000 menunggu tagihan di Barang Diterima Belum Ditagih")
+    check(abs(bal(stock_acc, fid) - 350_000.0) < 0.5 and abs(bal(stock_acc, cid) - 100_000.0) < 0.5, "akun Persediaan sama dengan nilai stok: barang jadi 350.000 dan sisa komponen 100.000")
+    api.call("purchase.order", "action_create_invoice", ids=[po])
+    bill = api.read("purchase.order", po, ["invoice_ids"])["invoice_ids"][-1]
+    line = api.search("account.move.line", [["move_id", "=", bill], ["display_type", "=", "product"]], ["id", "account_id"])[0]
+    check(line["account_id"][0] == input_acc, "baris tagihan jasa subkontrak mendebit Barang Diterima Belum Ditagih")
+    api.call("account.move.line", "write", ids=[line["id"]], vals={"price_unit": 55_000.0})
+    api.call("account.move", "write", ids=[bill], vals={"invoice_date": datetime.date.today().isoformat()})
+    api.call("account.move", "action_post", ids=[bill])
+    check(bal(input_acc, fid) == 0.0, "tagihan membersihkan Barang Diterima Belum Ditagih (selisih harga dikoreksi)")
+    check(abs(bal(stock_acc, fid) - 375_000.0) < 0.5, "selisih harga tagihan 5 x 5.000 menambah Persediaan menjadi 375.000")
 
 
 def check_warehouse_master(api, product):
