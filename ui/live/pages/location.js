@@ -1,6 +1,6 @@
 // Lokasi gudang (stock.location): hierarki lokasi internal di dalam gudang (rak, zona), dengan tipe, induk, dan arsip. Lokasi bertipe Inventory Loss
 // (opname dan scrap) dan Produksi punya Akun Loss atau Akun Produksi: akun lawan dari akun Persediaan pada Product Category saat stok masuk atau keluar
-// lewat lokasi itu (D69, D74).
+// lewat lokasi itu (D69, D75).
 import {
   ACCOUNT_TYPE_LABELS, INPUT, REMOVAL_HELP, app, call, cell, closeLookup, esc, fieldBlock, filterSelect, guarded, pageHeader, readOne, registerLookup, referenceRemovals, removalSelect, rowLink, runLookup,
   searchAccounts, searchBox, searchRead, table, toast, button,

@@ -216,6 +216,7 @@ def main():
     check_settings_and_users(api)
     check_data_import(api)
     check_data_import_xlsx(api)
+    check_data_import_ods_xls(api)
     check_print_documents(api)
     check_auditlog(api)
     check_budget(api)
@@ -1800,6 +1801,89 @@ def check_data_import_xlsx(api):
     check(bool(broken.get("error")), "berkas yang bukan Excel dilaporkan sebagai galat baca")
 
 
+# Berkas .xls kecil (xlwt): lembar "Produk" berisi judul dan dua produk (XLS-FIXTURE-A dan XLS-FIXTURE-B); dibuat di kontainer Odoo karena skrip ini tidak memakai pustaka luar.
+XLS_FIXTURE = (
+    "0M8R4KGxGuEAAAAAAAAAAAAAAAAAAAAAPgADAP7/CQAGAAAAAAAAAAAAAAABAAAACQAAAAAAAAAAEAAA/v///wAAAAD+////AAAAAAgAAAD///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////8JCBAAAAYFALsNzAcAAAAABgAAAOEAAgCwBMEAAgAAAOIAAABcAHAATm9uZSAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIEIAAgCwBGEBAgAAAD0BAgABAJwAAgAOABkAAgAAABIAAgAAAGMAAgAAABMAAgAAAK8BAgAAALwBAgAAAEAAAgAAAI0AAgAAAD0AEgDgAVoAzz9OKjgAAAAAAAEAWAIiAAIAAAAOAAIAAQC3AQIAAADaAAIAAAAxABUAyAAAAP9/kAEAAAAAAQAFAEFyaWFsMQAVAMgAAAD/f5ABAAAAAAEABQBBcmlhbDEAFQDIAAAA/3+QAQAAAAABAAUAQXJpYWwxABUAyAAAAP9/kAEAAAAAAQAFAEFyaWFsMQAVAMgAAAD/f5ABAAAAAAEA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AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAIAAAADAAAABAAAAAUAAAAGAAAABwAAAP7////9/////v////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////9SAG8AbwB0ACAARQBuAHQAcgB5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFgAFAf//////////AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP7///8AAAAAAAAAAFcAbwByAGsAYgBvAG8AawAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASAAIB////////////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH///////////////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD+////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf///////////////wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP7///8AAAAAAAAAAA=="
+)
+
+
+def make_ods(sheets):
+    """Berkas .ods minimal tanpa pustaka. sheets = [(nama lembar, [[sel]])]; sel str = teks, int atau float = angka."""
+    ns = (
+        'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" '
+        'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"'
+    )
+
+    def cell(value):
+        if value is None:
+            return "<table:table-cell/>"
+        if isinstance(value, (int, float)):
+            return f'<table:table-cell office:value-type="float" office:value="{value}"><text:p>{value}</text:p></table:table-cell>'
+        return f'<table:table-cell office:value-type="string"><text:p>{escape(str(value))}</text:p></table:table-cell>'
+
+    tables = "".join(
+        f'<table:table table:name="{escape(name)}">' + "".join("<table:table-row>" + "".join(cell(v) for v in row) + "</table:table-row>" for row in rows) + "</table:table>"
+        for name, rows in sheets
+    )
+    content = f'<?xml version="1.0" encoding="UTF-8"?><office:document-content {ns} office:version="1.2"><office:body><office:spreadsheet>{tables}</office:spreadsheet></office:body></office:document-content>'
+    manifest = (
+        '<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">'
+        '<manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.spreadsheet"/>'
+        '<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/></manifest:manifest>'
+    )
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as z:
+        z.writestr(zipfile.ZipInfo("mimetype"), "application/vnd.oasis.opendocument.spreadsheet")
+        z.writestr("content.xml", content, zipfile.ZIP_DEFLATED)
+        z.writestr("META-INF/manifest.xml", manifest, zipfile.ZIP_DEFLATED)
+    return out.getvalue()
+
+
+def check_data_import_ods_xls(api):
+    """Impor .ods dan .xls (ui/live/pages/dataimport.js, D74): dikirim sebagai base64 lewat kompakapps_create_from_file dan dibaca pembaca bawaan Odoo (odfpy dan xlrd)."""
+    step("Impor data LibreOffice (.ods) dan Excel lama (.xls)")
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    header = ["name", "default_code", "categ_id", "type", "is_storable", "list_price", "standard_price"]
+    products = [header, [f"Impor Ods A {tag}", f"OD-A-{tag}", "Goods", "consu", 1, 15000, 7000.5], [f"Impor Ods B {tag}", f"OD-B-{tag}", "Goods", "consu", 1, 2500.25, 1000]]
+    ods = make_ods([("Catatan", [["hanya catatan"]]), ("Produk", products)])
+    types = {"ods": "application/vnd.oasis.opendocument.spreadsheet", "xls": "application/vnd.ms-excel"}
+
+    def run(kind, content, dryrun, sheet=None):
+        upload = api.call("base_import.import", "kompakapps_create_from_file", res_model="product.template", file_name=f"regresi.{kind}", file_type=types[kind], data=base64.b64encode(content).decode())
+        options = {"quoting": '"', "separator": ",", "has_headers": True, "date_format": "", "datetime_format": ""}
+        if sheet:
+            options["sheet"] = sheet
+        preview = api.call("base_import.import", "parse_preview", ids=[upload["id"]], options=options)
+        if preview.get("error"):
+            return upload, preview, None
+        fields = ["/".join(preview["matches"].get(str(i)) or []) or False for i in range(len(preview["headers"]))]
+        return upload, preview, api.call("base_import.import", "execute_import", ids=[upload["id"]], fields=fields, columns=preview["headers"], options=preview["options"], dryrun=dryrun)
+
+    upload, first, _ = run("ods", ods, True)
+    check(upload["sheets"] == ["Catatan", "Produk"] and bool(first.get("error")), ".ods: daftar lembar kembali dan lembar pertama yang hanya catatan dilaporkan sebagai galat")
+    _, preview, dry = run("ods", ods, True, "Produk")
+    codes = [f"OD-A-{tag}", f"OD-B-{tag}"]
+    count = lambda codes: api.call("product.template", "search_count", domain=[["default_code", "in", codes]])  # noqa: E731
+    check(preview["headers"] == header and len(dry["ids"]) == 2 and not dry["messages"] and count(codes) == 0, ".ods: lembar Produk terbaca, uji tanpa simpan lulus dan tidak menyimpan")
+    _, _, real = run("ods", ods, False, "Produk")
+    rows = {r["default_code"]: r for r in api.call("product.template", "read", ids=real["ids"], fields=["default_code", "list_price", "standard_price"])}
+    check(count(codes) == 2 and rows[codes[1]]["list_price"] == 2500.25 and rows[codes[0]]["standard_price"] == 7000.5, ".ods: dua produk masuk dengan angka desimal yang benar")
+
+    xls = base64.b64decode(XLS_FIXTURE)
+    xls_codes = ["XLS_KODE_A", "XLS_KODE_B"]
+    stale = api.search("product.template", [["default_code", "in", xls_codes]], ["id"])
+    if stale:
+        api.call("product.template", "unlink", ids=[r["id"] for r in stale])
+    upload, preview, dry = run("xls", xls, True)
+    check(upload["sheets"] == ["Produk"] and preview["headers"] == header and len(dry["ids"]) == 2 and not dry["messages"], ".xls: lembar dan judul kolom terbaca, uji tanpa simpan lulus")
+    _, _, real = run("xls", xls, False)
+    rows = {r["default_code"]: r for r in api.call("product.template", "read", ids=real["ids"], fields=["default_code", "list_price", "standard_price"])}
+    check(rows["XLS_KODE_B"]["list_price"] == 2500.25 and rows["XLS_KODE_A"]["standard_price"] == 7000.5, ".xls: dua produk masuk dengan angka desimal yang benar")
+    api.call("product.template", "unlink", ids=real["ids"])
+    _, broken, _ = run("xls", b"bukan berkas xls", True)
+    check(bool(broken.get("error")), ".xls: berkas rusak dilaporkan sebagai galat baca")
+
+
 def check_print_documents(api):
     """Field yang dibaca halaman cetak (ui/live/print.js) harus ada dan terbaca untuk dokumen nyata, agar cetak tidak rusak diam-diam saat Odoo diperbarui."""
     step("Data cetak dokumen (PO, SO, faktur, surat jalan, pembayaran, PR, struk POS, Perintah Produksi)")
@@ -1811,15 +1895,15 @@ def check_print_documents(api):
         "account.move": ([["move_type", "=", "out_invoice"], ["state", "=", "posted"]], ["name", "state", "move_type", "partner_id", "invoice_date", "date", "invoice_date_due", "invoice_payment_term_id", "ref", "invoice_origin", "invoice_user_id", "currency_id", "amount_untaxed", "amount_tax", "amount_total", "amount_residual", "narration", "payment_reference"]),
         "account.move.line": ([["display_type", "=", "product"]], ["display_type", "name", "quantity", "product_uom_id", "price_unit", "discount", "tax_ids", "price_subtotal"]),
         "stock.picking": ([["state", "=", "done"]], ["name", "state", "picking_type_code", "partner_id", "scheduled_date", "date_done", "origin", "location_id", "location_dest_id", "note"]),
-        "stock.move": ([["picking_id", "!=", False]], ["product_id", "description_picking", "product_uom_qty", "quantity", "product_uom"]),
-        "stock.move.line": ([["lot_id", "!=", False]], ["move_id", "lot_id", "quantity"]),
+        "stock.move": ([["picking_id", "!=", False]], ["product_id", "description_picking", "product_uom_qty", "quantity", "product_uom", "byproduct_id"]),
+        "stock.move.line": ([["lot_id", "!=", False]], ["move_id", "product_id", "lot_id", "quantity", "product_uom_id"]),
         "account.payment": ([["state", "in", ["paid", "in_process"]]], ["name", "state", "payment_type", "partner_id", "amount", "currency_id", "date", "journal_id", "payment_method_line_id", "memo", "reconciled_invoice_ids", "reconciled_bill_ids"]),
         "purchase.request": ([], ["name", "state", "requested_by", "assigned_to", "date_start", "origin", "description"]),
         "purchase.request.line": ([], ["name", "product_id", "product_qty", "product_uom_id", "date_required", "estimated_cost"]),
         "pos.order": ([], ["name", "pos_reference", "state", "session_id", "config_id", "date_order", "partner_id", "user_id", "amount_total", "amount_tax", "currency_id", "lines", "payment_ids"]),
         "pos.order.line": ([], ["full_product_name", "qty", "price_unit", "discount", "tax_ids", "price_subtotal", "price_subtotal_incl"]),
         "pos.payment": ([], ["payment_method_id", "amount", "is_change"]),
-        "mrp.production": ([], ["name", "state", "product_id", "product_qty", "product_uom_id", "bom_id", "origin", "user_id", "date_start", "date_finished", "date_deadline", "picking_type_id", "location_src_id", "location_dest_id", "move_raw_ids", "workorder_ids"]),
+        "mrp.production": ([], ["name", "state", "product_id", "product_qty", "product_uom_id", "bom_id", "origin", "user_id", "date_start", "date_finished", "date_deadline", "picking_type_id", "location_src_id", "location_dest_id", "move_raw_ids", "move_finished_ids", "workorder_ids"]),
         "mrp.workorder": ([], ["name", "workcenter_id", "duration_expected", "state", "date_start", "date_finished"]),
         "res.company": ([], ["name", "street", "street2", "city", "zip", "state_id", "country_id", "phone", "email", "website", "vat", "company_registry", "report_header", "report_footer", "logo", "uses_default_logo"]),
         "res.partner": ([], ["name", "street", "street2", "city", "zip", "state_id", "country_id", "vat", "phone", "email"]),
