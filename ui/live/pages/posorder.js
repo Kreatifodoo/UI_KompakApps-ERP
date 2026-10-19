@@ -28,6 +28,14 @@ async function renderList(query) {
   const domain = [];
   if (filter) domain.push(["state", "=", filter]);
   if (session) domain.push(["session_id", "=", session]);
+  // dari tombol POS di halaman produk: id template produk dan periode; hanya pesanan yang sudah dibayar (sama dengan hitungan tombolnya)
+  const template = Number(query.get("product")) || null;
+  if (template) {
+    domain.push(["lines.product_id.product_tmpl_id", "=", template]);
+    if (!filter) domain.push(["state", "in", ["paid", "done", "invoiced"]]);
+    if (query.get("from")) domain.push(["date_order", ">=", `${query.get("from")} 00:00:00`]);
+    if (query.get("to")) domain.push(["date_order", "<=", `${query.get("to")} 23:59:59`]);
+  }
   if (query.get("ids")) domain.push(["id", "in", query.get("ids").split(",").map(Number).filter(Boolean)]);
   if (text) domain.push("|", "|", ["pos_reference", "ilike", text], ["name", "ilike", text], ["partner_id.name", "ilike", text]);
   const rows = await searchRead("pos.order", domain, ["name", "pos_reference", "session_id", "date_order", "partner_id", "amount_total", "state", "user_id"], { order: "id desc", limit: 100 });
@@ -47,6 +55,7 @@ async function renderList(query) {
   const options = [["", "Semua status"], ...Object.entries(STATES).map(([k, v]) => [k, v[0]])];
   app.innerHTML =
     pageHeader("POS Order", `${searchBox(text, "Cari referensi atau pelanggan")}${filterSelect(options, filter)}`) +
+    (template ? `<p class="text-sm text-gray-500 mb-3">Difilter per produk${query.get("from") ? `, ${esc(query.get("from"))} sampai ${esc(query.get("to") ?? "")}` : ""}. <a href="#/posorder" class="text-indigo-600 hover:underline">Tampilkan semua</a></p>` : "") +
     (session ? `<p class="text-sm text-gray-500 mb-3">Difilter per sesi. <a href="#/posorder" class="text-indigo-600 hover:underline">Tampilkan semua</a></p>` : "") +
     table(
       [{ label: "Referensi" }, { label: "Sesi" }, { label: "Waktu" }, { label: "Pelanggan" }, { label: "Kasir" }, { label: "Total", right: true }, { label: "Status" }],
