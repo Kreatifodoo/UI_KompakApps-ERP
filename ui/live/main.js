@@ -2,7 +2,7 @@
 //   render(sub, query), onClick(event, el), onInput(event, el), onChange(event, el),
 //   onSubmit(event, form, kind, button), leave().
 import {
-  OdooError, activeCompany, auth, closeLookup, closeModal, ctx, loadSession, modalOpen, postNote, renderConnect, renderSession,
+  OdooError, activeCompany, app, auth, closeLookup, closeModal, ctx, esc, loadSession, modalOpen, postNote, renderConnect, renderSession,
   resetReferences, setReroute, toast, guarded,
 } from "./common.js";
 import {
@@ -83,11 +83,16 @@ import * as loyalty from "./pages/loyalty.js";
 import * as valuation from "./pages/valuation.js";
 import * as routes from "./pages/route.js";
 import * as rules from "./pages/rule.js";
+import * as employee from "./pages/employee.js";
+import * as department from "./pages/department.js";
+import * as job from "./pages/job.js";
+import * as attendance from "./pages/attendance.js";
 
 const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, bank, stock, moves, count, scrap, orderpoint, replenish, warehouse, location: location_, uom, putaway, lot, bom, workcenter, mo, schedule, production, lead, opportunity, crmsetting, crmreport, posconfig, possession, posorder, kasir, salespricelist, acctreport, dashboard, account, tax, currency, analytic, analyticplan, assetprofile, asset, journalmaster, analysis, modsetting, users, company, companies, dataimport, auditlog, budgetplan, budget, budgetreport, transfer, soon };
 Object.assign(PAGES, { loyalty });
 Object.assign(PAGES, { valuation });
 Object.assign(PAGES, { route: routes, rule: rules });
+Object.assign(PAGES, { employee, department, job, attendance });
 let currentId = "pr";
 
 function parseHash() {
@@ -130,6 +135,12 @@ async function doRoute() {
       ctx.user = null;
       renderSession();
       renderConnect();
+    }
+    if (error instanceof OdooError && error.status === 403) {
+      app.innerHTML = `<section class="max-w-2xl bg-amber-50 border border-amber-200 rounded-xl p-6"><div class="font-semibold text-amber-900"><i class="fas fa-lock mr-2"></i>Akses ditolak</div>
+        <p class="text-sm text-amber-900 mt-2">Akun Anda belum punya hak akses untuk halaman ini. Minta administrator memberi peran yang sesuai di General Setting &gt; Users &amp; Access (mis. Human Resources untuk menu SDM).</p>
+        <p class="text-xs text-amber-800 mt-2">Rincian: ${esc(error.message)}</p></section>`;
+      return;
     }
     toast(error.message, "error");
   }

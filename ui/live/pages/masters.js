@@ -3,7 +3,7 @@
 // relasi, kotak centang, tanggal), arsip, dan bagian tambahan. Pola halaman sama dengan halaman lain (render, onClick, onInput, ...).
 import {
   INPUT, app, badge, button, call, cell, changedValues, chatterHtml, closeLookup, esc, fieldBlock, filterSelect, guarded, loadMessages, pageHeader, readOne, readonlyValue,
-  rowLink, searchBox, searchRead, selectOptions, statTiles, table, toast,
+  rowLink, searchBox, searchRead, selectOptions, statTiles, table, toast, toInputDateTime, fromInputDateTime,
 } from "../common.js";
 
 const ARCHIVE_FILTERS = [["active", "Aktif"], ["archived", "Diarsipkan"]];
@@ -56,12 +56,13 @@ export function createMasterPage(config) {
       .map((r) => rowLink(`#/${config.route}/${r.id}`, config.columns.map((c, i) => cell(c.value(r, listRefs), { right: c.right, strong: i === 0, raw: c.raw }))))
       .join("");
     const filterControls = (config.filters ?? [])
+      .filter((f) => !f.hidden)
       .map((f) => `<select data-master-filter="${esc(f.key)}" class="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white" aria-label="${esc(f.label)}"><option value="">${esc(f.label)}</option>${f.options.map(([v, l]) => `<option value="${esc(v)}" ${query.get(f.key) === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`)
       .join("");
     app.innerHTML =
       pageHeader(
         config.title,
-        `${config.search?.length ? searchBox(text, "Cari...") : ""}${filterControls}${config.archive ? filterSelect(ARCHIVE_FILTERS, state) : ""}${config.headerExtra ?? ""}
+        `${config.search?.length ? searchBox(text, "Cari...") : ""}${filterControls}${config.archive ? filterSelect(ARCHIVE_FILTERS, state) : ""}${config.headerExtra ?? ""}${(await config.headerAsync?.()) ?? ""}
          <a href="#/${config.route}/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>${esc(config.newLabel)}</a>`,
       ) +
       table(config.columns.map((c) => ({ label: c.label, right: c.right })), body, config.empty) +
@@ -76,6 +77,7 @@ export function createMasterPage(config) {
       if (f.type === "m2o") values[f.key] = Array.isArray(raw) ? raw[0] : raw || null;
       else if (f.type === "m2m") values[f.key] = [...(raw ?? [])].sort((a, b) => a - b);
       else if (f.type === "check") values[f.key] = Boolean(raw);
+      else if (f.type === "datetime") values[f.key] = toInputDateTime(raw);
       else if (f.type === "number") values[f.key] = raw ?? 0;
       else values[f.key] = raw || (f.type === "select" ? (f.options?.[0]?.[0] ?? "") : "");
     }
@@ -90,6 +92,7 @@ export function createMasterPage(config) {
       case "number": return value === "" ? 0 : Number(value);
       case "select": return value === "" ? false : value;
       case "date": return value || false;
+      case "datetime": return fromInputDateTime(value);
       default: return String(value ?? "").trim() || false;
     }
   };
@@ -102,6 +105,7 @@ export function createMasterPage(config) {
       case "textarea": return `<textarea ${data} rows="3" ${dis} class="${INPUT}">${esc(v[f.key])}</textarea>`;
       case "number": return `<input type="number" step="${f.step ?? "any"}" ${f.min !== undefined ? `min="${f.min}"` : ""} ${data} data-kind="number" value="${esc(v[f.key])}" ${dis} class="${INPUT} text-right">`;
       case "date": return `<input type="date" ${data} value="${esc(v[f.key])}" ${dis} class="${INPUT}">`;
+      case "datetime": return `<input type="datetime-local" ${data} value="${esc(v[f.key])}" ${dis} class="${INPUT}">`;
       case "check": return `<label class="flex items-center gap-2 text-sm text-gray-700 mt-2"><input type="checkbox" ${data} ${v[f.key] ? "checked" : ""} ${dis} class="rounded border-gray-300 text-indigo-600"> ${esc(f.checkLabel ?? f.label)}</label>`;
       case "select": {
         const options = f.options ?? f.optionsOf?.(refs, v) ?? [];
