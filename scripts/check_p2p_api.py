@@ -242,6 +242,7 @@ def main():
     check_hr_timeoff(api)
     check_hr_expenses(api)
     check_hr_contracts(api)
+    check_attachments(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -4727,6 +4728,52 @@ def check_hr_expenses(api):
     check(api.read("hr.expense", other, ["state"])["state"] == "draft", "dikembalikan ke draft")
     api.call("hr.expense", "unlink", ids=[other])
     check(not api.search("hr.expense", [["id", "=", other]], ["id"]), "biaya draft bisa dihapus")
+
+
+def check_attachments(api):
+    """Lampiran (D84): buat, daftar, baca isi, dan hapus ir.attachment pada banyak model; isi baca-ulang harus sama dengan yang diunggah; catatan chatter dengan lampiran."""
+    import base64
+    import os
+    import random
+
+    step("Lampiran: ir.attachment pada banyak model, isi sama persis, catatan dengan lampiran")
+    tag = f"{random.randint(0, 99999):05d}"
+    [emp] = api.call("hr.employee", "create", vals_list=[{"name": f"Lampiran Regresi {tag}"}])
+    [category] = api.call("product.product", "create", vals_list=[{"name": f"Lampiran Regresi {tag}", "can_be_expensed": True, "standard_price": 0.0}])
+    [expense] = api.call("hr.expense", "create", vals_list=[{"name": f"Lampiran {tag}", "employee_id": emp, "product_id": category, "total_amount_currency": 1000.0}])
+    [partner] = api.call("res.partner", "create", vals_list=[{"name": f"Lampiran Mitra {tag}"}])
+    [tmpl] = api.call("product.template", "create", vals_list=[{"name": f"Lampiran Produk {tag}"}])
+    targets = {"hr.expense": expense, "res.partner": partner, "product.template": tmpl}
+    for model in ("sale.order", "purchase.order", "account.move", "stock.picking", "mrp.production"):
+        rows = api.search(model, [], ["id"], limit=1)
+        check(bool(rows), f"ada record {model} untuk diuji lampirannya")
+        if rows:
+            targets[model] = rows[0]["id"]
+    for model, rid in targets.items():
+        payloads = [(f"a-{tag}.bin", os.urandom(4096)), (f"b-{tag}.txt", "Lampiran Indonesia: bukti bayar \u2713\n".encode())]
+        ids = []
+        for name, data in payloads:
+            [aid] = api.call("ir.attachment", "create", vals_list=[{"name": name, "datas": base64.b64encode(data).decode(), "res_model": model, "res_id": rid, "mimetype": "application/octet-stream", "type": "binary"}])
+            ids.append(aid)
+        listed = api.search("ir.attachment", [["res_model", "=", model], ["res_id", "=", rid], ["res_field", "=", False], ["id", "in", ids]], ["name", "file_size"], order="id")
+        check(len(listed) == 2, f"{model}: dua lampiran terdaftar menurut res_model dan res_id")
+        for (name, data), aid in zip(payloads, ids):
+            back = api.read("ir.attachment", aid, ["name", "datas", "file_size"])
+            check(base64.b64decode(back["datas"]) == data and back["name"] == name and back["file_size"] == len(data), f"{model}: isi, nama, dan ukuran {name} sama persis setelah dibaca ulang")
+        api.call("ir.attachment", "unlink", ids=[ids[0]])
+        check(len(api.search("ir.attachment", [["id", "in", ids]], ["id"])) == 1, f"{model}: lampiran terhapus")
+        api.call("ir.attachment", "unlink", ids=[ids[1]])
+    big = os.urandom(8 * 1024 * 1024)
+    [bid] = api.call("ir.attachment", "create", vals_list=[{"name": f"besar-{tag}.bin", "datas": base64.b64encode(big).decode(), "res_model": "res.partner", "res_id": partner, "type": "binary"}])
+    check(base64.b64decode(api.read("ir.attachment", bid, ["datas"])["datas"]) == big, "berkas 8 MB utuh setelah diunggah dan dibaca ulang")
+    api.call("ir.attachment", "unlink", ids=[bid])
+    [tmp] = api.call("ir.attachment", "create", vals_list=[{"name": f"catatan-{tag}.txt", "datas": base64.b64encode(b"isi catatan").decode(), "res_model": "mail.compose.message", "res_id": 0, "type": "binary"}])
+    api.call("res.partner", "message_post", ids=[partner], body="Catatan dengan lampiran", message_type="comment", subtype_xmlid="mail.mt_note", attachment_ids=[tmp])
+    row = api.read("ir.attachment", tmp, ["res_model", "res_id"])
+    check(row["res_model"] == "res.partner" and row["res_id"] == partner, "message_post dengan attachment_ids memindahkan lampiran ke record")
+    msgs = api.search("mail.message", [["model", "=", "res.partner"], ["res_id", "=", partner], ["attachment_ids", "in", [tmp]]], ["attachment_ids"])
+    check(len(msgs) == 1, "pesan chatter memuat lampiran catatan")
+    check(any(a["id"] == tmp for a in api.search("ir.attachment", [["res_model", "=", "res.partner"], ["res_id", "=", partner], ["res_field", "=", False]], ["id"])), "lampiran catatan tampil juga di daftar Lampiran record")
 
 
 def check_hr_contracts(api):

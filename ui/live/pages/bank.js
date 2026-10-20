@@ -3,7 +3,7 @@
 // pembayaran tertunda, faktur, atau tagihan yang masih terbuka, atau sisanya dicatat ke sebuah akun (mis. biaya
 // bank). Setelah dicocokkan, saldo berpindah dari akun Pembayaran Tertunda ke akun Bank.
 import {
-  ACCOUNT_TYPE_LABELS, INPUT, app, badge, call, cell, closeLookup, dateText, esc, fieldBlock, filterSelect, guarded, journalHtml, loadJournalItems,
+  ACCOUNT_TYPE_LABELS, INPUT, app, attachmentsSectionHtml, badge, call, cell, closeLookup, dateText, esc, fieldBlock, filterSelect, guarded, journalHtml, loadAttachments, loadJournalItems,
   money, pageHeader, readOne, registerLookup, rowLink, runLookup, searchAccounts, searchBox, searchRead, selectOptions, statTiles, table, toast,
 } from "../common.js";
 
@@ -376,7 +376,9 @@ async function renderLine(id) {
     rec = null;
     app.innerHTML = `${header}
       <div class="flex gap-2 mt-4"><button data-action="unreconcile" data-id="${id}" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Batalkan Rekonsiliasi</button></div>
-      ${journalHtml(items, currency, { journal: line.journal_id?.[1], title: "Item Jurnal Mutasi" })}`;
+      ${journalHtml(items, currency, { journal: line.journal_id?.[1], title: "Item Jurnal Mutasi" })}
+      ${attachmentsSectionHtml("account.bank.statement.line", id)}`;
+    loadAttachments("account.bank.statement.line", id);
     return;
   }
   if (!rec || rec.id !== id) {
@@ -446,7 +448,8 @@ function paintReconcile() {
       <div id="candidates">${candidatesTable()}</div>
       <p class="mt-2 text-xs text-gray-500">Baris hijau = saran (jumlah, nomor, atau mitra cocok). Satu mutasi bisa untuk banyak dokumen; satu dokumen bisa dibayar beberapa mutasi (sisanya muncul lagi di mutasi berikutnya).</p>
     </section>`;
-  app.innerHTML = html;
+  app.innerHTML = html + attachmentsSectionHtml("account.bank.statement.line", rec.id);
+  loadAttachments("account.bank.statement.line", rec.id);
 }
 
 function pickText() {

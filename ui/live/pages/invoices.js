@@ -4,7 +4,7 @@
 // yang memakai wizard account.payment.register (arah pembayaran mengikuti jenis faktur).
 import {
   PRODUCT_PAGE, searchProducts,
-  ACCOUNT_TYPE_LABELS, INPUT, actionBar, app, badge, call, cell, chatterHtml, closeLookup, closeModal, ctx, dateText, esc, fieldBlock, filterSelect, guarded,
+  ACCOUNT_TYPE_LABELS, INPUT, actionBar, app, badge, call, cell, attachmentsPendingHtml, chatterHtml, closeLookup, closeModal, ctx, dateText, esc, fieldBlock, filterSelect, guarded,
   journalHtml, loadJournalItems, loadMessages, money, openModal, pageHeader, plain, readOne, readonlyValue, referenceAssetProfiles, referenceCurrencies,
   referenceJournals, referenceSelection, referenceTerms, registerLookup, rowLink, runLookup, searchAccounts, searchRead, selectOptions, statTiles, statusbar,
   table, toast, today,
@@ -510,7 +510,7 @@ export function createInvoicePage(config) {
         ${saveBar}
       </section>
       ${creating ? "" : journalHtml(items, currency, { journal: bill.journal_id?.[1], state: bill.state })}
-      ${creating ? "" : chatterHtml("account.move", id)}`;
+      ${creating ? attachmentsPendingHtml() : chatterHtml("account.move", id)}`;
     if (!creating) loadMessages("account.move", id);
   }
 

@@ -4,7 +4,7 @@
 // (diterima, ditagih, harga, pajak, jumlah) dan total.
 import {
   PRODUCT_PAGE, searchProducts,
-  INPUT, actionBar, app, badge, call, cell, chatterHtml, closeLookup, ctx, dateText, esc, fieldBlock, filterSelect, fromInputDateTime,
+  INPUT, actionBar, app, badge, call, cell, attachmentsPendingHtml, chatterHtml, closeLookup, ctx, dateText, esc, fieldBlock, filterSelect, fromInputDateTime,
   guarded, loadMessages, money, pageHeader, readOne, readonlyValue, referenceUsers, referenceWarehouses, registerLookup, rowLink, runLookup, searchRead,
   selectOptions, statTiles, statusbar, table, toInputDateTime, toast, dateTimeText,
 } from "../common.js";
@@ -407,7 +407,7 @@ async function renderForm(id) {
       ${totals}
       ${saveBar}
     </section>
-    ${po ? chatterHtml("purchase.order", po.id) : ""}`;
+    ${po ? chatterHtml("purchase.order", po.id) : attachmentsPendingHtml()}`;
   if (po) loadMessages("purchase.order", po.id);
   if (editable) refreshStock();
 }

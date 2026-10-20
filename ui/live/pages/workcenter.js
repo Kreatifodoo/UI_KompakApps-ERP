@@ -2,7 +2,7 @@
 // sakelar fitur manufaktur (Work Orders dan By-Products) yang diaktifkan lewat pengaturan Odoo (res.config.settings).
 import {
   INPUT, app, badge, call, cell, changedValues, esc, fieldBlock, fieldValue, filterSelect, guarded, hasGroup, pageHeader, plain, readOne,
-  readonlyValue, resetReferences, rowLink, searchBox, searchRead, selectOptions, statTiles, table, toast, button, chatterHtml, loadMessages,
+  readonlyValue, resetReferences, rowLink, searchBox, searchRead, selectOptions, statTiles, table, toast, button, attachmentsPendingHtml, chatterHtml, loadMessages,
 } from "../common.js";
 
 const FEATURES = [
@@ -127,7 +127,7 @@ async function renderForm(id) {
       <button data-action="save" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
       <a href="#/workcenter" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a>
     </div>
-    ${wc ? chatterHtml("mrp.workcenter", wc.id) : ""}`;
+    ${wc ? chatterHtml("mrp.workcenter", wc.id) : attachmentsPendingHtml()}`;
   if (wc) loadMessages("mrp.workcenter", wc.id);
 }
 

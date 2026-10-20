@@ -5,7 +5,7 @@ import {
   PRODUCT_PAGE, searchProducts,
   INPUT, app, badge, call, cell, changedValues, dateText, dateTimeText, esc, fieldBlock, filterSelect, fromInputDateTime, guarded, hasGroup,
   pageHeader, parseOdooDate, plain, readOne, readonlyValue, registerLookup, rowLink, runLookup, searchBox, searchRead, statTiles, table, toast,
-  toInputDateTime, chatterHtml, loadMessages,
+  toInputDateTime, attachmentsPendingHtml, chatterHtml, loadMessages,
 } from "../common.js";
 
 const FILTERS = [["stock", "Ada stok"], ["all", "Semua lot"], ["expired", "Sudah kedaluwarsa"], ["alert", "Perlu perhatian"]];
@@ -204,7 +204,7 @@ async function renderForm(id) {
       <a href="#/lot" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a>
     </div>
     ${trace ? traceHtml(trace) : '<p class="mt-6 text-sm text-gray-500">Simpan lot terlebih dahulu untuk melihat stok dan riwayat pergerakannya.</p>'}
-    ${lot ? chatterHtml("stock.lot", lot.id) : ""}`;
+    ${lot ? chatterHtml("stock.lot", lot.id) : attachmentsPendingHtml()}`;
   if (lot) loadMessages("stock.lot", lot.id);
 }
 

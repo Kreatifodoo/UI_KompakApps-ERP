@@ -5,7 +5,7 @@
 import {
   PRODUCT_PAGE, searchProducts,
   INPUT, app, badge, call, cell, dateTimeText, esc, fieldBlock, guarded, pageHeader, readOne, readonlyValue, registerLookup, rowLink, runLookup,
-  searchBox, searchRead, selectOptions, statusbar, table, toast, button, filterSelect, chatterHtml, loadMessages,
+  searchBox, searchRead, selectOptions, statusbar, table, toast, button, filterSelect, attachmentsPendingHtml, chatterHtml, loadMessages,
 } from "../common.js";
 import { blockOverStock, stockAt, stockText } from "../stockqty.js";
 
@@ -162,7 +162,7 @@ async function renderForm(id) {
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 grid md:grid-cols-2 gap-x-8 gap-y-4">${fields}</section>
     ${editable ? `<div class="flex gap-2 mt-4"><button data-action="save" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
       <a href="#/scrap" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a></div>` : `<p class="mt-4 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3">Stok sudah berkurang. Nilainya tercatat pada pergerakan stok; <a href="#/moves?kind=loss" class="underline">lihat di Inventory Loss</a>.</p>`}
-    ${scrap ? chatterHtml("stock.scrap", scrap.id) : ""}`;
+    ${scrap ? chatterHtml("stock.scrap", scrap.id) : attachmentsPendingHtml()}`;
   if (scrap) loadMessages("stock.scrap", scrap.id);
 }
 

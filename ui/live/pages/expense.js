@@ -1,6 +1,6 @@
 // Expenses (hr.expense): biaya karyawan. Alur Odoo 19 tanpa laporan biaya: Draft, Diajukan, Disetujui, Diposting, Dibayar (atau Ditolak).
 // Biaya dibayar karyawan menjadi tanda terima (Dr akun biaya, Cr Hutang Usaha ke karyawan) lewat jurnal Purchases; biaya dibayar perusahaan
-// langsung membuat pembayaran keluar. Akun biaya dan pajak pembelian dipilih dari COA Indonesia; lampiran struk disimpan di Odoo (D83).
+// langsung membuat pembayaran keluar. Akun biaya dan pajak pembelian dipilih dari COA Indonesia; lampiran struk lewat bagian Lampiran umum (D84).
 import { badge, button, call, ctx, dateText, esc, guarded, journalHtml, loadJournalItems, money, searchRead, toast, today } from "../common.js";
 import { hrRefs } from "./employee.js";
 import { createMasterPage } from "./masters.js";
@@ -12,23 +12,6 @@ export const EXPENSE_STATES = {
 const MODES = [["own_account", "Dibayar karyawan (diganti perusahaan)"], ["company_account", "Dibayar perusahaan"]];
 const EXPENSE_TYPES = ["expense", "expense_depreciation", "expense_direct_cost"];
 const editable = (r) => !r || r.state === "draft";
-const MAX_FILE = 5 * 1024 * 1024;
-
-let attachments = [];
-const readFile = (file) =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",")[1]);
-    reader.onerror = () => reject(new Error("Berkas tidak bisa dibaca."));
-    reader.readAsDataURL(file);
-  });
-
-const attachmentsHtml = (record) =>
-  `<section id="exp-attach" class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 p-4"><div class="text-sm font-semibold mb-2">Lampiran (struk atau bukti)</div>
-    ${attachments.length ? `<ul class="divide-y divide-gray-100">${attachments.map((a) => `<li class="py-2 flex items-center gap-3 text-sm"><i class="fas fa-paperclip text-gray-400"></i><span class="flex-1">${esc(a.name)}</span>
-      <button data-action="att-download" data-aid="${a.id}" class="text-indigo-600 hover:underline">Unduh</button>${record.state === "draft" ? `<button data-action="att-remove" data-aid="${a.id}" class="text-rose-600 hover:underline">Hapus</button>` : ""}</li>`).join("")}</ul>` : '<p class="text-sm text-gray-500">Belum ada lampiran.</p>'}
-    ${record.state === "draft" || record.state === "submitted" ? `<label class="inline-block mt-2 px-3 py-1 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50 cursor-pointer"><i class="fas fa-upload mr-1"></i>Unggah lampiran<input type="file" data-expfile="1" class="hidden"></label>` : ""}</section>`;
-
 const page = createMasterPage({
   route: "expense", title: "Expenses", noun: "Biaya", model: "hr.expense", newLabel: "Biaya Baru", newTitle: "Biaya Baru", order: "date desc, id desc", limit: 200,
   empty: "Belum ada biaya yang cocok.",
@@ -68,7 +51,7 @@ const page = createMasterPage({
     { key: "description", label: "Catatan", type: "textarea", span2: true, readonly: (r) => !editable(r) },
   ],
   newValues: (refs) => ({ date: today(), payment_mode: "own_account", product_id: refs.categories?.[0]?.id ?? null, employee_id: refs.me }),
-  readFields: ["state", "total_amount", "untaxed_amount", "tax_amount", "account_move_id", "attachment_ids", "payment_mode", "currency_id", "can_approve"],
+  readFields: ["state", "total_amount", "untaxed_amount", "tax_amount", "account_move_id", "payment_mode", "currency_id", "can_approve"],
   titleOf: (r) => r.name,
   tiles: (r) => [
     { count: money(r.untaxed_amount), label: "Sebelum pajak", icon: "fa-receipt", always: true },
@@ -88,29 +71,11 @@ const page = createMasterPage({
     return `${parts.join("")}<span class="self-center">${badge(EXPENSE_STATES, r.state)}</span>`;
   },
   extra: async (r) => {
-    attachments = r.attachment_ids?.length ? await searchRead("ir.attachment", [["id", "in", r.attachment_ids]], ["name", "mimetype"], { order: "id" }) : [];
     const items = r.account_move_id ? await loadJournalItems(r.account_move_id[0]) : [];
     const journal = journalHtml(items, r.currency_id?.[1], { title: `Jurnal ${r.account_move_id?.[1] ?? ""}` });
-    return attachmentsHtml(r) + journal;
+    return journal;
   },
   formNote: "Biaya diajukan oleh karyawan, disetujui atasan atau petugas Expenses, lalu diposting ke akuntansi. Tanpa penyetuju yang ditetapkan, pengajuan langsung berstatus Disetujui.",
-  onChangeExtra: (event, el, { reload }) => {
-    if (!el.dataset.expfile) return false;
-    const file = el.files?.[0];
-    const id = Number(location.hash.split("?")[0].split("/")[2]);
-    if (!file || !id) return true;
-    if (file.size > MAX_FILE) {
-      toast("Lampiran terlalu besar (maksimal 5 MB).", "error");
-      return true;
-    }
-    guarded(null, async () => {
-      const datas = await readFile(file);
-      await call("ir.attachment", "create", { vals_list: [{ name: file.name, datas, res_model: "hr.expense", res_id: id, type: "binary" }] });
-      toast("Lampiran diunggah.");
-      reload();
-    });
-    return true;
-  },
   onAction: async (action, el, { reload }) => {
     const id = Number(el.dataset.id);
     const run = async (task, message) => {
@@ -168,19 +133,6 @@ const page = createMasterPage({
         toast("Biaya dihapus.");
         location.hash = "#/expense";
       }
-    } else if (action === "att-remove") {
-      if (!window.confirm("Hapus lampiran ini?")) return;
-      await run(() => call("ir.attachment", "unlink", { ids: [Number(el.dataset.aid)] }), "Lampiran dihapus.");
-    } else if (action === "att-download") {
-      await guarded(el, async () => {
-        const [file] = await call("ir.attachment", "read", { ids: [Number(el.dataset.aid)], fields: ["name", "datas", "mimetype"] });
-        const bytes = Uint8Array.from(atob(file.datas), (c) => c.charCodeAt(0));
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(new Blob([bytes], { type: file.mimetype || "application/octet-stream" }));
-        link.download = file.name;
-        link.click();
-        URL.revokeObjectURL(link.href);
-      });
     }
   },
 });

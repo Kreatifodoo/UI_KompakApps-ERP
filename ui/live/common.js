@@ -617,31 +617,59 @@ export const setActivityHook = (fn) => {
   activityHook = fn;
 };
 
-/** Catatan dan riwayat, didahului bagian Aktivitas Terjadwal (tersembunyi sampai ketahuan modelnya mendukung aktivitas; lihat activity.js). */
+/** Pengait yang dipasang attachments.js: mengisi daftar Lampiran setelah halaman menggambar chatter atau bagian Lampiran sendiri. */
+let attachmentHook = null;
+export const setAttachmentHook = (fn) => {
+  attachmentHook = fn;
+};
+export const loadAttachments = (model, id) => attachmentHook?.(model, id);
+
+/** Kerangka bagian Lampiran (ir.attachment menurut res_model dan res_id); isinya diisi attachments.js. Model apa pun boleh, tanpa mail.thread. */
+export function attachmentsSectionHtml(model, id) {
+  return `<section data-att-section data-model="${esc(model)}" data-id="${id}" data-att-drop class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 overflow-x-auto">
+    <div class="px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3"><div class="text-sm font-semibold"><i class="fas fa-paperclip mr-1 text-gray-400"></i>Lampiran <span class="font-normal text-gray-500" data-att-count></span></div>
+      <label class="px-3 py-1 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50 cursor-pointer"><i class="fas fa-upload mr-1"></i>Unggah<input type="file" multiple data-att-file class="hidden"></label></div>
+    <div data-att-list class="px-4 py-3 text-sm text-gray-500">Memuat...</div>
+    <div class="px-4 pb-3 text-xs text-gray-400">Pilih berkas atau seret dan lepas ke sini. Maksimal 25 MB per berkas.</div></section>`;
+}
+
+/** Pengganti bagian Lampiran pada formulir baru yang belum tersimpan. */
+export const attachmentsPendingHtml = () =>
+  `<section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 px-4 py-3 text-sm text-gray-500"><i class="fas fa-paperclip mr-1 text-gray-400"></i><span class="font-semibold text-gray-700">Lampiran</span> - simpan dahulu, lalu lampiran bisa diunggah.</section>`;
+
+/** Lampiran, Aktivitas Terjadwal (tersembunyi sampai ketahuan modelnya mendukung aktivitas; lihat activity.js), lalu Catatan dan riwayat. */
 export function chatterHtml(model, id) {
-  return `<section id="section-activities" data-model="${esc(model)}" data-id="${id}" class="hidden bg-white rounded-xl shadow-sm border border-gray-200 mt-4 overflow-x-auto">
+  return `${attachmentsSectionHtml(model, id)}<section id="section-activities" data-model="${esc(model)}" data-id="${id}" class="hidden bg-white rounded-xl shadow-sm border border-gray-200 mt-4 overflow-x-auto">
     <div class="px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3"><div class="text-sm font-semibold">Aktivitas Terjadwal <span class="font-normal text-gray-500" data-activity-count></span></div>
       <button type="button" data-action="act-schedule" data-model="${esc(model)}" data-id="${id}" class="px-3 py-1 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50"><i class="fas fa-plus mr-1"></i>Jadwalkan</button></div>
     <div data-activity-list class="px-4 py-3 text-sm text-gray-500">Memuat...</div></section>
   <section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 p-4">
     <div class="text-sm font-semibold mb-3">Catatan dan riwayat</div>
-    <form data-form="note" data-model="${esc(model)}" data-id="${id}" class="flex gap-2 mb-4">
-      <input name="note" placeholder="Tambah catatan internal..." class="${INPUT}" required>
-      <button class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50 whitespace-nowrap">Catat</button>
+    <form data-form="note" data-model="${esc(model)}" data-id="${id}" class="mb-4">
+      <div class="flex gap-2">
+        <input name="note" placeholder="Tambah catatan internal..." class="${INPUT}">
+        <label class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50 cursor-pointer" title="Lampirkan berkas pada catatan"><i class="fas fa-paperclip"></i><input type="file" multiple data-note-file class="hidden"></label>
+        <button class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50 whitespace-nowrap">Catat</button></div>
+      <div data-note-files class="mt-2 flex flex-wrap gap-2 text-xs text-gray-600"></div>
     </form>
     <div id="messages" class="space-y-3 text-sm text-gray-500">Memuat...</div></section>`;
 }
 
 export async function loadMessages(model, id) {
   activityHook?.(model, id);
+  attachmentHook?.(model, id);
   const box = document.querySelector("#messages");
   if (!box) return;
   try {
     const rows = await searchRead(
       "mail.message",
       [["model", "=", model], ["res_id", "=", id], ["message_type", "in", ["comment", "notification"]]],
-      ["author_id", "date", "body", "message_type"],
+      ["author_id", "date", "body", "message_type", "attachment_ids"],
       { order: "id desc", limit: 30 },
+    );
+    const attIds = [...new Set(rows.flatMap((m) => m.attachment_ids ?? []))];
+    const attNames = new Map(
+      attIds.length ? (await searchRead("ir.attachment", [["id", "in", attIds]], ["name", "mimetype"]).catch(() => [])).map((a) => [a.id, a]) : [],
     );
     box.innerHTML = rows.length
       ? rows
@@ -649,7 +677,8 @@ export async function loadMessages(model, id) {
             const text = plain(m.body);
             return `<div class="border-l-2 ${m.message_type === "comment" ? "border-indigo-300" : "border-gray-200"} pl-3">
               <div class="text-xs text-gray-500">${esc(m.author_id?.[1] ?? "Sistem")} · ${esc(dateTimeText(m.date))}</div>
-              <div class="text-gray-800">${text ? esc(text) : '<span class="text-gray-400">Perubahan data tercatat</span>'}</div></div>`;
+              <div class="text-gray-800">${text ? esc(text) : (m.attachment_ids?.length ? "" : '<span class="text-gray-400">Perubahan data tercatat</span>')}</div>
+              ${(m.attachment_ids ?? []).map((aid) => attNames.get(aid)).filter(Boolean).map((a) => `<button type="button" data-action="att-open" data-aid="${a.id}" class="mr-3 mt-1 text-xs text-indigo-600 hover:underline"><i class="fas fa-paperclip mr-1"></i>${esc(a.name)}</button>`).join("")}</div>`;
           })
           .join("")
       : "Belum ada catatan.";

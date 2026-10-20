@@ -20,6 +20,6 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Odoo-Database ${ODOO_DB};
         proxy_read_timeout 60s;
-        client_max_body_size 5m;
+        client_max_body_size 40m; # lampiran hingga 25 MB (base64 menambah sepertiga), D84
     }
 }
