@@ -39,9 +39,16 @@ Sebelum: hanya Expenses yang punya lampiran (D83). Setelah: bagian **Lampiran** 
 | Cuti (`hr.leave`, `hr.leave.allocation`) | chatter + One2many | Time Off | sama |
 | Biaya (`hr.expense`) | chatter + One2many (struk) | Expenses | Lampiran umum menggantikan unggah tunggal D83 |
 | Mutasi Bank (`account.bank.statement.line`) | lampiran utama | Bank Transaction (detail mutasi) | Lampiran |
+| Attendance (`hr.attendance`), Tipe Cuti (`hr.leave.type`) | chatter pada attendance, tidak pada tipe cuti | Attendance, Leave Types (halaman master) | Lampiran (halaman master memasangnya untuk model apa pun) |
 | Perusahaan, Pengguna | chatter pada perusahaan, tidak pada pengguna | Companies, Users | dilewati (pengaturan) |
 
-**Dilewati dengan alasan**: Kasir/POS Station (terminal dan pengaturan), Physical Inventory (hitung stok), Attendance (catatan jam), Loyalty (pengaturan program), Settings, impor data, dan semua laporan; bukan formulir dokumen. Gambar produk, mitra, dan karyawan adalah field biner `image_*`, bukan lampiran; tidak diubah di sini.
+**Dilewati dengan alasan**: Kasir/POS Station (terminal dan pengaturan), Physical Inventory (hitung stok), Loyalty (pengaturan program), Companies dan Users (pengaturan; `chatter: false` pada `createMasterPage`), Settings, impor data, dan semua laporan; bukan formulir dokumen. Formulir master teknis yang modelnya **tidak** punya `mail.thread` di Odoo (diperiksa pada sumber `stock/models`, `uom`, dan `product`: hanya `stock.lot`, `stock.picking`, `stock.scrap`, `product.category`, `product.pricelist`, `product.product`, dan `product.template` yang berchatter) sehingga Odoo sendiri tidak menyediakan lampiran: Lokasi (`stock.location`), Gudang (`stock.warehouse`), Satuan Ukur (`uom.uom`), Reordering Rule (`stock.warehouse.orderpoint`), Putaway Rule (`stock.putaway.rule`), dan Harga Vendor (`product.supplierinfo`). Gambar produk, mitra, dan karyawan adalah field biner `image_*`, bukan lampiran; tidak diubah di sini.
+
+## Keterbatasan dan tindak lanjut
+
+- **Kontainer `ui` harus dibuat ulang** setelah `ui/nginx.conf.template` berubah (batas `/json/2/` 5m menjadi 40m): `docker compose up -d --force-recreate ui` dari folder repo. Pada 20 Okt 2026 kontainer pemilik (`kompakapps-ui-1`, dibuat 19 Okt) masih memakai 5m, sehingga berkas di atas sekitar 3,7 MB (setelah base64) ditolak dengan pesan ukuran sampai kontainer dibuat ulang. Berkas UI statis ikut folder repo yang di-bind, jadi checkout utama juga perlu `git pull --ff-only origin main`.
+- **Formulir baru**: lampiran baru bisa diunggah setelah record tersimpan (keterangan "simpan dahulu"). Lampiran tertunda yang diunggah otomatis saat penyimpanan pertama belum dibuat.
+- **Gambar** produk, mitra, dan karyawan tetap lewat field biner masing-masing, bukan bagian Lampiran.
 
 ## Rancangan
 
