@@ -2,7 +2,7 @@
 // Currencies, Analytic Account, dan sejenisnya. Satu konfigurasi menentukan model, kolom daftar, bidang form (teks, angka, pilihan,
 // relasi, kotak centang, tanggal), arsip, dan bagian tambahan. Pola halaman sama dengan halaman lain (render, onClick, onInput, ...).
 import {
-  INPUT, app, badge, button, call, cell, changedValues, chatterHtml, closeLookup, esc, fieldBlock, filterSelect, guarded, loadMessages, pageHeader, readOne, readonlyValue,
+  INPUT, app, badge, button, call, cell, changedValues, attachmentsPendingHtml, chatterHtml, closeLookup, esc, fieldBlock, filterSelect, guarded, loadMessages, pageHeader, readOne, readonlyValue,
   rowLink, searchBox, searchRead, selectOptions, statTiles, table, toast, toInputDateTime, fromInputDateTime,
 } from "../common.js";
 
@@ -162,7 +162,7 @@ export function createMasterPage(config) {
         <a href="#/${config.route}" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a>
       </div>
       ${extra}
-      ${record && config.chatter !== false ? chatterHtml(config.model, record.id) : ""}`;
+      ${config.chatter === false ? "" : record ? chatterHtml(config.model, record.id) : attachmentsPendingHtml()}`;
     if (record && config.chatter !== false) loadMessages(config.model, record.id);
   }
 

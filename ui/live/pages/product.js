@@ -2,7 +2,7 @@
 // kategori, pajak, kebijakan kontrol tagihan, deskripsi, dan tabel vendor (harga vendor). Harga vendor
 // di tabel itu adalah yang dipakai otomatis oleh RFQ.
 import {
-  ACCOUNT_TYPE_LABELS, INPUT, app, call, cell, changedValues, chatterHtml, checkboxField, closeLookup, esc, fieldBlock, fieldValue, filterSelect,
+  ACCOUNT_TYPE_LABELS, INPUT, app, call, cell, changedValues, attachmentsPendingHtml, chatterHtml, checkboxField, closeLookup, esc, fieldBlock, fieldValue, filterSelect,
   guarded, hasGroup, loadMessages, money, pageHeader, readOne, referenceCategories, referenceDefaultCategories, referenceSelection, referenceTaxes,
   referenceUoms, registerLookup, rowLink, runLookup, searchAccounts, searchBox, searchRead, selectOptions, statTiles, table, toast, today, button, dayBoundary,} from "../common.js";
 import { loadRouteChoices, routeBoxHtml, routeWarningsHtml } from "../routerules.js";
@@ -399,7 +399,7 @@ async function renderForm(id) {
       <a href="#/product" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a>
     </div>
     ${product ? vendorsTable(sellers, product.id) : '<p class="mt-6 text-sm text-gray-500">Simpan produk terlebih dahulu untuk menambahkan harga vendor.</p>'}
-    ${product ? chatterHtml("product.template", product.id) : ""}`;
+    ${product ? chatterHtml("product.template", product.id) : attachmentsPendingHtml()}`;
   if (product) loadMessages("product.template", product.id);
 }
 

@@ -3,7 +3,7 @@
 // dan cara hitung (diskon persen, harga tetap, atau rumus dari harga jual atau biaya).
 import {
   PRODUCT_PAGE, searchProducts,
-  INPUT, app, badge, button, call, cell, changedValues, chatterHtml, closeLookup, ctx, esc, fieldBlock, filterSelect, fromInputDateTime, guarded, hasGroup, loadMessages, money,
+  INPUT, app, badge, button, call, cell, changedValues, attachmentsPendingHtml, chatterHtml, closeLookup, ctx, esc, fieldBlock, filterSelect, fromInputDateTime, guarded, hasGroup, loadMessages, money,
   pageHeader, readOne, referenceCategories, referenceCurrencies, registerLookup, resetReferences, rowLink, runLookup, searchBox, searchRead, selectOptions, statTiles, table,
   toInputDateTime, toast,
 } from "../common.js";
@@ -167,7 +167,7 @@ async function renderForm(id) {
       <button data-action="save" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
       <a href="#/salespricelist" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a>
     </div>
-    ${list ? chatterHtml("product.pricelist", list.id) : ""}`;
+    ${list ? chatterHtml("product.pricelist", list.id) : attachmentsPendingHtml()}`;
   if (list) loadMessages("product.pricelist", list.id);
 }
 

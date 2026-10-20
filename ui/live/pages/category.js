@@ -5,7 +5,7 @@
 import {
   ACCOUNT_TYPE_LABELS, INPUT, app, call, cell, changedValues, closeLookup, esc, fieldBlock, fieldValue, guarded, pageHeader, readOne, REMOVAL_HELP,
   referenceCategories, referenceJournals, referenceRemovals, removalNote, removalSelect, registerLookup, resetReferences, rowLink, runLookup,
-  searchAccounts, searchBox, searchRead, selectOptions, statTiles, table, toast, button, chatterHtml, loadMessages,
+  searchAccounts, searchBox, searchRead, selectOptions, statTiles, table, toast, button, attachmentsPendingHtml, chatterHtml, loadMessages,
 } from "../common.js";
 import { loadRouteChoices, routeBoxHtml, routeWarningsHtml } from "../routerules.js";
 
@@ -183,7 +183,7 @@ async function renderForm(id) {
       <a href="#/category" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a>
       ${category && !category.product_count ? button("delete", "Hapus", "danger", { id: category.id }) : ""}
     </div>
-    ${category ? chatterHtml("product.category", category.id) : ""}`;
+    ${category ? chatterHtml("product.category", category.id) : attachmentsPendingHtml()}`;
   if (category) loadMessages("product.category", category.id);
 }
 

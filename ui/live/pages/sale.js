@@ -4,7 +4,7 @@
 // jumlah), dialog Buat Faktur (wizard sale.advance.payment.inv), dan total.
 import {
   PRODUCT_PAGE, searchProducts,
-  INPUT, actionBar, app, badge, call, cell, chatterHtml, closeLookup, closeModal, ctx, dateText, esc, fieldBlock, filterSelect, fromInputDateTime,
+  INPUT, actionBar, app, badge, call, cell, attachmentsPendingHtml, chatterHtml, closeLookup, closeModal, ctx, dateText, esc, fieldBlock, filterSelect, fromInputDateTime,
   guarded, loadMessages, money, openModal, pageHeader, readOne, readonlyValue, referencePricelists, referenceTerms, referenceUsers, referenceWarehouses, registerLookup,
   rowLink, runLookup, searchBox, searchRead, selectOptions, statTiles, statusbar, table, toInputDateTime, toast, dateTimeText,
 } from "../common.js";
@@ -409,7 +409,7 @@ async function renderForm(id) {
       ${saveBar}
     </section>
     ${so ? promotionSection(so, rewardLines, currency, editable) : ""}
-    ${so ? chatterHtml("sale.order", so.id) : ""}`;
+    ${so ? chatterHtml("sale.order", so.id) : attachmentsPendingHtml()}`;
   if (so) loadMessages("sale.order", so.id);
   if (editable) refreshStock();
 }

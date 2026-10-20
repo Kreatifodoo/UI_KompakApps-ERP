@@ -2,7 +2,7 @@
 // Opportunity (type opportunity, papan pipeline per tahap dan daftar). Form mengikuti form CRM Odoo 19: kontak, pendapatan
 // diharapkan, probabilitas, prioritas, tag, aktivitas terjadwal, Menang, Kalah, konversi, dan Quotation.
 import {
-  INPUT, actionBar, app, badge, button, call, cell, changedValues, chatterHtml, closeLookup, closeModal, ctx, dateText, esc, fieldBlock, filterSelect, guarded,
+  INPUT, actionBar, app, badge, button, call, cell, changedValues, attachmentsPendingHtml, chatterHtml, closeLookup, closeModal, ctx, dateText, esc, fieldBlock, filterSelect, guarded,
   hasGroup, loadMessages, money, openModal, pageHeader, plain, readOne, readonlyValue, referenceCountries, referenceUsers, registerLookup, resetReferences,
   rowLink, runLookup, searchBox, searchRead, selectOptions, statTiles, statusbar, table, toast,
 } from "../common.js";
@@ -291,7 +291,7 @@ export function createLeadPage(config) {
         <button data-action="save" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
         <a href="#/${config.route}" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a>
       </div>
-      ${lead ? chatterHtml("crm.lead", lead.id) : ""}`;
+      ${lead ? chatterHtml("crm.lead", lead.id) : attachmentsPendingHtml()}`;
     if (lead) loadMessages("crm.lead", lead.id);
   }
 

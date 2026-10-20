@@ -3,7 +3,7 @@
 // pembelian atau penjualan, akuntansi, tombol statistik, dan arsip. Bagian khusus dan tombol statistik datang
 // dari konfigurasi (lihat vendor.js dan customer.js).
 import {
-  INPUT, app, call, cell, changedValues, chatterHtml, checkboxField, ctx, esc, fieldBlock, fieldValue, filterSelect, guarded, loadMessages,
+  INPUT, app, call, cell, changedValues, attachmentsPendingHtml, chatterHtml, checkboxField, ctx, esc, fieldBlock, fieldValue, filterSelect, guarded, loadMessages,
   pageHeader, readOne, referenceCountries, referenceSelection, rowLink, searchBox, searchRead, selectOptions, statTiles, table, toast, button,
 } from "../common.js";
 
@@ -166,7 +166,7 @@ export function createPartnerPage(config) {
         <button data-action="save" data-id="${partner?.id ?? ""}" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
         <a href="#/${config.route}" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a>
       </div>
-      ${partner ? chatterHtml("res.partner", partner.id) : ""}`;
+      ${partner ? chatterHtml("res.partner", partner.id) : attachmentsPendingHtml()}`;
     if (partner) loadMessages("res.partner", partner.id);
   }
 

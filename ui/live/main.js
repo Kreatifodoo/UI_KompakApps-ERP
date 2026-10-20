@@ -2,7 +2,7 @@
 //   render(sub, query), onClick(event, el), onInput(event, el), onChange(event, el),
 //   onSubmit(event, form, kind, button), leave().
 import {
-  OdooError, activeCompany, app, auth, closeLookup, closeModal, ctx, esc, loadSession, modalOpen, postNote, renderConnect, renderSession,
+  OdooError, activeCompany, app, auth, closeLookup, closeModal, ctx, esc, loadSession, modalOpen, renderConnect, renderSession,
   resetReferences, setReroute, toast, guarded,
 } from "./common.js";
 import {
@@ -11,6 +11,7 @@ import {
 import { initColumnResize } from "./colresize.js";
 import { initListTools } from "./listtools.js";
 import { handleActivityAction } from "./activity.js";
+import { handleAttachmentAction, handleAttachmentChange, postNoteWithFiles } from "./attachments.js";
 import * as pr from "./pages/pr.js";
 import * as po from "./pages/po.js";
 import * as receipt from "./pages/receipt.js";
@@ -201,6 +202,8 @@ document.addEventListener("click", async (event) => {
     closeModal();
   } else if (action.startsWith("act-") && (await handleActivityAction(action, el))) {
     /* aktivitas terjadwal ditangani activity.js */
+  } else if (action.startsWith("att-") && (await handleAttachmentAction(action, el))) {
+    /* lampiran ditangani attachments.js */
   } else if (action === "print-doc") {
     await printDocument(el.dataset.model, Number(el.dataset.id), el);
   } else if (action === "print-now") {
@@ -227,6 +230,10 @@ document.addEventListener("input", (event) => {
 
 document.addEventListener("change", (event) => {
   const el = event.target;
+  if (el.matches?.("[data-att-file], [data-note-file]")) {
+    handleAttachmentChange(el);
+    return;
+  }
   if (el.dataset.change === "company") {
     // ganti perusahaan aktif: semua halaman dimuat ulang dengan perusahaan baru, kembali ke daftar modul yang sedang dibuka
     activeCompany.set(Number(el.value));
@@ -256,7 +263,7 @@ document.addEventListener("submit", async (event) => {
     else auth.clear();
     route();
   } else if (kind === "note") {
-    await postNote(form, button);
+    await postNoteWithFiles(form, button);
   } else {
     await page().onSubmit?.(event, form, kind, button);
   }
