@@ -245,6 +245,7 @@ def main():
     check_payroll_engine(api)
     check_payroll_structure(api)
     check_payroll_batch(api)
+    check_payroll_journal(api)
     check_attachments(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
@@ -4936,6 +4937,77 @@ def check_payroll_batch(api):
     check(refund_row["credit_note"] is True and refund_row["state"] == "done", "Refund membuat slip koreksi berstatus Done")
     again = api.call("hr.payslip", "kompakapps_create_payslip", employee_id=refund["employee_id"][0], date_from=refund["date_from"], date_to=refund["date_to"])
     check(again not in (done, refund["refunded_id"][0]), "slip yang sudah dikoreksi tidak menghalangi slip baru pada periode yang sama")
+
+
+def check_payroll_journal(api):
+    """Jurnal gaji ke COA (D85): tanpa akun slip tetap selesai tanpa jurnal, jurnal seimbang saat konfirmasi, tidak seimbang tidak dijurnal, refund membalik. Butuh COA Indonesia."""
+    import random
+
+    step("Payroll: jurnal gaji ke COA (seimbang, tanpa tebakan akun, refund membalik)")
+    tag = f"{random.randint(0, 99999):05d}"
+    [company] = [c["id"] for c in api.search("res.company", [], ["id"], limit=1)]
+    structure = api.call("res.company", "kompakapps_setup_payroll", ids=[company])["structure_id"]
+    rule_ids = api.read("hr.payroll.structure", structure, ["rule_ids"])["rule_ids"]
+    rules = {r["code"]: r["id"] for r in api.call("hr.salary.rule", "read", ids=rule_ids, fields=["code"])}
+    expense = [a["id"] for a in api.search("account.account", [["account_type", "=", "expense"]], ["id"], order="code", limit=2)]
+    [liability] = [a["id"] for a in api.search("account.account", [["account_type", "=", "liability_current"]], ["id"], order="code", limit=1)]
+    [payable] = [a["id"] for a in api.search("account.account", [["account_type", "=", "liability_payable"]], ["id"], order="code", limit=1)]
+    [journal] = [j["id"] for j in api.search("account.journal", [["type", "=", "general"]], ["id"], limit=1)]
+    none = {"kompakapps_account_debit_id": False, "kompakapps_account_credit_id": False}
+    for rule in rules.values():
+        api.call("hr.salary.rule", "write", ids=[rule], vals=none)
+    api.call("hr.payroll.structure", "write", ids=[structure], vals={"kompakapps_journal_id": False})
+
+    [emp] = api.call("hr.employee", "create", vals_list=[{"name": f"Jurnal Regresi {tag}", "contract_date_start": "2026-01-01", "wage": 10_000_000}])
+    [version] = [v["id"] for v in api.search("hr.version", [["employee_id", "=", emp]], ["id"])]
+    api.call("hr.version", "write", ids=[version], vals={"struct_id": structure})
+
+    def slip_for(month_from, month_to, allowance=1_000_000, deduction=200_000):
+        slip = api.call("hr.payslip", "kompakapps_create_payslip", employee_id=emp, date_from=month_from, date_to=month_to)
+        inputs = {i["code"]: i["id"] for i in api.call("hr.payslip.input", "read", ids=api.read("hr.payslip", slip, ["input_line_ids"])["input_line_ids"], fields=["code"])}
+        api.call("hr.payslip.input", "write", ids=[inputs["TUNJ"]], vals={"amount": allowance})
+        api.call("hr.payslip.input", "write", ids=[inputs["POT"]], vals={"amount": deduction})
+        api.call("hr.payslip", "compute_sheet", ids=[slip])
+        return slip
+
+    first = slip_for("2026-09-01", "2026-09-30")
+    api.call("hr.payslip", "action_payslip_done", ids=[first])
+    row = api.read("hr.payslip", first, ["state", "kompakapps_move_id", "kompakapps_move_note"])
+    check(row["state"] == "done" and not row["kompakapps_move_id"] and "belum lengkap" in (row["kompakapps_move_note"] or ""), "tanpa akun gaji, slip tetap selesai tanpa jurnal dengan catatan Pengaturan akun gaji belum lengkap")
+    check(fails_with(lambda: api.call("hr.payslip", "kompakapps_post_journal", ids=[first]), "belum lengkap"), "Buat Jurnal menolak dengan alasan bila pengaturan belum lengkap")
+    api.call("hr.salary.rule", "write", ids=[rules["GAPOK"]], vals={"kompakapps_account_debit_id": expense[0]})
+    api.call("hr.salary.rule", "write", ids=[rules["TUNJ"]], vals={"kompakapps_account_debit_id": expense[1]})
+    api.call("hr.salary.rule", "write", ids=[rules["POT"]], vals={"kompakapps_account_debit_id": liability})
+    api.call("hr.payroll.structure", "write", ids=[structure], vals={"kompakapps_journal_id": journal})
+    second = slip_for("2026-10-01", "2026-10-31")
+    api.call("hr.payslip", "action_payslip_done", ids=[second])
+    row = api.read("hr.payslip", second, ["kompakapps_move_id", "kompakapps_move_note"])
+    check(not row["kompakapps_move_id"] and "tidak seimbang" in (row["kompakapps_move_note"] or ""), "jurnal tidak seimbang (akun kredit gaji bersih belum diisi) tidak diposting, slip tetap selesai dengan alasan")
+    api.call("hr.salary.rule", "write", ids=[rules["NET"]], vals={"kompakapps_account_credit_id": payable})
+    api.call("hr.payslip", "kompakapps_post_journal", ids=[second])
+    row = api.read("hr.payslip", second, ["kompakapps_move_id", "kompakapps_move_note"])
+    move = api.read("account.move", row["kompakapps_move_id"][0], ["state", "date", "journal_id", "ref"])
+    lines = api.search("account.move.line", [["move_id", "=", move["id"]]], ["account_id", "debit", "credit", "partner_id"])
+    by_account = {line["account_id"][0]: (line["debit"], line["credit"]) for line in lines}
+    check(move["state"] == "posted" and move["date"] == "2026-10-31" and move["journal_id"][0] == journal and not row["kompakapps_move_note"], "Buat Jurnal setelah akun dilengkapi memposting jurnal pada jurnal struktur dan tanggal akhir periode")
+    check(sum(line["debit"] for line in lines) == sum(line["credit"] for line in lines) == 11_000_000, "jurnal seimbang: debit 11.000.000 sama dengan kredit 11.000.000")
+    check(by_account.get(expense[0]) == (10_000_000, 0) and by_account.get(expense[1]) == (1_000_000, 0), "gaji pokok dan tunjangan didebit ke akun beban aturannya")
+    check(by_account.get(liability) == (0, 200_000) and by_account.get(payable) == (0, 10_800_000), "potongan (jumlah negatif) dikredit lewat akun debit aturan dan gaji bersih dikredit ke hutang gaji")
+    contact = api.read("hr.employee", emp, ["work_contact_id"])["work_contact_id"][0]
+    check([line["partner_id"][0] for line in lines if line["account_id"][0] == payable] == [contact], "baris hutang gaji memuat kontak karyawan sebagai mitra")
+    api.call("hr.payslip", "refund_sheet", ids=[second])
+    refund = api.read("hr.payslip", second, ["refunded_id"])["refunded_id"][0]
+    rmove = api.read("hr.payslip", refund, ["kompakapps_move_id"])["kompakapps_move_id"][0]
+    rlines = api.search("account.move.line", [["move_id", "=", rmove]], ["account_id", "debit", "credit"])
+    check({line["account_id"][0]: (line["credit"], line["debit"]) for line in rlines} == by_account, "slip koreksi (refund) memposting jurnal kebalikan dengan debit dan kredit tertukar")
+    [run] = api.call("hr.payslip.run", "create", vals_list=[{"name": f"Batch Jurnal {tag}", "date_start": "2026-11-01", "date_end": "2026-11-30"}])
+    api.call("hr.payslip.run", "kompakapps_generate_slips", ids=[run], employee_ids=[emp])
+    api.call("hr.payslip.run", "kompakapps_compute_all", ids=[run])
+    result = api.call("hr.payslip.run", "kompakapps_confirm_all", ids=[run])
+    check(result["confirmed"] == 1 and result["no_journal"] == 0, "Konfirmasi Semua pada batch memposting jurnal tiap slip (tanpa slip tanpa jurnal)")
+    for rule in rules.values():  # kembalikan ke keadaan tanpa akun agar pemeriksaan lain tidak terpengaruh
+        api.call("hr.salary.rule", "write", ids=[rule], vals=none)
+    api.call("hr.payroll.structure", "write", ids=[structure], vals={"kompakapps_journal_id": False})
 
 
 def bill_total(api, bill_id):

@@ -17,6 +17,12 @@ const slipNet = async (ids) => {
   return new Map(lines.map((l) => [l.slip_id[0], l.total]));
 };
 
+const journalHtml = (record, link) => {
+  if (record.kompakapps_move_id) return link(`#/journal/${record.kompakapps_move_id[0]}`, record.kompakapps_move_id[1]);
+  if (record.kompakapps_move_note) return `<span class="text-amber-700 text-xs font-normal">Jurnal belum dibuat. ${esc(record.kompakapps_move_note)}</span>`;
+  return record.state === "done" ? "-" : '<span class="text-gray-500 text-xs font-normal">Dibuat saat slip dikonfirmasi</span>';
+};
+
 const newSlipModal = () => {
   const [from, to] = monthBounds(today());
   const label = "text-xs font-medium text-gray-500 uppercase";
@@ -75,7 +81,7 @@ const page = createMasterPage({
     { key: "name", label: "Nama Slip", type: "text", required: true, readonly: (r) => Boolean(r) && !EDITABLE.includes(r.state), span2: true },
     { key: "note", label: "Catatan Internal", type: "textarea", span2: true, readonly: (r) => Boolean(r) && !EDITABLE.includes(r.state) },
   ],
-  readFields: ["state", "number", "employee_id", "contract_id", "struct_id", "payslip_run_id", "date_from", "date_to", "company_id", "credit_note", "refunded_id", "line_ids"],
+  readFields: ["state", "number", "employee_id", "contract_id", "struct_id", "payslip_run_id", "date_from", "date_to", "company_id", "credit_note", "refunded_id", "line_ids", "kompakapps_move_id", "kompakapps_move_note", "allow_cancel_payslips"],
   titleOf: (r) => r.name || r.number || "Slip Gaji",
   formTop: async (record) => {
     if (!record) return "";
@@ -97,6 +103,7 @@ const page = createMasterPage({
         ${record.credit_note ? item("Jenis", "Koreksi (refund)") : ""}
         ${record.refunded_id ? item("Dikoreksi oleh", link(`#/payslip/${record.refunded_id[0]}`, "Lihat slip koreksi")) : ""}
         ${item("Gaji Bersih", `<span class="text-base">${esc(netValue || "belum dihitung")}</span>`)}
+        ${item("Jurnal", journalHtml(record, link))}
       </section>`;
   },
   actions: (r) => {
@@ -104,7 +111,8 @@ const page = createMasterPage({
     if (EDITABLE.includes(r.state)) parts.push(button("slip-compute", r.state === "draft" ? "Hitung" : "Hitung Ulang", "primary", { id: r.id }));
     if (r.state === "verify") parts.push(button("slip-confirm", "Konfirmasi", "success", { id: r.id }));
     if (r.state === "verify" || r.state === "cancel") parts.push(button("slip-draft", "Kembali ke Draf", "plain", { id: r.id }));
-    if (EDITABLE.includes(r.state)) parts.push(button("slip-cancel", "Batalkan", "danger", { id: r.id }));
+    if (EDITABLE.includes(r.state) || (r.state === "done" && r.allow_cancel_payslips)) parts.push(button("slip-cancel", "Batalkan", "danger", { id: r.id }));
+    if (r.state === "done" && !r.kompakapps_move_id) parts.push(button("slip-journal", "Buat Jurnal", "plain", { id: r.id }));
     if (r.state === "done" && !r.credit_note && !r.refunded_id) parts.push(button("slip-refund", "Refund (Slip Koreksi)", "plain", { id: r.id }));
     if (r.state === "draft" || r.state === "cancel") parts.push(button("slip-delete", "Hapus", "danger", { id: r.id }));
     if (r.line_ids?.length) parts.push(printButton("hr.payslip", r.id, "Cetak Slip"));
@@ -162,12 +170,22 @@ const page = createMasterPage({
     } else if (action === "slip-compute") await run(async () => (await saveEdits(), call("hr.payslip", "compute_sheet", { ids: [id] })), "Slip dihitung.");
     else if (action === "slip-confirm") {
       if (!window.confirm("Konfirmasi slip ini? Setelah selesai slip tidak dapat diubah (koreksi lewat Refund).")) return;
-      await run(async () => (await saveEdits(), call("hr.payslip", "action_payslip_done", { ids: [id] })), "Slip dikonfirmasi.");
+      const confirmed = await guarded(el, async () => {
+        await saveEdits();
+        await call("hr.payslip", "action_payslip_done", { ids: [id] });
+        const [slip] = await call("hr.payslip", "read", { ids: [id], fields: ["kompakapps_move_id", "kompakapps_move_note"] });
+        return slip;
+      });
+      if (confirmed) {
+        toast(confirmed.kompakapps_move_id ? `Slip dikonfirmasi. Jurnal ${confirmed.kompakapps_move_id[1]} diposting.` : `Slip dikonfirmasi tanpa jurnal. ${confirmed.kompakapps_move_note || ""}`);
+        reload();
+      }
     } else if (action === "slip-draft") await run(() => call("hr.payslip", "action_payslip_draft", { ids: [id] }), "Slip dikembalikan ke draf.");
     else if (action === "slip-cancel") {
-      if (!window.confirm("Batalkan slip ini?")) return;
+      if (!window.confirm("Batalkan slip ini? Jurnal gaji yang sudah diposting akan dibalik.")) return;
       await run(() => call("hr.payslip", "action_payslip_cancel", { ids: [id] }), "Slip dibatalkan.");
-    } else if (action === "slip-refund") {
+    } else if (action === "slip-journal") await run(() => call("hr.payslip", "kompakapps_post_journal", { ids: [id] }), "Jurnal gaji diposting.");
+    else if (action === "slip-refund") {
       if (!window.confirm("Buat slip koreksi (refund) untuk slip ini? Slip koreksi langsung berstatus Selesai.")) return;
       const ok = await guarded(el, async () => {
         await call("hr.payslip", "refund_sheet", { ids: [id] });

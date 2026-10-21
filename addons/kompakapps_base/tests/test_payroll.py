@@ -1,5 +1,7 @@
 import datetime
 
+from odoo import SUPERUSER_ID
+from odoo.addons.account.tests.common import AccountTestInvoicingCommon
 from odoo.exceptions import AccessError, UserError
 from odoo.tests import TransactionCase, tagged
 
@@ -324,3 +326,145 @@ class TestPayrollBatch(TransactionCase):
         officer = self.env["res.users"].create({"name": "officer_run", "login": "officer_run", "group_ids": [(6, 0, groups)]})
         with self.assertRaises(AccessError):
             self.batch.with_user(officer).kompakapps_generate_slips(self.emp_a.ids)
+
+
+@tagged("post_install", "-at_install", "kompakapps")
+class TestPayrollJournal(AccountTestInvoicingCommon):
+    """Jurnal gaji ke COA (D85): jurnal seimbang saat slip dikonfirmasi, tanpa tebakan akun, koreksi dan pembatalan membalik jurnal."""
+
+    @classmethod
+    @AccountTestInvoicingCommon.setup_country("id")
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.company = cls.company_data["company"]
+        cls.journal = cls.company_data["default_journal_misc"]
+        # pengguna uji akuntansi tidak punya hak payroll, dan perusahaan uji berbeda dari perusahaan utama
+        cls.env = cls.env(user=SUPERUSER_ID, context={"allowed_company_ids": cls.company.ids})
+        cls.company, cls.journal = cls.company.with_env(cls.env), cls.journal.with_env(cls.env)
+        cls.employee = cls.env["hr.employee"].create(
+            {"name": "Karyawan Jurnal Uji", "company_id": cls.company.id, "contract_date_start": datetime.date(2026, 1, 1), "wage": 10_000_000}
+        )
+        cls.structure = cls.env["hr.payroll.structure"].browse(cls.company.kompakapps_setup_payroll()["structure_id"])
+        cls.rules = {rule.code: rule for rule in cls.structure.rule_ids}
+        cls.employee.current_version_id.write({"struct_id": cls.structure.id})
+        Account = cls.env["account.account"]
+        domain = [("company_ids", "in", cls.company.id)]
+        cls.expense_basic, cls.expense_allowance = Account.search(domain + [("account_type", "=", "expense"), ("code", "=like", "6%")], limit=2)
+        cls.liability = Account.search(domain + [("account_type", "=", "liability_current")], limit=1)
+        cls.payable = Account.search(domain + [("account_type", "=", "liability_payable")], limit=1)
+
+    def _configure(self, net=True, journal=True):
+        """Akun uji: GAPOK dan TUNJ didebit ke beban, POT (negatif) dikredit ke hutang potongan lewat akun debit, NET dikredit ke hutang gaji."""
+        self.rules["GAPOK"].kompakapps_account_debit_id = self.expense_basic
+        self.rules["TUNJ"].kompakapps_account_debit_id = self.expense_allowance
+        self.rules["POT"].kompakapps_account_debit_id = self.liability
+        if net:
+            self.rules["NET"].kompakapps_account_credit_id = self.payable
+        if journal:
+            self.structure.kompakapps_journal_id = self.journal
+
+    def _slip(self, allowance=1_000_000, deduction=200_000):
+        Payslip = self.env["hr.payslip"]
+        slip = Payslip.browse(Payslip.kompakapps_create_payslip(self.employee.id, datetime.date(2026, 10, 1), datetime.date(2026, 10, 31)))
+        slip.input_line_ids.filtered(lambda line: line.code == "TUNJ").amount = allowance
+        slip.input_line_ids.filtered(lambda line: line.code == "POT").amount = deduction
+        slip.compute_sheet()
+        return slip
+
+    def _lines(self, move):
+        return sorted((line.account_id.id, line.debit, line.credit) for line in move.line_ids)
+
+    def test_confirm_without_accounts_has_no_journal(self):
+        slip = self._slip()
+        slip.action_payslip_done()
+        self.assertEqual(slip.state, "done")
+        self.assertFalse(slip.kompakapps_move_id)
+        self.assertIn("Pengaturan akun gaji belum lengkap", slip.kompakapps_move_note)
+        with self.assertRaises(UserError):
+            slip.kompakapps_post_journal()
+
+    def test_confirm_posts_balanced_journal(self):
+        self._configure()
+        slip = self._slip()
+        slip.action_payslip_done()
+        move = slip.kompakapps_move_id
+        self.assertEqual(move.state, "posted")
+        self.assertEqual(move.journal_id, self.journal)
+        self.assertEqual(move.date, datetime.date(2026, 10, 31))
+        self.assertFalse(slip.kompakapps_move_note)
+        self.assertAlmostEqual(sum(move.line_ids.mapped("debit")), sum(move.line_ids.mapped("credit")), places=2)
+        self.assertEqual(
+            self._lines(move),
+            sorted(
+                [
+                    (self.expense_basic.id, 10_000_000, 0.0),
+                    (self.expense_allowance.id, 1_000_000, 0.0),
+                    (self.liability.id, 0.0, 200_000),
+                    (self.payable.id, 0.0, 10_800_000),
+                ]
+            ),
+        )
+        payable_line = move.line_ids.filtered(lambda line: line.account_id == self.payable)
+        self.assertEqual(payable_line.partner_id, self.employee.work_contact_id)
+
+    def test_unbalanced_setup_confirms_without_journal_then_retry(self):
+        self._configure(net=False)  # akun kredit gaji bersih belum diisi: jurnal tidak seimbang
+        slip = self._slip()
+        slip.action_payslip_done()
+        self.assertFalse(slip.kompakapps_move_id)
+        self.assertIn("tidak seimbang", slip.kompakapps_move_note)
+        self.rules["NET"].kompakapps_account_credit_id = self.payable
+        slip.kompakapps_post_journal()
+        self.assertEqual(slip.kompakapps_move_id.state, "posted")
+        self.assertFalse(slip.kompakapps_move_note)
+        with self.assertRaises(UserError):
+            slip.kompakapps_post_journal()  # sudah punya jurnal
+
+    def test_missing_journal_confirms_without_journal(self):
+        self._configure(journal=False)
+        slip = self._slip()
+        slip.action_payslip_done()
+        self.assertFalse(slip.kompakapps_move_id)
+        self.assertIn("Jurnal Gaji", slip.kompakapps_move_note)
+
+    def test_refund_posts_reversing_journal(self):
+        self._configure()
+        slip = self._slip()
+        slip.action_payslip_done()
+        slip.refund_sheet()
+        refund = slip.refunded_id
+        self.assertEqual(refund.state, "done")
+        original = slip.kompakapps_move_id
+        reversal = refund.kompakapps_move_id
+        self.assertTrue(reversal and reversal != original)
+        self.assertEqual(
+            self._lines(reversal),
+            sorted((account, credit, debit) for account, debit, credit in self._lines(original)),
+        )
+        total = sum((original | reversal).line_ids.mapped("balance"))
+        self.assertAlmostEqual(total, 0.0, places=2)
+
+    def test_cancel_done_slip_reverses_journal(self):
+        self.env["ir.config_parameter"].sudo().set_param("payroll.allow_cancel_payslips", "True")
+        self._configure()
+        slip = self._slip()
+        slip.action_payslip_done()
+        move = slip.kompakapps_move_id
+        slip.action_payslip_cancel()
+        self.assertEqual(slip.state, "cancel")
+        self.assertFalse(slip.kompakapps_move_id)
+        self.assertTrue(move.reversal_move_ids)
+        self.assertEqual(move.reversal_move_ids.state, "posted")
+        self.assertAlmostEqual(sum((move | move.reversal_move_ids).line_ids.mapped("balance")), 0.0, places=2)
+
+    def test_officer_confirms_but_cannot_change_journal(self):
+        self._configure()
+        groups = [self.env.ref("base.group_user").id, self.env.ref("payroll.group_payroll_user").id]
+        officer = self.env["res.users"].create(
+            {"name": "officer_journal", "login": "officer_journal", "group_ids": [(6, 0, groups)], "company_ids": [(6, 0, self.company.ids)], "company_id": self.company.id}
+        )
+        slip = self._slip().with_user(officer)
+        slip.action_payslip_done()  # petugas tanpa hak akuntansi tetap menghasilkan jurnal (diposting dengan sudo)
+        self.assertEqual(slip.kompakapps_move_id.state, "posted")
+        with self.assertRaises(AccessError):
+            self.structure.with_user(officer).write({"kompakapps_journal_id": False})

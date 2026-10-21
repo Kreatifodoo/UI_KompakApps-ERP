@@ -21,18 +21,20 @@ const page = createMasterPage({
   search: ["name", "code"],
   headerAsync: async () => ((await loadPayrollManager()) ? button("payroll-setup", "Pasang Struktur Umum", "primary") : ""),
   loadRefs: async () => {
-    const [structures, rules] = await Promise.all([
+    const [structures, rules, journals] = await Promise.all([
       searchRead("hr.payroll.structure", [], ["display_name"], { order: "name", limit: 200 }),
       searchRead("hr.salary.rule", [], ["display_name", "code"], { order: "sequence, id", limit: 300 }),
+      searchRead("account.journal", [["type", "=", "general"]], ["display_name"], { order: "sequence, code", limit: 100 }).catch(() => []),
       loadPayrollManager(),
     ]);
-    return { structures, rules: rules.map((r) => ({ ...r, display_name: r.code ? `${r.display_name} (${r.code})` : r.display_name })) };
+    return { structures, journals, rules: rules.map((r) => ({ ...r, display_name: r.code ? `${r.display_name} (${r.code})` : r.display_name })) };
   },
   fields: [
     { key: "name", label: "Nama Struktur", type: "text", required: true },
     { key: "code", label: "Kode", type: "text" },
     { key: "parent_id", label: "Struktur Induk", type: "m2o", optionsOf: (refs, v) => refs.structures, hint: "Aturan struktur induk ikut dihitung (opsional)." },
     { key: "rule_ids", label: "Aturan Gaji", type: "m2m", span2: true, optionsOf: (refs) => refs.rules, hint: "Centang aturan yang dipakai. Urutan hitung mengikuti kolom Urutan di tiap aturan." },
+    { key: "kompakapps_journal_id", label: "Jurnal Gaji", type: "m2o", optionsOf: (refs) => refs.journals, readonly: () => !isPayrollManager(), hint: "Jurnal umum tempat jurnal gaji diposting saat slip dikonfirmasi (hanya Manager payroll yang mengubah). Kosong = slip tidak dijurnal. Akun debit dan kredit diatur di tiap aturan gaji." },
     { key: "note", label: "Keterangan", type: "textarea", span2: true },
   ],
   titleOf: (r) => r.name,

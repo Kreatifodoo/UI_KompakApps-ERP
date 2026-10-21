@@ -123,7 +123,7 @@ const page = createMasterPage({
     } else if (action === "batch-compute") await run(() => call("hr.payslip.run", "kompakapps_compute_all", { ids: [id] }), (n) => `${n} slip dihitung.`);
     else if (action === "batch-confirm") {
       if (!window.confirm("Konfirmasi semua slip yang sudah dihitung? Slip yang selesai tidak dapat diubah.")) return;
-      await run(() => call("hr.payslip.run", "kompakapps_confirm_all", { ids: [id] }), (r) => `${r.confirmed} slip dikonfirmasi${r.pending ? `; ${r.pending} slip draf belum dihitung dilewati` : ""}.`);
+      await run(() => call("hr.payslip.run", "kompakapps_confirm_all", { ids: [id] }), (r) => `${r.confirmed} slip dikonfirmasi${r.no_journal ? `; ${r.no_journal} tanpa jurnal (pengaturan akun gaji belum lengkap)` : ""}${r.pending ? `; ${r.pending} slip draf belum dihitung dilewati` : ""}.`);
     } else if (action === "batch-close") {
       const open = await searchRead("hr.payslip", [["payslip_run_id", "=", id], ["state", "in", ["draft", "verify"]]], ["id"], { limit: 1 });
       const text = open.length ? "Masih ada slip yang belum dikonfirmasi. Tutup batch tetap?" : "Tutup batch ini?";
