@@ -244,6 +244,7 @@ def main():
     check_hr_contracts(api)
     check_payroll_engine(api)
     check_payroll_structure(api)
+    check_payroll_batch(api)
     check_attachments(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
@@ -4895,6 +4896,46 @@ def check_payroll_structure(api):
     api.call("hr.payslip", "action_payslip_cancel", ids=[slip])
     again_slip = api.call("hr.payslip", "kompakapps_create_payslip", employee_id=emp, date_from="2026-10-01", date_to="2026-10-31")
     check(again_slip != slip, "slip yang dibatalkan tidak menghalangi slip baru pada periode yang sama")
+
+
+def check_payroll_batch(api):
+    """Batch slip dan koreksi (D85): buat slip massal, karyawan bermasalah dilewati, hitung dan konfirmasi semua, tutup, refund lalu terbitkan ulang."""
+    import random
+
+    step("Payroll: batch slip (buat, hitung, konfirmasi, tutup) dan refund")
+    tag = f"{random.randint(0, 99999):05d}"
+    [company] = [c["id"] for c in api.search("res.company", [], ["id"], limit=1)]
+    structure = api.call("res.company", "kompakapps_setup_payroll", ids=[company])["structure_id"]
+    emps = api.call("hr.employee", "create", vals_list=[
+        {"name": f"Batch A {tag}", "contract_date_start": "2026-01-01", "wage": 6_000_000},
+        {"name": f"Batch B {tag}", "contract_date_start": "2026-01-01", "wage": 7_000_000},
+        {"name": f"Batch Tanpa Struktur {tag}", "contract_date_start": "2026-01-01", "wage": 5_000_000},
+    ])
+    versions = [v["id"] for v in api.search("hr.version", [["employee_id", "in", emps[:2]]], ["id"])]
+    api.call("hr.version", "write", ids=versions, vals={"struct_id": structure})
+    [run] = api.call("hr.payslip.run", "create", vals_list=[{"name": f"Batch Regresi {tag}", "date_start": "2026-12-01", "date_end": "2026-12-31"}])
+    result = api.call("hr.payslip.run", "kompakapps_generate_slips", ids=[run], employee_ids=emps)
+    check(len(result["created"]) == 2 and [s["employee"] for s in result["skipped"]] == [f"Batch Tanpa Struktur {tag}"], "batch membuat 2 slip dan melewati karyawan tanpa struktur gaji dengan alasan")
+    check("Struktur Gaji" in result["skipped"][0]["reason"], "alasan karyawan yang dilewati menyebut Struktur Gaji")
+    check(len(api.call("hr.payslip.run", "kompakapps_generate_slips", ids=[run], employee_ids=emps)["created"]) == 0, "membuat ulang tidak menggandakan slip di batch yang sama")
+    check(api.call("hr.payslip.run", "kompakapps_confirm_all", ids=[run]) == {"confirmed": 0, "pending": 2}, "konfirmasi semua melewati slip draf yang belum dihitung")
+    check(api.call("hr.payslip.run", "kompakapps_compute_all", ids=[run]) == 2, "hitung semua memproses 2 slip")
+    slips = api.search("hr.payslip", [["payslip_run_id", "=", run]], ["id", "state"])
+    check({s["state"] for s in slips} == {"verify"}, "semua slip batch berstatus Dihitung")
+    check(api.call("hr.payslip.run", "kompakapps_confirm_all", ids=[run]) == {"confirmed": 2, "pending": 0}, "konfirmasi semua menyelesaikan 2 slip")
+    nets = {line["total"] for line in api.search("hr.payslip.line", [["slip_id", "in", [s["id"] for s in slips]], ["code", "=", "NET"]], ["total"])}
+    check(nets == {6_000_000, 7_000_000}, "gaji bersih tiap slip sama dengan gaji pokok kontrak (6.000.000 dan 7.000.000)")
+    api.call("hr.payslip.run", "close_payslip_run", ids=[run])
+    check(fails_with(lambda: api.call("hr.payslip.run", "kompakapps_generate_slips", ids=[run], employee_ids=emps), "ditutup"), "batch yang ditutup menolak pembuatan slip")
+    api.call("hr.payslip.run", "draft_payslip_run", ids=[run])
+    check(api.read("hr.payslip.run", run, ["state"])["state"] == "draft", "batch bisa dikembalikan ke draf")
+    done = slips[0]["id"]
+    api.call("hr.payslip", "refund_sheet", ids=[done])
+    refund = api.read("hr.payslip", done, ["refunded_id", "employee_id", "date_from", "date_to"])
+    refund_row = api.read("hr.payslip", refund["refunded_id"][0], ["credit_note", "state"])
+    check(refund_row["credit_note"] is True and refund_row["state"] == "done", "Refund membuat slip koreksi berstatus Done")
+    again = api.call("hr.payslip", "kompakapps_create_payslip", employee_id=refund["employee_id"][0], date_from=refund["date_from"], date_to=refund["date_to"])
+    check(again not in (done, refund["refunded_id"][0]), "slip yang sudah dikoreksi tidak menghalangi slip baru pada periode yang sama")
 
 
 def bill_total(api, bill_id):

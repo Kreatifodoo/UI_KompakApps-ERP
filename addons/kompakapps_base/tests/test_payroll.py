@@ -248,3 +248,79 @@ class TestPayrollStandardStructure(TransactionCase):
         slip.action_payslip_cancel()
         again = Payslip.kompakapps_create_payslip(self.employee.id, first, last)
         self.assertNotEqual(again, slip.id)
+
+    def test_refund_allows_reissue(self):
+        """Slip selesai yang dikoreksi (refund) tidak menghalangi slip baru pada periode yang sama; slip koreksi sendiri berstatus selesai."""
+        structure = self.env["hr.payroll.structure"].browse(self.company.kompakapps_setup_payroll()["structure_id"])
+        slip = self._slip(structure, {"TUNJ": 300_000})
+        slip.compute_sheet()
+        slip.action_payslip_done()
+        with self.assertRaises(UserError):
+            self.env["hr.payslip"].kompakapps_create_payslip(self.employee.id, slip.date_from, slip.date_to)
+        slip.refund_sheet()
+        refund = slip.refunded_id
+        self.assertTrue(refund.credit_note)
+        self.assertEqual(refund.state, "done")
+        reissued = self.env["hr.payslip"].kompakapps_create_payslip(self.employee.id, slip.date_from, slip.date_to)
+        self.assertNotIn(reissued, (slip.id, refund.id))
+
+
+@tagged("post_install", "-at_install", "kompakapps")
+class TestPayrollBatch(TransactionCase):
+    """Batch slip (D85): buat slip massal, karyawan bermasalah dilewati, hitung dan konfirmasi semua, tutup, dan penjaga akses."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.company = cls.env.company
+        cls.structure = cls.env["hr.payroll.structure"].browse(cls.company.kompakapps_setup_payroll()["structure_id"])
+        Employee = cls.env["hr.employee"]
+        values = {"contract_date_start": datetime.date(2026, 1, 1)}
+        cls.emp_a = Employee.create({"name": "Batch A Uji", "wage": 6_000_000, **values})
+        cls.emp_b = Employee.create({"name": "Batch B Uji", "wage": 7_000_000, **values})
+        cls.emp_nostruct = Employee.create({"name": "Batch Tanpa Struktur", "wage": 5_000_000, **values})
+        cls.emp_nocontract = Employee.create({"name": "Batch Tanpa Kontrak Uji"})
+        for employee in (cls.emp_a, cls.emp_b):
+            employee.current_version_id.write({"struct_id": cls.structure.id})
+        cls.batch = cls.env["hr.payslip.run"].create(
+            {"name": "Batch Oktober Uji", "date_start": datetime.date(2026, 10, 1), "date_end": datetime.date(2026, 10, 31)}
+        )
+
+    def test_generate_compute_confirm_close(self):
+        employees = self.emp_a | self.emp_b | self.emp_nostruct
+        result = self.batch.kompakapps_generate_slips(employees.ids)
+        self.assertEqual(len(result["created"]), 2)
+        self.assertEqual([s["employee"] for s in result["skipped"]], ["Batch Tanpa Struktur"])
+        self.assertIn("Struktur Gaji", result["skipped"][0]["reason"])
+        self.assertEqual(self.batch.slip_ids.employee_id, self.emp_a | self.emp_b)
+        # slip yang sudah ada tidak dibuat ulang
+        again = self.batch.kompakapps_generate_slips(employees.ids)
+        self.assertEqual(len(again["created"]), 0)
+        # confirm sebelum hitung tidak menyentuh slip draf
+        self.assertEqual(self.batch.kompakapps_confirm_all(), {"confirmed": 0, "pending": 2})
+        self.assertEqual(self.batch.kompakapps_compute_all(), 2)
+        self.assertEqual(set(self.batch.slip_ids.mapped("state")), {"verify"})
+        self.assertEqual(self.batch.kompakapps_confirm_all(), {"confirmed": 2, "pending": 0})
+        self.assertEqual(set(self.batch.slip_ids.mapped("state")), {"done"})
+        nets = {slip.employee_id.name: slip.get_salary_line_total("NET") for slip in self.batch.slip_ids}
+        self.assertEqual(nets, {"Batch A Uji": 6_000_000, "Batch B Uji": 7_000_000})
+        self.batch.close_payslip_run()
+        with self.assertRaises(UserError):
+            self.batch.kompakapps_generate_slips(employees.ids)
+        self.batch.draft_payslip_run()
+        self.assertEqual(self.batch.state, "draft")
+
+    def test_generate_for_all_counts_ineligible(self):
+        result = self.batch.kompakapps_generate_slips()
+        created_employees = self.env["hr.payslip"].browse(result["created"]).employee_id
+        self.assertIn(self.emp_a, created_employees)
+        self.assertIn(self.emp_b, created_employees)
+        self.assertNotIn(self.emp_nocontract, created_employees)
+        self.assertIn("Batch Tanpa Struktur", [s["employee"] for s in result["skipped"]])
+        self.assertGreaterEqual(result["ineligible"], 1)
+
+    def test_batch_requires_manager(self):
+        groups = [self.env.ref("base.group_user").id, self.env.ref("payroll.group_payroll_user").id]
+        officer = self.env["res.users"].create({"name": "officer_run", "login": "officer_run", "group_ids": [(6, 0, groups)]})
+        with self.assertRaises(AccessError):
+            self.batch.with_user(officer).kompakapps_generate_slips(self.emp_a.ids)
