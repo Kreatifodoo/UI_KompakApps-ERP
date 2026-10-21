@@ -299,10 +299,10 @@ class TestPayrollBatch(TransactionCase):
         again = self.batch.kompakapps_generate_slips(employees.ids)
         self.assertEqual(len(again["created"]), 0)
         # confirm sebelum hitung tidak menyentuh slip draf
-        self.assertEqual(self.batch.kompakapps_confirm_all(), {"confirmed": 0, "pending": 2})
+        self.assertEqual(self.batch.kompakapps_confirm_all(), {"confirmed": 0, "pending": 2, "no_journal": 0})
         self.assertEqual(self.batch.kompakapps_compute_all(), 2)
         self.assertEqual(set(self.batch.slip_ids.mapped("state")), {"verify"})
-        self.assertEqual(self.batch.kompakapps_confirm_all(), {"confirmed": 2, "pending": 0})
+        self.assertEqual(self.batch.kompakapps_confirm_all(), {"confirmed": 2, "pending": 0, "no_journal": 2})  # tanpa akun gaji: selesai tanpa jurnal
         self.assertEqual(set(self.batch.slip_ids.mapped("state")), {"done"})
         nets = {slip.employee_id.name: slip.get_salary_line_total("NET") for slip in self.batch.slip_ids}
         self.assertEqual(nets, {"Batch A Uji": 6_000_000, "Batch B Uji": 7_000_000})

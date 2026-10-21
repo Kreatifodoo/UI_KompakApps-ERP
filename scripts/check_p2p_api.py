@@ -4919,11 +4919,11 @@ def check_payroll_batch(api):
     check(len(result["created"]) == 2 and [s["employee"] for s in result["skipped"]] == [f"Batch Tanpa Struktur {tag}"], "batch membuat 2 slip dan melewati karyawan tanpa struktur gaji dengan alasan")
     check("Struktur Gaji" in result["skipped"][0]["reason"], "alasan karyawan yang dilewati menyebut Struktur Gaji")
     check(len(api.call("hr.payslip.run", "kompakapps_generate_slips", ids=[run], employee_ids=emps)["created"]) == 0, "membuat ulang tidak menggandakan slip di batch yang sama")
-    check(api.call("hr.payslip.run", "kompakapps_confirm_all", ids=[run]) == {"confirmed": 0, "pending": 2}, "konfirmasi semua melewati slip draf yang belum dihitung")
+    check(api.call("hr.payslip.run", "kompakapps_confirm_all", ids=[run]) == {"confirmed": 0, "pending": 2, "no_journal": 0}, "konfirmasi semua melewati slip draf yang belum dihitung")
     check(api.call("hr.payslip.run", "kompakapps_compute_all", ids=[run]) == 2, "hitung semua memproses 2 slip")
     slips = api.search("hr.payslip", [["payslip_run_id", "=", run]], ["id", "state"])
     check({s["state"] for s in slips} == {"verify"}, "semua slip batch berstatus Dihitung")
-    check(api.call("hr.payslip.run", "kompakapps_confirm_all", ids=[run]) == {"confirmed": 2, "pending": 0}, "konfirmasi semua menyelesaikan 2 slip")
+    check(api.call("hr.payslip.run", "kompakapps_confirm_all", ids=[run]) == {"confirmed": 2, "pending": 0, "no_journal": 2}, "konfirmasi semua menyelesaikan 2 slip (tanpa akun gaji: tanpa jurnal)")
     nets = {line["total"] for line in api.search("hr.payslip.line", [["slip_id", "in", [s["id"] for s in slips]], ["code", "=", "NET"]], ["total"])}
     check(nets == {6_000_000, 7_000_000}, "gaji bersih tiap slip sama dengan gaji pokok kontrak (6.000.000 dan 7.000.000)")
     api.call("hr.payslip.run", "close_payslip_run", ids=[run])
