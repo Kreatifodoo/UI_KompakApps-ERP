@@ -242,6 +242,7 @@ def main():
     check_hr_timeoff(api)
     check_hr_expenses(api)
     check_hr_contracts(api)
+    check_payroll_engine(api)
     check_attachments(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
@@ -4810,6 +4811,53 @@ def check_hr_contracts(api):
         check(False, "karyawan harus punya minimal satu versi")
     except RuntimeError:
         check(True, "karyawan harus punya minimal satu versi")
+
+
+def check_payroll_engine(api):
+    """Mesin Payroll (D85): struktur, aturan, slip dihitung lewat JSON-2. Angka hanya untuk memeriksa mekanik, bukan aturan hukum."""
+    import random
+
+    step("Payroll: struktur, aturan, hitung slip, konfirmasi, batal (mesin OCA payroll)")
+    tag = f"{random.randint(0, 99999):05d}"
+    [cat_basic, cat_alw, cat_ded, cat_net] = api.call("hr.salary.rule.category", "create", vals_list=[
+        {"name": f"Dasar {tag}", "code": "BASIC"}, {"name": f"Tunjangan {tag}", "code": "ALW"},
+        {"name": f"Potongan {tag}", "code": "DED"}, {"name": f"Bersih {tag}", "code": "NET"},
+    ])
+    rules = api.call("hr.salary.rule", "create", vals_list=[
+        {"name": f"Gaji Pokok {tag}", "code": "BASIC", "sequence": 1, "category_id": cat_basic, "amount_select": "code", "amount_python_compute": "result = contract.wage"},
+        {"name": f"Tunjangan Uji {tag}", "code": "TUNJ", "sequence": 2, "category_id": cat_alw, "amount_select": "fix", "amount_fix": 500_000},
+        {"name": f"Potongan Uji {tag}", "code": "POT", "sequence": 3, "category_id": cat_ded, "amount_select": "percentage", "amount_percentage": 2.0, "amount_percentage_base": "contract.wage", "quantity": "-1"},
+        {"name": f"Bersih {tag}", "code": "NET", "sequence": 10, "category_id": cat_net, "amount_select": "code", "amount_python_compute": "result = categories.BASIC + categories.ALW + categories.DED"},
+    ])
+    check(len(rules) == 4, "empat aturan (ekspresi Python, jumlah tetap, persentase) dibuat lewat API oleh Manager payroll")
+    [struct] = api.call("hr.payroll.structure", "create", vals_list=[{"name": f"Struktur Uji {tag}", "code": f"UJI{tag}", "rule_ids": [[6, 0, rules]]}])
+    [emp] = api.call("hr.employee", "create", vals_list=[{"name": f"Slip Regresi {tag}", "contract_date_start": "2026-01-01", "wage": 8_000_000}])
+    [version] = [v["id"] for v in api.search("hr.version", [["employee_id", "=", emp]], ["id"])]
+    api.call("hr.version", "write", ids=[version], vals={"struct_id": struct})
+    vals = api.call("hr.payslip", "get_payslip_vals", date_from="2026-10-01", date_to="2026-10-31", employee_id=emp)["value"]
+    check(vals["contract_id"] == version and vals["struct_id"] == struct, "get_payslip_vals memilih kontrak berjalan dan struktur dari kontrak")
+    check(any(w["code"] == "WORK100" for w in vals["worked_days_line_ids"]), "hari kerja WORK100 diturunkan dari jadwal kerja")
+    [slip] = api.call("hr.payslip", "create", vals_list=[{
+        "employee_id": emp, "date_from": "2026-10-01", "date_to": "2026-10-31", "contract_id": version, "struct_id": struct, "name": f"Slip {tag}",
+        "input_line_ids": [[0, 0, line] for line in vals["input_line_ids"]], "worked_days_line_ids": [[0, 0, line] for line in vals["worked_days_line_ids"]],
+    }])
+    api.call("hr.payslip", "compute_sheet", ids=[slip])
+    row = api.read("hr.payslip", slip, ["state", "number", "line_ids"])
+    totals = {line["code"]: line["total"] for line in api.call("hr.payslip.line", "read", ids=row["line_ids"], fields=["code", "total"])}
+    check(row["state"] == "verify" and bool(row["number"]), "Hitung memberi nomor dan status Waiting")
+    check(totals.get("BASIC") == 8_000_000 and totals.get("TUNJ") == 500_000 and totals.get("POT") == -160_000, "baris slip: gaji pokok dari kontrak, tunjangan tetap, potongan persentase")
+    check(totals.get("NET") == 8_340_000, "gaji bersih = pokok + tunjangan - potongan (8.340.000)")
+    api.call("hr.payslip", "action_payslip_done", ids=[slip])
+    check(api.read("hr.payslip", slip, ["state"])["state"] == "done", "Konfirmasi membuat slip berstatus Done")
+    check(fails_with(lambda: api.call("hr.payslip", "action_payslip_cancel", ids=[slip]), "cannot cancel"), "slip Done tidak boleh dibatalkan")
+    check(fails_with(lambda: api.call("hr.payslip", "unlink", ids=[slip]), "cannot delete"), "slip Done tidak boleh dihapus")
+    [slip2] = api.call("hr.payslip", "create", vals_list=[{"employee_id": emp, "date_from": "2026-11-01", "date_to": "2026-11-30", "contract_id": version, "struct_id": struct, "name": f"Slip 2 {tag}"}])
+    api.call("hr.payslip", "compute_sheet", ids=[slip2])
+    api.call("hr.payslip", "action_payslip_cancel", ids=[slip2])
+    check(api.read("hr.payslip", slip2, ["state"])["state"] == "cancel", "slip Waiting bisa dibatalkan")
+    api.call("hr.payslip", "action_payslip_draft", ids=[slip2])
+    api.call("hr.payslip", "unlink", ids=[slip2])
+    check(not api.search("hr.payslip", [["id", "=", slip2]], ["id"]), "slip yang dikembalikan ke draf bisa dihapus")
 
 
 def bill_total(api, bill_id):

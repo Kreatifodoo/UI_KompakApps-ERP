@@ -1,7 +1,7 @@
 {
     "name": "KompakApps Base",
     "summary": "Fondasi KompakApps: dependensi modul inti, OCA, dan lokalisasi Indonesia",
-    "version": "19.0.1.2.0",
+    "version": "19.0.1.3.0",
     "category": "Uncategorized",
     "author": "KompakApps",
     "license": "LGPL-3",
@@ -24,6 +24,7 @@
         "hr_attendance",  # kehadiran: check in/out, jam kerja, lembur
         "hr_holidays",  # Time Off: pengajuan, alokasi, jenis cuti
         "hr_expense",  # klaim biaya karyawan
+        "payroll",  # OCA payroll: mesin hitung gaji (struktur, aturan, slip, batch); jurnal dan UI buatan sendiri (D85)
         # OCA (purchase-workflow)
         "purchase_request",
         # OCA akuntansi: Community tidak membawa laporan keuangan, aset, atau rekonsiliasi bank.

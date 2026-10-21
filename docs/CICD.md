@@ -15,7 +15,7 @@ PR / push ke main ──► CI  (lint pre-commit + build image + test Odoo)
 
 ## Modul OCA
 
-Daftar repo OCA dan commit-nya ada di `oca.lock`. Memperbarui satu repo: ambil SHA terbaru cabang 19.0, ganti di `oca.lock`, buka pull request. CI akan membangun ulang dan menguji. Jika repo baru ditambahkan, tambahkan juga path-nya di `addons_path` pada `config/odoo.conf`. Repo yang dipakai saat ini: purchase-workflow, account-financial-tools, account-financial-reporting, mis-builder, account-budgeting, server-tools, account-reconcile, server-ux, reporting-engine, web.
+Daftar repo OCA dan commit-nya ada di `oca.lock`. Memperbarui satu repo: ambil SHA terbaru cabang 19.0, ganti di `oca.lock`, buka pull request. CI akan membangun ulang dan menguji. Jika repo baru ditambahkan, tambahkan juga path-nya di `addons_path` pada `config/odoo.conf`. Repo yang dipakai saat ini: purchase-workflow, account-financial-tools, account-financial-reporting, mis-builder, account-budgeting, server-tools, account-reconcile, server-ux, reporting-engine, web, payroll.
 
 Dependensi Python OCA **tidak** dipasang otomatis. Beberapa repo OCA mencantumkan paket berat atau terkunci versinya untuk modul yang tidak kita pakai (mis. `bokeh`, `sentry_sdk`). Jika sebuah modul yang kita pasang butuh paket tambahan, tambahkan hanya paket itu ke `docker/requirements.txt`.
 
