@@ -243,6 +243,7 @@ def main():
     check_hr_expenses(api)
     check_hr_contracts(api)
     check_payroll_engine(api)
+    check_payroll_structure(api)
     check_attachments(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
@@ -4858,6 +4859,42 @@ def check_payroll_engine(api):
     api.call("hr.payslip", "action_payslip_draft", ids=[slip2])
     api.call("hr.payslip", "unlink", ids=[slip2])
     check(not api.search("hr.payslip", [["id", "=", slip2]], ["id"]), "slip yang dikembalikan ke draf bisa dihapus")
+
+
+def check_payroll_structure(api):
+    """Struktur umum netral "Gaji Standar" (D85): pasang idempoten, slip dibuat dari kontrak dan input, penjaga slip kembar dan kontrak."""
+    import random
+
+    step("Payroll: struktur umum Gaji Standar, buat slip dari kontrak dan input")
+    tag = f"{random.randint(0, 99999):05d}"
+    [company] = [c["id"] for c in api.search("res.company", [], ["id"], limit=1)]
+    first = api.call("res.company", "kompakapps_setup_payroll", ids=[company])
+    structure = api.read("hr.payroll.structure", first["structure_id"], ["code", "rule_ids"])
+    rules = api.call("hr.salary.rule", "read", ids=structure["rule_ids"], fields=["code"])
+    check(structure["code"] == "GAJI-STD" and sorted(r["code"] for r in rules) == ["GAPOK", "NET", "POT", "TUNJ"], "Pasang Struktur Umum membuat Gaji Standar dengan aturan GAPOK, TUNJ, POT, NET")
+    again = api.call("res.company", "kompakapps_setup_payroll", ids=[company])
+    check(again["structure_id"] == first["structure_id"] and again["created"] is False, "memasang ulang tidak menggandakan atau menimpa (idempoten)")
+    [emp] = api.call("hr.employee", "create", vals_list=[{"name": f"Struktur Regresi {tag}", "contract_date_start": "2026-01-01", "wage": 9_000_000}])
+    [version] = [v["id"] for v in api.search("hr.version", [["employee_id", "=", emp]], ["id"])]
+    check(fails_with(lambda: api.call("hr.payslip", "kompakapps_create_payslip", employee_id=emp, date_from="2026-10-01", date_to="2026-10-31"), "struktur gaji"), "slip ditolak bila kontrak belum punya Struktur Gaji")
+    api.call("hr.version", "write", ids=[version], vals={"struct_id": first["structure_id"]})
+    check(fails_with(lambda: api.call("hr.payslip", "kompakapps_create_payslip", employee_id=emp, date_from="2025-01-01", date_to="2025-01-31"), "kontrak"), "slip ditolak bila tidak ada kontrak berjalan pada periode itu")
+    slip = api.call("hr.payslip", "kompakapps_create_payslip", employee_id=emp, date_from="2026-10-01", date_to="2026-10-31")
+    row = api.read("hr.payslip", slip, ["name", "state", "contract_id", "struct_id", "input_line_ids", "worked_days_line_ids"])
+    inputs = {i["code"]: i["id"] for i in api.call("hr.payslip.input", "read", ids=row["input_line_ids"], fields=["code"])}
+    check("Oktober 2026" in row["name"] and row["contract_id"][0] == version and row["struct_id"][0] == first["structure_id"], "slip draf memuat nama periode, kontrak, dan struktur")
+    check(sorted(inputs) == ["POT", "TUNJ"] and bool(row["worked_days_line_ids"]), "isian input Tunjangan dan Potongan serta hari kerja dibuat dari aturan struktur dan jadwal kerja")
+    check(fails_with(lambda: api.call("hr.payslip", "kompakapps_create_payslip", employee_id=emp, date_from="2026-10-15", date_to="2026-11-14"), "periode yang beririsan"), "slip kembar pada periode beririsan ditolak")
+    api.call("hr.payslip.input", "write", ids=[inputs["TUNJ"]], vals={"amount": 750_000})
+    api.call("hr.payslip.input", "write", ids=[inputs["POT"]], vals={"amount": 250_000})
+    api.call("hr.payslip", "compute_sheet", ids=[slip])
+    lines = api.call("hr.payslip.line", "search_read", domain=[["slip_id", "=", slip]], fields=["code", "total"])
+    totals = {line["code"]: line["total"] for line in lines}
+    check(totals.get("GAPOK") == 9_000_000 and totals.get("TUNJ") == 750_000 and totals.get("POT") == -250_000, "baris slip: gaji pokok dari kontrak, tunjangan dan potongan dari input")
+    check(totals.get("NET") == 9_500_000, "gaji bersih 9.500.000 = 9.000.000 + 750.000 - 250.000")
+    api.call("hr.payslip", "action_payslip_cancel", ids=[slip])
+    again_slip = api.call("hr.payslip", "kompakapps_create_payslip", employee_id=emp, date_from="2026-10-01", date_to="2026-10-31")
+    check(again_slip != slip, "slip yang dibatalkan tidak menghalangi slip baru pada periode yang sama")
 
 
 def bill_total(api, bill_id):

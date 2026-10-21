@@ -15,6 +15,7 @@ const ARCHIVE_FILTERS = [["active", "Aktif"], ["archived", "Diarsipkan"]];
  *   filters: [{ key, label, options: [[value, label]], domain(value) }],
  *   fields: [{ key, label, type, required?, options?, optionsOf?(refs, values), readonly?, show?(values), span2?, hint?, placeholder? }],
  *   readFields, loadRefs?(), newValues?(refs), extraCreate?(values, refs), tiles?(record), extra?(record, refs), titleOf?(record),
+ *   formTop?(record, refs) (HTML di atas isian), readOnly?() (true = daftar tanpa tombol baru, form tanpa Simpan dan Arsipkan, semua isian terkunci; dievaluasi setelah loadRefs/loadListRefs),
  * }
  */
 export function createMasterPage(config) {
@@ -63,7 +64,7 @@ export function createMasterPage(config) {
       pageHeader(
         config.title,
         `${config.search?.length ? searchBox(text, "Cari...") : ""}${filterControls}${config.archive ? filterSelect(ARCHIVE_FILTERS, state) : ""}${config.headerExtra ?? ""}${(await config.headerAsync?.()) ?? ""}
-         ${config.noNew ? "" : `<a href="#/${config.route}/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>${esc(config.newLabel)}</a>`}`,
+         ${config.noNew || config.readOnly?.() ? "" : `<a href="#/${config.route}/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>${esc(config.newLabel)}</a>`}`,
       ) +
       table(config.columns.map((c) => ({ label: c.label, right: c.right })), body, config.empty) +
       (config.listNote ? `<p class="text-xs text-gray-500 mt-3">${config.listNote}</p>` : "") +
@@ -98,7 +99,7 @@ export function createMasterPage(config) {
   };
 
   function input(f, v, record) {
-    const readonly = typeof f.readonly === "function" ? f.readonly(record, v) : f.readonly;
+    const readonly = config.readOnly?.() || (typeof f.readonly === "function" ? f.readonly(record, v) : f.readonly);
     const dis = readonly ? "disabled" : "";
     const data = `data-mf="${esc(f.key)}"`;
     switch (f.type) {
@@ -152,14 +153,15 @@ export function createMasterPage(config) {
       .join("");
     app.innerHTML = `
       <div class="text-sm text-gray-500 mb-2"><a href="#/${config.route}" class="hover:text-indigo-600">${esc(config.title)}</a> / ${esc(record ? title : "Baru")}</div>
-      <div class="flex flex-wrap items-center gap-2 mb-3">${record && config.archive ? button("toggle-active", record.active ? "Arsipkan" : "Aktifkan Kembali", record.active ? "danger" : "primary", { id: record.id }) : ""}${record ? config.actions?.(record) ?? "" : ""}</div>
+      <div class="flex flex-wrap items-center gap-2 mb-3">${record && config.archive && !config.readOnly?.() ? button("toggle-active", record.active ? "Arsipkan" : "Aktifkan Kembali", record.active ? "danger" : "primary", { id: record.id }) : ""}${record ? config.actions?.(record) ?? "" : ""}</div>
       ${tiles.length ? `<div class="flex flex-wrap gap-2 mb-4">${statTiles(tiles)}</div>` : ""}
       <div class="mb-3 flex items-center gap-3"><h1 class="text-2xl font-bold text-gray-900">${esc(title)}</h1>${record && config.archive && !record.active ? badge({ a: ["Diarsipkan", "muted"] }, "a") : ""}</div>
+      ${config.formTop?.(record, refs) ?? ""}
       <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 grid md:grid-cols-2 gap-x-8 gap-y-4">${blocks}</section>
       ${config.formNote ? `<p class="mt-3 text-xs text-gray-500">${config.formNote}</p>` : ""}
       <div class="flex gap-2 mt-4">
-        <button data-action="save" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>
-        <a href="#/${config.route}" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Buang</a>
+        ${config.readOnly?.() ? "" : '<button data-action="save" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan</button>'}
+        <a href="#/${config.route}" data-action="discard" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">${config.readOnly?.() ? "Kembali" : "Buang"}</a>
       </div>
       ${extra}
       ${config.chatter === false ? "" : record ? chatterHtml(config.model, record.id) : attachmentsPendingHtml()}`;

@@ -17,6 +17,7 @@ const APPS = [
   { key: "attendance", label: "Attendance (kehadiran)", levels: [["officer", "Petugas", "hr_attendance.group_hr_attendance_officer"], ["manager", "Manajer", "hr_attendance.group_hr_attendance_manager"]] },
   { key: "holidays", label: "Time Off (cuti)", levels: [["responsible", "Penyetuju tim", "hr_holidays.group_hr_holidays_responsible"], ["user", "Petugas", "hr_holidays.group_hr_holidays_user"], ["manager", "Administrator", "hr_holidays.group_hr_holidays_manager"]] },
   { key: "expense", label: "Expenses (biaya karyawan)", levels: [["team", "Penyetuju tim", "hr_expense.group_hr_expense_team_approver"], ["user", "Petugas", "hr_expense.group_hr_expense_user"], ["manager", "Administrator", "hr_expense.group_hr_expense_manager"]] },
+  { key: "payroll", label: "Payroll (gaji)", levels: [["officer", "Petugas (slip gaji)", "payroll.group_payroll_user"], ["manager", "Manajer (aturan gaji, batch, ekspresi Python)", "payroll.group_payroll_manager"]] },
   { key: "account", label: "Accounting", levels: [["invoice", "Penagihan (faktur dan tagihan)", "account.group_account_invoice"], ["user", "Akuntan", "account.group_account_user"], ["manager", "Advisor (penuh)", "account.group_account_manager"]] },
 ];
 const ADMIN_GROUP = "base.group_system";
