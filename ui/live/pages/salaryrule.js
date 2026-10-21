@@ -13,7 +13,7 @@ const loadCategories = () => searchRead("hr.salary.rule.category", [], ["display
 const page = createMasterPage({
   route: "salaryrule", title: "Salary Rules", noun: "Aturan Gaji", model: "hr.salary.rule", newLabel: "Aturan Baru", order: "sequence, id", archive: true, limit: 300,
   empty: "Belum ada aturan gaji. Pasang struktur umum di Salary Structures atau buat aturan baru.",
-  listFields: ["sequence", "name", "code", "category_id", "amount_select", "amount_fix", "amount_percentage", "condition_select", "appears_on_payslip"],
+  listFields: ["sequence", "name", "code", "category_id", "amount_select", "amount_fix", "amount_percentage", "condition_select", "appears_on_payslip", "kompakapps_account_debit_id", "kompakapps_account_credit_id"],
   columns: [
     { label: "Urutan", value: (r) => r.sequence, right: true },
     { label: "Nama", value: (r) => r.name },
@@ -22,6 +22,8 @@ const page = createMasterPage({
     { label: "Jenis Jumlah", value: (r) => amountTypeLabel[r.amount_select] ?? "-" },
     { label: "Jumlah", value: (r) => amountText(r), right: true },
     { label: "Syarat", value: (r) => conditionTypeLabel[r.condition_select] ?? "-" },
+    { label: "Akun Debit", value: (r) => r.kompakapps_account_debit_id?.[1] ?? "-" },
+    { label: "Akun Kredit", value: (r) => r.kompakapps_account_credit_id?.[1] ?? "-" },
     { label: "Di Slip", value: (r) => (r.appears_on_payslip ? "Ya" : "Tidak") },
   ],
   search: ["name", "code"],
@@ -35,13 +37,14 @@ const page = createMasterPage({
     return {};
   },
   loadRefs: async () => {
-    const [categories, rules, registers] = await Promise.all([
+    const [categories, rules, registers, accounts] = await Promise.all([
       loadCategories(),
       searchRead("hr.salary.rule", [], ["display_name"], { order: "sequence, id", limit: 300 }),
       searchRead("hr.contribution.register", [], ["display_name"], { order: "name", limit: 100 }),
+      searchRead("account.account", [], ["display_name"], { order: "code", limit: 1500 }).catch(() => []),
       loadPayrollManager(),
     ]);
-    return { categories, rules, registers };
+    return { categories, rules, registers, accounts };
   },
   newValues: () => ({ sequence: 5, amount_select: "fix", condition_select: "none", appears_on_payslip: true, quantity: "1.0", condition_range: "contract.wage" }),
   fields: [
@@ -63,6 +66,8 @@ const page = createMasterPage({
     { key: "appears_on_payslip", type: "check", label: "Tampil di slip", checkLabel: "Tampil di slip gaji" },
     { key: "parent_rule_id", label: "Aturan Induk", type: "m2o", optionsOf: (refs) => refs.rules, hint: "Aturan anak hanya berlaku bila aturan induknya berlaku." },
     { key: "register_id", label: "Register Kontribusi", type: "m2o", optionsOf: (refs) => refs.registers, hint: "Pihak ketiga penerima potongan (mis. badan penyelenggara)." },
+    { key: "kompakapps_account_debit_id", label: "Akun Debit (jurnal gaji)", type: "m2o", optionsOf: (refs) => refs.accounts, hint: "Didebit bila jumlah baris positif (dikredit bila negatif). Kosong bersama Akun Kredit = baris tidak dijurnal." },
+    { key: "kompakapps_account_credit_id", label: "Akun Kredit (jurnal gaji)", type: "m2o", optionsOf: (refs) => refs.accounts, hint: "Dikredit bila jumlah baris positif (didebit bila negatif). Jangan diisi bila belum yakin: tanpa akun, slip tetap dikonfirmasi tanpa jurnal." },
     { key: "note", label: "Keterangan", type: "textarea", span2: true },
   ],
   titleOf: (r) => r.name,

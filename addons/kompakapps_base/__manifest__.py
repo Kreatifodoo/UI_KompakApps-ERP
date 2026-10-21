@@ -1,7 +1,7 @@
 {
     "name": "KompakApps Base",
     "summary": "Fondasi KompakApps: dependensi modul inti, OCA, dan lokalisasi Indonesia",
-    "version": "19.0.1.3.0",
+    "version": "19.0.1.4.0",
     "category": "Uncategorized",
     "author": "KompakApps",
     "license": "LGPL-3",

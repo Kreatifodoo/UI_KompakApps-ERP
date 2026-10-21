@@ -63,7 +63,7 @@ class ResCompany(models.Model):
         {"structure_id": ..., "created": ...}.
         """
         self.ensure_one()
-        if not self.env.user.has_group("payroll.group_payroll_manager"):
+        if not self.env.su and not self.env.user.has_group("payroll.group_payroll_manager"):
             raise AccessError(_("Hanya Manager payroll yang boleh memasang struktur gaji."))
         categories = {}
         created = False
@@ -209,9 +209,180 @@ class HrPayslipRun(models.Model):
         return len(slips)
 
     def kompakapps_confirm_all(self):
-        """Konfirmasi semua slip yang sudah dihitung (menunggu). Slip draf yang belum dihitung dilewati. Mengembalikan {"confirmed": n, "pending": n}."""
+        """Konfirmasi semua slip yang sudah dihitung (menunggu). Slip draf yang belum dihitung dilewati. Mengembalikan {"confirmed": n, "pending": n,
+        "no_journal": jumlah slip terkonfirmasi tanpa jurnal karena pengaturan akun gaji belum lengkap}."""
         self.ensure_one()
         waiting = self.slip_ids.filtered(lambda s: s.state == "verify")
         for slip in waiting:  # action_payslip_done OCA hanya aman untuk satu slip per panggilan
             slip.action_payslip_done()
-        return {"confirmed": len(waiting), "pending": len(self.slip_ids.filtered(lambda s: s.state == "draft"))}
+        return {
+            "confirmed": len(waiting),
+            "pending": len(self.slip_ids.filtered(lambda s: s.state == "draft")),
+            "no_journal": len(waiting.filtered(lambda s: not s.kompakapps_move_id)),
+        }
+
+
+class HrSalaryRule(models.Model):
+    _inherit = "hr.salary.rule"
+
+    kompakapps_account_debit_id = fields.Many2one(
+        "account.account",
+        string="Akun Debit",
+        help="Akun yang didebit di jurnal gaji bila jumlah baris positif (dikredit bila jumlahnya negatif). Kosongkan bila baris ini tidak dijurnal.",
+    )
+    kompakapps_account_credit_id = fields.Many2one(
+        "account.account",
+        string="Akun Kredit",
+        help="Akun yang dikredit di jurnal gaji bila jumlah baris positif (didebit bila jumlahnya negatif). Kosongkan bila baris ini tidak dijurnal.",
+    )
+
+
+class HrPayrollStructure(models.Model):
+    _inherit = "hr.payroll.structure"
+
+    kompakapps_journal_id = fields.Many2one(
+        "account.journal",
+        string="Jurnal Gaji",
+        domain="[('type', '=', 'general')]",
+        check_company=True,
+        help="Jurnal umum tempat jurnal gaji diposting saat slip dikonfirmasi. Tanpa jurnal, slip tetap bisa dikonfirmasi tetapi tidak dijurnal.",
+    )
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        if any(vals.get("kompakapps_journal_id") for vals in vals_list):
+            self._kompakapps_check_journal_rights()
+        return super().create(vals_list)
+
+    def write(self, vals):
+        if "kompakapps_journal_id" in vals:
+            self._kompakapps_check_journal_rights()
+        return super().write(vals)
+
+    def _kompakapps_check_journal_rights(self):
+        if not self.env.su and not self.env.user.has_group("payroll.group_payroll_manager"):
+            raise AccessError(_("Hanya Manager payroll yang boleh mengubah Jurnal Gaji."))
+
+
+class HrPayslipJournal(models.Model):
+    """Jurnal gaji (D85, Q57): saat slip dikonfirmasi, baris slip yang aturannya punya akun debit atau kredit diposting sebagai satu jurnal per slip.
+
+    Aturan akun mengikuti kebiasaan Odoo: jumlah positif mendebit akun debit dan mengkredit akun kredit; jumlah negatif sebaliknya. Slip koreksi
+    (credit note) membalik tanda. Akun tidak pernah ditebak: bila jurnal gaji struktur kosong, tidak ada aturan beraun, jurnal tidak seimbang, atau posting gagal,
+    slip tetap dikonfirmasi tanpa jurnal dan alasannya dicatat ("Pengaturan akun gaji belum lengkap"); tombol Buat Jurnal mencoba lagi setelah pengaturan diperbaiki.
+    """
+
+    _inherit = "hr.payslip"
+
+    kompakapps_move_id = fields.Many2one("account.move", string="Jurnal Gaji", readonly=True, copy=False, index="btree_not_null")
+    kompakapps_move_note = fields.Char(string="Catatan Jurnal", readonly=True, copy=False)
+
+    def action_payslip_done(self):
+        for slip in self:  # OCA hanya aman untuk satu slip per panggilan (properti compute)
+            super(HrPayslipJournal, slip).action_payslip_done()
+            slip._kompakapps_try_journal()
+        return True
+
+    def action_payslip_cancel(self):
+        had_move = self.filtered("kompakapps_move_id")
+        result = super().action_payslip_cancel()
+        for slip in had_move:  # hanya tercapai bila pembatalan slip selesai diizinkan (parameter payroll.allow_cancel_payslips)
+            slip._kompakapps_reverse_journal()
+        return result
+
+    def kompakapps_post_journal(self):
+        """Buat jurnal gaji untuk slip selesai yang belum punya jurnal (mis. akun baru dilengkapi setelah konfirmasi). Menolak dengan alasan bila pengaturan belum lengkap."""
+        for slip in self:
+            if slip.state != "done":
+                raise UserError(_("Jurnal hanya dibuat untuk slip yang sudah selesai."))
+            if slip.kompakapps_move_id:
+                raise UserError(_("Slip %(slip)s sudah punya jurnal.", slip=slip.number or slip.name))
+            problem = slip._kompakapps_post_journal()
+            if problem:
+                raise UserError(problem)
+        return True
+
+    def _kompakapps_try_journal(self):
+        """Posting jurnal bila pengaturan lengkap; bila tidak, catat alasannya pada slip tanpa menggagalkan konfirmasi."""
+        self.ensure_one()
+        try:
+            with self.env.cr.savepoint():
+                problem = self._kompakapps_post_journal()
+        except UserError as error:
+            problem = _("Jurnal gagal diposting: %(error)s", error=str(error))
+        self.kompakapps_move_note = problem or False
+
+    def _kompakapps_journal_lines(self):
+        """Baris jurnal dari baris slip. Mengembalikan (daftar nilai baris, jumlah baris beraun)."""
+        self.ensure_one()
+        currency = self.company_id.currency_id
+        sign = -1 if self.credit_note else 1
+        partner = self.employee_id.work_contact_id
+        lines = []
+        for line in self.line_ids.sorted(lambda payslip_line: (payslip_line.sequence, payslip_line.id)):
+            amount = currency.round(sign * line.total)
+            rule = line.salary_rule_id
+            if currency.is_zero(amount) or not (rule.kompakapps_account_debit_id or rule.kompakapps_account_credit_id):
+                continue
+            for account, flip in ((rule.kompakapps_account_debit_id, 1), (rule.kompakapps_account_credit_id, -1)):
+                if not account:
+                    continue
+                signed = amount * flip  # positif = debit
+                payable = account.account_type in ("liability_payable", "asset_receivable")
+                lines.append(
+                    Command.create(
+                        {
+                            "name": f"{rule.name} - {self.employee_id.name}",
+                            "account_id": account.id,
+                            "debit": signed if signed > 0 else 0.0,
+                            "credit": -signed if signed < 0 else 0.0,
+                            "partner_id": (rule.register_id.partner_id or (partner if payable else self.env["res.partner"])).id,
+                        }
+                    )
+                )
+        return lines
+
+    def _kompakapps_post_journal(self):
+        """Buat dan posting jurnal. Mengembalikan teks alasan bila belum bisa dibuat (pengaturan belum lengkap), atau None bila jurnal terbentuk."""
+        self.ensure_one()
+
+        def incomplete(reason):
+            return _("Pengaturan akun gaji belum lengkap: %(reason)s", reason=reason)
+
+        journal = self.struct_id.sudo().kompakapps_journal_id
+        if not journal:
+            return incomplete(_("struktur gaji belum memiliki Jurnal Gaji."))
+        if journal.company_id != self.company_id:
+            return incomplete(_("Jurnal Gaji milik perusahaan lain."))
+        lines = self.sudo()._kompakapps_journal_lines()
+        if not lines:
+            return incomplete(_("belum ada aturan gaji yang punya akun debit atau kredit."))
+        debit = sum(command[2]["debit"] for command in lines)
+        credit = sum(command[2]["credit"] for command in lines)
+        if not self.company_id.currency_id.is_zero(debit - credit):
+            return incomplete(_("jurnal tidak seimbang (debit %(debit)s, kredit %(credit)s); periksa akun debit dan kredit tiap aturan.", debit=debit, credit=credit))
+        move = (
+            self.env["account.move"]
+            .sudo()
+            .with_company(self.company_id)
+            .create(
+                {
+                    "move_type": "entry",
+                    "journal_id": journal.id,
+                    "date": self.date_to,
+                    "ref": _("%(label)s %(number)s", label=_("Koreksi gaji") if self.credit_note else _("Gaji"), number=self.number or self.name),
+                    "line_ids": lines,
+                }
+            )
+        )
+        move.action_post()
+        self.kompakapps_move_id = move
+        self.kompakapps_move_note = False
+        return None
+
+    def _kompakapps_reverse_journal(self):
+        self.ensure_one()
+        move = self.kompakapps_move_id
+        reversal = move.sudo()._reverse_moves([{"date": fields.Date.today(), "ref": _("Pembatalan %(ref)s", ref=move.ref or move.name)}], cancel=True)
+        self.kompakapps_move_id = False
+        self.message_post(body=_("Jurnal %(move)s dibalik oleh %(reversal)s karena slip dibatalkan.", move=move.name, reversal=reversal.name))
