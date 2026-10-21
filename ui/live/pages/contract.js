@@ -21,6 +21,8 @@ const statusDomain = (value) => {
   return [["contract_date_start", "=", false]];
 };
 
+const SCHEDULE_PAY = [["monthly", "Bulanan"], ["bi-weekly", "Dua mingguan"], ["weekly", "Mingguan"], ["bi-monthly", "Dua bulanan"], ["quarterly", "Triwulan"], ["semi-annually", "Semesteran"], ["annually", "Tahunan"]];
+
 let employeesCache = [];
 
 const newVersionModal = () => {
@@ -54,13 +56,14 @@ const page = createMasterPage({
   ],
   headerExtra: button("ver-new", "Versi atau Kontrak Baru", "primary"),
   loadRefs: async () => {
-    const [base, types, calendars] = await Promise.all([
+    const [base, types, calendars, structures] = await Promise.all([
       hrRefs(),
       searchRead("hr.contract.type", [], ["display_name"], { order: "sequence, name", limit: 100 }),
       searchRead("resource.calendar", [], ["display_name"], { order: "name", limit: 100 }),
+      searchRead("hr.payroll.structure", [], ["display_name"], { order: "name", limit: 100 }).catch(() => []),
     ]);
     employeesCache = base.employees;
-    return { ...base, types, calendars };
+    return { ...base, types, calendars, structures };
   },
   fields: [
     { key: "employee_id", label: "Karyawan", type: "m2o", readonly: true, optionsOf: (refs) => refs.employees },
@@ -73,13 +76,15 @@ const page = createMasterPage({
     { key: "department_id", label: "Departemen", type: "m2o", optionsOf: (refs) => refs.departments },
     { key: "employee_type", label: "Jenis Karyawan", type: "select", options: EMPLOYEE_TYPES },
     { key: "resource_calendar_id", label: "Jadwal Kerja", type: "m2o", optionsOf: (refs) => refs.calendars },
+    { key: "struct_id", label: "Struktur Gaji", type: "m2o", optionsOf: (refs) => refs.structures, hint: "Aturan gaji untuk slip karyawan ini (Payroll > Salary Structures)." },
+    { key: "schedule_pay", label: "Skema Pembayaran", type: "select", options: SCHEDULE_PAY },
     { key: "additional_note", label: "Catatan Kontrak", type: "textarea", span2: true },
   ],
   readFields: ["contract_date_start", "contract_date_end"],
   titleOf: (r) => `${r.employee_id?.[1] ?? ""}, efektif ${r.date_version}`,
   tiles: (r) => [{ count: STATUS[contractStatus(r)][0], label: "Status kontrak", icon: "fa-file-contract", always: true }],
   actions: (r) => `<span class="self-center">${badge(STATUS, contractStatus(r))}</span>${button("ver-delete", "Hapus Versi", "danger", { id: r.id })}`,
-  formNote: "Mengubah tanggal mulai atau akhir kontrak ikut mengubah semua versi pada kontrak yang sama. Gaji di sini dipakai sebagai dasar perhitungan penggajian bila fitur Payroll dibangun.",
+  formNote: "Mengubah tanggal mulai atau akhir kontrak ikut mengubah semua versi pada kontrak yang sama. Gaji pokok di sini dan Struktur Gaji dipakai menghitung slip di Payroll.",
   onAction: async (action, el) => {
     if (action === "ver-new") {
       employeesCache = await searchRead("hr.employee", [], ["display_name"], { order: "name", limit: 500 });

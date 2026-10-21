@@ -149,7 +149,15 @@ export const MENU = [
       { title: "Time Off", items: [{ title: "Leave Requests", route: "timeoff" }, { title: "Allocations", route: "leavealloc" }, { title: "Balance", route: "leavebalance" }, { title: "Leave Types", route: "leavetype" }] },
       { title: "Expenses", route: "expense" },
       { title: "Contracts", route: "contract" },
-      { title: "Payroll" },
+      {
+        title: "Payroll",
+        items: [
+          {
+            title: "Master",
+            items: [{ title: "Salary Structures", route: "salarystruct" }, { title: "Salary Rules", route: "salaryrule" }, { title: "Rule Categories", route: "rulecategory" }, { title: "Contribution Registers", route: "contribreg" }],
+          },
+        ],
+      },
     ],
   },
   { title: "General Setting", icon: "fas fa-cog", items: [{ title: "Company Setting", route: "company" }, { title: "Perusahaan", route: "companies" }, { title: "Users & Access", route: "users" }, { title: "Import Data", route: "dataimport" }, { title: "Audit Log", route: "auditlog" }] },

@@ -150,3 +150,101 @@ class TestPayrollEngine(TransactionCase):
         with self.assertRaises(AccessError):
             self.env["hr.payslip.run"].with_user(officer).create(values)
         self.assertTrue(self.env["hr.payslip.run"].with_user(manager).create(values))
+
+
+@tagged("post_install", "-at_install", "kompakapps")
+class TestPayrollStandardStructure(TransactionCase):
+    """Struktur umum netral "Gaji Standar" (D85): idempoten, dihitung dari kontrak dan input slip, tanpa angka hukum."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.company = cls.env.company
+        cls.employee = cls.env["hr.employee"].create(
+            {"name": "Dewi Uji Struktur", "contract_date_start": datetime.date(2026, 1, 1), "wage": 8_000_000}
+        )
+
+    def _slip(self, structure, inputs=None):
+        self.employee.current_version_id.write({"struct_id": structure.id})
+        Payslip = self.env["hr.payslip"]
+        slip = Payslip.browse(Payslip.kompakapps_create_payslip(self.employee.id, datetime.date(2026, 10, 1), datetime.date(2026, 10, 31)))
+        for code, amount in (inputs or {}).items():
+            slip.input_line_ids.filtered(lambda line, code=code: line.code == code).write({"amount": amount})
+        return slip
+
+    def test_setup_is_idempotent_and_neutral(self):
+        result = self.company.kompakapps_setup_payroll()
+        self.assertTrue(result["created"])
+        structure = self.env["hr.payroll.structure"].browse(result["structure_id"])
+        self.assertEqual(structure.code, "GAJI-STD")
+        self.assertEqual(sorted(structure.rule_ids.mapped("code")), ["GAPOK", "NET", "POT", "TUNJ"])
+        self.assertEqual(sorted(structure.rule_ids.input_ids.mapped("code")), ["POT", "TUNJ"])
+        rules_before = self.env["hr.salary.rule"].search_count([("company_id", "=", self.company.id)])
+        again = self.company.kompakapps_setup_payroll()
+        self.assertFalse(again["created"])
+        self.assertEqual(again["structure_id"], structure.id)
+        self.assertEqual(self.env["hr.salary.rule"].search_count([("company_id", "=", self.company.id)]), rules_before)
+        # tidak ada aturan hukum: tidak ada BPJS, PPh, lembur, THR
+        names = " ".join(structure.rule_ids.mapped("name")).lower()
+        for word in ("bpjs", "pph", "lembur", "thr", "jht", "jkk"):
+            self.assertNotIn(word, names)
+
+    def test_standard_slip_uses_wage_and_inputs(self):
+        structure = self.env["hr.payroll.structure"].browse(self.company.kompakapps_setup_payroll()["structure_id"])
+        slip = self._slip(structure, {"TUNJ": 500_000, "POT": 100_000})
+        slip.compute_sheet()
+        totals = {line.code: line.total for line in slip.line_ids}
+        self.assertAlmostEqual(totals["GAPOK"], 8_000_000, places=2)
+        self.assertAlmostEqual(totals["TUNJ"], 500_000, places=2)
+        self.assertAlmostEqual(totals["POT"], -100_000, places=2)
+        self.assertAlmostEqual(totals["NET"], 8_400_000, places=2)
+
+    def test_standard_slip_without_inputs(self):
+        structure = self.env["hr.payroll.structure"].browse(self.company.kompakapps_setup_payroll()["structure_id"])
+        slip = self._slip(structure)
+        slip.input_line_ids.unlink()  # tanpa input sama sekali tetap terhitung (tunjangan dan potongan nol)
+        slip.compute_sheet()
+        totals = {line.code: line.total for line in slip.line_ids}
+        self.assertAlmostEqual(totals["NET"], 8_000_000, places=2)
+
+    def test_setup_restores_deleted_rule_only(self):
+        structure = self.env["hr.payroll.structure"].browse(self.company.kompakapps_setup_payroll()["structure_id"])
+        allowance = structure.rule_ids.filtered(lambda rule: rule.code == "TUNJ")
+        deduction = structure.rule_ids.filtered(lambda rule: rule.code == "POT")
+        structure.write({"rule_ids": [(3, deduction.id)]})  # pengguna sengaja melepas Potongan dari struktur: tidak dipasang lagi
+        allowance.input_ids.unlink()  # input harus dihapus lebih dulu (kunci asing)
+        allowance.unlink()
+        result = self.company.kompakapps_setup_payroll()
+        self.assertTrue(result["created"])
+        self.assertEqual(result["structure_id"], structure.id)
+        self.assertEqual(sorted(structure.rule_ids.mapped("code")), ["GAPOK", "NET", "TUNJ"])
+
+    def test_setup_requires_payroll_manager(self):
+        groups = [self.env.ref("base.group_user").id, self.env.ref("payroll.group_payroll_user").id]
+        officer = self.env["res.users"].create({"name": "officer_setup", "login": "officer_setup", "group_ids": [(6, 0, groups)]})
+        with self.assertRaises(AccessError):
+            self.company.with_user(officer).kompakapps_setup_payroll()
+
+    def test_create_payslip_guards(self):
+        Payslip = self.env["hr.payslip"]
+        structure = self.env["hr.payroll.structure"].browse(self.company.kompakapps_setup_payroll()["structure_id"])
+        first, last = datetime.date(2026, 10, 1), datetime.date(2026, 10, 31)
+        # kontrak belum bersruktur
+        with self.assertRaises(UserError):
+            Payslip.kompakapps_create_payslip(self.employee.id, first, last)
+        # tidak ada kontrak pada periode itu
+        self.employee.current_version_id.write({"struct_id": structure.id})
+        with self.assertRaises(UserError):
+            Payslip.kompakapps_create_payslip(self.employee.id, datetime.date(2025, 10, 1), datetime.date(2025, 10, 31))
+        # periode terbalik
+        with self.assertRaises(UserError):
+            Payslip.kompakapps_create_payslip(self.employee.id, last, first)
+        slip = Payslip.browse(Payslip.kompakapps_create_payslip(self.employee.id, first, last))
+        self.assertIn("Oktober 2026", slip.name)
+        self.assertEqual(sorted(slip.input_line_ids.mapped("code")), ["POT", "TUNJ"])
+        # slip kembar pada periode beririsan ditolak, kecuali yang lama dibatalkan
+        with self.assertRaises(UserError):
+            Payslip.kompakapps_create_payslip(self.employee.id, datetime.date(2026, 10, 15), datetime.date(2026, 11, 14))
+        slip.action_payslip_cancel()
+        again = Payslip.kompakapps_create_payslip(self.employee.id, first, last)
+        self.assertNotEqual(again, slip.id)
