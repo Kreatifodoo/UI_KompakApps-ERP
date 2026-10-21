@@ -52,7 +52,7 @@ export function createMasterPage(config) {
     const rows = await searchRead(config.model, domain, config.listFields, {
       order: config.order ?? "name", limit: config.limit ?? 200, context: { active_test: !(config.archive && state === "archived") },
     });
-    const listRefs = (await config.loadListRefs?.()) ?? {};
+    const listRefs = (await config.loadListRefs?.(rows)) ?? {};
     const body = rows
       .map((r) => rowLink(`#/${config.route}/${r.id}`, config.columns.map((c, i) => cell(c.value(r, listRefs), { right: c.right, strong: i === 0, raw: c.raw }))))
       .join("");
@@ -144,6 +144,7 @@ export function createMasterPage(config) {
     const title = record ? (config.titleOf?.(record) ?? record.display_name) : config.newTitle ?? `${config.noun} Baru`;
     const tiles = record ? (config.tiles?.(record) ?? []) : [];
     const extra = record ? await (config.extra?.(record, refs) ?? "") : "";
+    const top = (await config.formTop?.(record, refs)) ?? "";
     const blocks = config.fields
       .filter((f) => !f.show || f.show(v, record))
       .map((f) => {
@@ -156,7 +157,7 @@ export function createMasterPage(config) {
       <div class="flex flex-wrap items-center gap-2 mb-3">${record && config.archive && !config.readOnly?.() ? button("toggle-active", record.active ? "Arsipkan" : "Aktifkan Kembali", record.active ? "danger" : "primary", { id: record.id }) : ""}${record ? config.actions?.(record) ?? "" : ""}</div>
       ${tiles.length ? `<div class="flex flex-wrap gap-2 mb-4">${statTiles(tiles)}</div>` : ""}
       <div class="mb-3 flex items-center gap-3"><h1 class="text-2xl font-bold text-gray-900">${esc(title)}</h1>${record && config.archive && !record.active ? badge({ a: ["Diarsipkan", "muted"] }, "a") : ""}</div>
-      ${config.formTop?.(record, refs) ?? ""}
+      ${top}
       <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 grid md:grid-cols-2 gap-x-8 gap-y-4">${blocks}</section>
       ${config.formNote ? `<p class="mt-3 text-xs text-gray-500">${config.formNote}</p>` : ""}
       <div class="flex gap-2 mt-4">

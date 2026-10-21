@@ -1,7 +1,7 @@
 import babel.dates
 
 from odoo import Command, _, api, fields, models
-from odoo.exceptions import AccessError, UserError
+from odoo.exceptions import AccessError, UserError, ValidationError
 
 # Struktur gaji umum yang netral (D85, Q57): tanpa angka hukum apa pun. Gaji Pokok diambil dari gaji versi kontrak,
 # Tunjangan dan Potongan dari input slip (diisi petugas), Gaji Bersih adalah jumlahnya. Aturan BPJS, PPh 21, lembur,
@@ -144,7 +144,7 @@ class HrPayslip(models.Model):
     @api.model
     def kompakapps_create_payslip(self, employee_id, date_from, date_to, struct_id=False, contract_id=False, run_id=False):
         """Buat satu slip draf untuk karyawan dan periode. Ditolak bila tidak ada kontrak berjalan, kontrak belum bersruktur gaji, atau slip yang
-        sama (karyawan, periode) sudah ada dan belum dibatalkan. Mengembalikan id slip."""
+        sama (karyawan, periode) sudah ada dan belum dibatalkan atau dikoreksi (refund). Mengembalikan id slip."""
         values = self.kompakapps_prepare_values(employee_id, date_from, date_to, struct_id=struct_id, contract_id=contract_id)
         employee = self.env["hr.employee"].browse(employee_id)
         if not values["contract_id"]:
@@ -152,7 +152,7 @@ class HrPayslip(models.Model):
         if not values["struct_id"]:
             raise UserError(_("Kontrak %(employee)s belum memiliki Struktur Gaji. Pilih struktur di halaman Contracts.", employee=employee.name))
         duplicate = self.search(
-            [("employee_id", "=", employee.id), ("date_from", "<=", values["date_to"]), ("date_to", ">=", values["date_from"]), ("state", "!=", "cancel"), ("credit_note", "=", False)],
+            [("employee_id", "=", employee.id), ("date_from", "<=", values["date_to"]), ("date_to", ">=", values["date_from"]), ("state", "!=", "cancel"), ("credit_note", "=", False), ("refunded_id", "=", False)],
             limit=1,
         )
         if duplicate:
@@ -165,3 +165,53 @@ class HrPayslip(models.Model):
         if run_id:
             values["payslip_run_id"] = run_id
         return self.create(values).id
+
+
+class HrPayslipRun(models.Model):
+    _inherit = "hr.payslip.run"
+
+    def kompakapps_generate_slips(self, employee_ids=None):
+        """Buat slip draf untuk karyawan pada periode batch (D85, Q57). Tanpa `employee_ids` dipakai semua karyawan aktif yang punya kontrak
+        berjalan pada periode itu. Karyawan yang gagal (mis. kontrak tanpa Struktur Gaji, slip kembar) dilewati dan dilaporkan tanpa membatalkan yang lain;
+        yang sudah punya slip di batch ini tidak dibuat ulang. Mengembalikan {"created": [id slip], "skipped": [{"employee", "reason"}], "ineligible": jumlah}."""
+        self.ensure_one()
+        if self.state != "draft":
+            raise UserError(_("Batch sudah ditutup. Kembalikan ke draf untuk menambah slip."))
+        Employee = self.env["hr.employee"]
+        Payslip = self.env["hr.payslip"]
+        ineligible = 0
+        if employee_ids:
+            employees = Employee.browse(employee_ids).exists()
+        else:
+            candidates = Employee.search([("company_id", "in", [self.company_id.id, False])])
+            contracts = candidates._get_contracts(date_start=self.date_start, date_end=self.date_end)
+            employees = candidates.filtered(lambda e: contracts.get(e.id))
+            ineligible = len(candidates) - len(employees)
+        employees -= self.slip_ids.employee_id
+        created, skipped = [], []
+        for employee in employees:
+            try:
+                with self.env.cr.savepoint():
+                    created.append(
+                        Payslip.kompakapps_create_payslip(
+                            employee.id, self.date_start, self.date_end, struct_id=self.struct_id.id or False, run_id=self.id
+                        )
+                    )
+            except (UserError, ValidationError) as error:
+                skipped.append({"employee": employee.name, "reason": str(error)})
+        return {"created": created, "skipped": skipped, "ineligible": ineligible}
+
+    def kompakapps_compute_all(self):
+        """Hitung semua slip draf atau menunggu di batch. Mengembalikan jumlah slip yang dihitung."""
+        self.ensure_one()
+        slips = self.slip_ids.filtered(lambda s: s.state in ("draft", "verify"))
+        slips.compute_sheet()
+        return len(slips)
+
+    def kompakapps_confirm_all(self):
+        """Konfirmasi semua slip yang sudah dihitung (menunggu). Slip draf yang belum dihitung dilewati. Mengembalikan {"confirmed": n, "pending": n}."""
+        self.ensure_one()
+        waiting = self.slip_ids.filtered(lambda s: s.state == "verify")
+        for slip in waiting:  # action_payslip_done OCA hanya aman untuk satu slip per panggilan
+            slip.action_payslip_done()
+        return {"confirmed": len(waiting), "pending": len(self.slip_ids.filtered(lambda s: s.state == "draft"))}

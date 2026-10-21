@@ -152,6 +152,8 @@ export const MENU = [
       {
         title: "Payroll",
         items: [
+          { title: "Payslips", route: "payslip" },
+          { title: "Batches", route: "payslipbatch" },
           {
             title: "Master",
             items: [{ title: "Salary Structures", route: "salarystruct" }, { title: "Salary Rules", route: "salaryrule" }, { title: "Rule Categories", route: "rulecategory" }, { title: "Contribution Registers", route: "contribreg" }],

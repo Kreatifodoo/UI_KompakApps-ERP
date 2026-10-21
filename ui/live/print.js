@@ -306,6 +306,33 @@ const BUILDERS = {
     };
   },
 
+  async "hr.payslip"(id) {
+    const [s] = await call("hr.payslip", "read", { ids: [id], fields: ["number", "name", "state", "employee_id", "struct_id", "date_from", "date_to", "credit_note", "payslip_run_id", "note"] });
+    const [lines, days, [emp]] = await Promise.all([
+      call("hr.payslip.line", "search_read", { domain: [["slip_id", "=", id], ["appears_on_payslip", "=", true]], fields: ["name", "code", "quantity", "rate", "amount", "total"], order: "sequence, id" }),
+      call("hr.payslip.worked_days", "search_read", { domain: [["payslip_id", "=", id]], fields: ["name", "code", "number_of_days", "number_of_hours"], order: "sequence, id" }),
+      call("hr.employee", "read", { ids: [s.employee_id[0]], fields: ["name", "job_title", "department_id"] }),
+    ]);
+    const state = { draft: "Draf", verify: "Dihitung", done: "Selesai", cancel: "Dibatalkan" }[s.state] ?? s.state;
+    const net = lines.find((l) => l.code === "NET");
+    const workedName = (d) => (d.code === "WORK100" ? "Hari kerja normal (dibayar 100%)" : d.name);
+    return {
+      title: s.credit_note ? "Slip Koreksi (Refund)" : "Slip Gaji",
+      number: s.number || s.name,
+      draft: s.state !== "done",
+      parties: [{ label: "Karyawan", block: { name: emp.name, lines: [text(emp.job_title), name2(emp.department_id)].filter(Boolean) } }],
+      meta: [["Nomor", text(s.number)], ["Periode", `${dateText(s.date_from)} - ${dateText(s.date_to)}`], ["Struktur Gaji", name2(s.struct_id)], ["Batch", name2(s.payslip_run_id)], ["Status", state]],
+      columns: [["Komponen", ""], ["Kode", ""], ["Kuantitas", "r"], ["Tarif (%)", "r"], ["Dasar", "r"], ["Jumlah", "r"]],
+      rows: lines.map((l) => ({ cells: [l.name, text(l.code), num(l.quantity), num(l.rate), num(l.amount), num(s.credit_note ? -l.total : l.total)] })),
+      sections: days.length
+        ? [{ title: "Hari Kerja", columns: [["Keterangan", ""], ["Hari", "r"], ["Jam", "r"]], rows: days.map((d) => ({ cells: [workedName(d), num(d.number_of_days), num(d.number_of_hours)] })) }]
+        : [],
+      totals: net ? [["Gaji Bersih", num(s.credit_note ? -net.total : net.total, ctx.company?.currency_id?.[1] ?? "IDR"), true]] : [],
+      notes: [["Catatan", text(s.note)]],
+      signatures: ["Diterima oleh karyawan", "Disetujui oleh"],
+    };
+  },
+
   async "purchase.request"(id) {
     const [r] = await call("purchase.request", "read", { ids: [id], fields: ["name", "state", "requested_by", "assigned_to", "date_start", "origin", "description"] });
     const lines = await call("purchase.request.line", "search_read", { domain: [["request_id", "=", id]], fields: ["name", "product_id", "product_qty", "product_uom_id", "date_required", "estimated_cost", "analytic_distribution"], order: "id" });
