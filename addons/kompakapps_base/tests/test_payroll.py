@@ -457,14 +457,19 @@ class TestPayrollJournal(AccountTestInvoicingCommon):
         self.assertEqual(move.reversal_move_ids.state, "posted")
         self.assertAlmostEqual(sum((move | move.reversal_move_ids).line_ids.mapped("balance")), 0.0, places=2)
 
-    def test_officer_confirms_but_cannot_change_journal(self):
+    def test_officer_cannot_confirm_manager_posts_journal_but_officer_cannot_change_it(self):
         self._configure()
         groups = [self.env.ref("base.group_user").id, self.env.ref("payroll.group_payroll_user").id]
         officer = self.env["res.users"].create(
             {"name": "officer_journal", "login": "officer_journal", "group_ids": [(6, 0, groups)], "company_ids": [(6, 0, self.company.ids)], "company_id": self.company.id}
         )
         slip = self._slip().with_user(officer)
-        slip.action_payslip_done()  # petugas tanpa hak akuntansi tetap menghasilkan jurnal (diposting dengan sudo)
+        with self.assertRaises(AccessError):  # D86 irisan 4: konfirmasi hanya Manager payroll
+            slip.action_payslip_done()
+        manager = self.env["res.users"].create(
+            {"name": "manager_journal", "login": "manager_journal", "group_ids": [(6, 0, [self.env.ref("base.group_user").id, self.env.ref("payroll.group_payroll_manager").id])], "company_ids": [(6, 0, self.company.ids)], "company_id": self.company.id}
+        )
+        slip.with_user(manager).action_payslip_done()  # Manager tanpa hak akuntansi tetap menghasilkan jurnal (diposting dengan sudo)
         self.assertEqual(slip.kompakapps_move_id.state, "posted")
         with self.assertRaises(AccessError):
             self.structure.with_user(officer).write({"kompakapps_journal_id": False})

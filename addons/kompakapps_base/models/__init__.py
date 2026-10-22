@@ -7,6 +7,7 @@ from . import payroll_id
 from . import payroll_param
 from . import payroll_comp
 from . import payroll_pph
+from . import payroll_slip
 from . import purchase_order_line
 from . import res_company
 from . import stock_journal
