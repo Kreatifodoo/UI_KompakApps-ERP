@@ -36,6 +36,7 @@ class HrEmployeePayroll(models.Model):
     kompakapps_bpjs_jp = fields.Boolean(string="Ikut BPJS JP", default=True, groups="hr.group_hr_user")
     kompakapps_bpjs_jkk = fields.Boolean(string="Ikut BPJS JKK", default=True, groups="hr.group_hr_user")
     kompakapps_bpjs_jkm = fields.Boolean(string="Ikut BPJS JKM", default=True, groups="hr.group_hr_user")
+    kompakapps_pph21_company = fields.Boolean(string="PPh 21 Ditanggung Perusahaan", groups="hr.group_hr_user", help="Pajak ditanggung perusahaan lewat tunjangan PPh 21 (gross-up): tunjangan dan pajak sama besar sehingga gaji bersih tidak berkurang.")
     kompakapps_bpjs_tk_no = fields.Char(string="No. Kartu BPJS Ketenagakerjaan", groups="hr.group_hr_user", copy=False)
 
     @api.depends("kompakapps_ptkp_status")

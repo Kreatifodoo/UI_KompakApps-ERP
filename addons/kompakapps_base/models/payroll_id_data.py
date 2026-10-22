@@ -195,6 +195,48 @@ RULES_BPJS = [
     },
 ]
 
+_IURAN = (
+    "iuran = 0.0\n"
+    "for code in ('BPJS_JHT_K', 'BPJS_JP_K'):\n"
+    "    line = result_rules.dict.get(code)\n"
+    "    if line:\n"
+    "        iuran = iuran - line.total\n"
+)
+_BRUTO_PAJAK = "categories.BASIC + categories.ALW + categories.VAR + categories.DED + categories.BPJSPT"
+
+RULES_PPH = [
+    {
+        "key": "tunj_pajak", "code": "TUNJ_PAJAK", "name": "Tunjangan PPh 21", "sequence": 185, "category": "VAR",
+        "condition": "result = bool(employee.kompakapps_pph21_company)",
+        "python": _IURAN + f"result = payslip.kompakapps_pph21_grossup({_BRUTO_PAJAK}, iuran)\nresult_name = 'Tunjangan PPh 21 (pajak ditanggung perusahaan)'\n",
+        "debit": "expense_taxalw",
+        "note": "Hanya untuk karyawan yang pajaknya ditanggung perusahaan: sebesar PPh 21 yang dihitung atas penghasilan termasuk tunjangan ini (iterasi sampai sama). Pajak dan tunjangan saling meniadakan pada gaji bersih.",
+    },
+    {
+        "key": "pph_bruto", "code": "PPH_BRUTO", "name": "Penghasilan bruto kena pajak", "sequence": 190, "category": "INFO",
+        "python": f"result = {_BRUTO_PAJAK}\n",
+        "note": "Informasi: gaji pokok, tunjangan, penghasilan tidak tetap, potongan kehadiran, dan iuran Kesehatan, JKK, JKM perusahaan (PMK 168/2023 Pasal 5 ayat 3). Dasar TER dan penjumlahan setahun.",
+    },
+    {
+        "key": "pph_iuran", "code": "PPH_IURAN", "name": "Iuran JHT dan JP karyawan (pengurang pajak)", "sequence": 191, "category": "INFO",
+        "python": _IURAN + "result = iuran\n",
+        "note": "Informasi: iuran JHT dan JP yang dibayar karyawan, pengurang penghasilan pada penghitungan masa pajak terakhir (PMK 168/2023 Pasal 10 ayat 1 huruf b).",
+    },
+    {
+        "key": "pph21", "code": "PPH21", "name": "PPh 21", "sequence": 200, "category": "PAJAK",
+        "python": "calc = payslip.kompakapps_pph21(PPH_BRUTO, PPH_IURAN)\nresult = -calc['amount']\nresult_name = calc['label']\n",
+        "inputs": [
+            ("PPH_AKHIR", "Masa pajak terakhir (isi 1 bila karyawan berhenti bulan ini)"),
+            ("PPH_AWAL_BRUTO", "Saldo awal: penghasilan bruto sebelum slip pertama di sistem"),
+            ("PPH_AWAL_IURAN", "Saldo awal: iuran JHT dan JP karyawan"),
+            ("PPH_AWAL_PAJAK", "Saldo awal: PPh 21 yang sudah dipotong"),
+            ("PPH_AWAL_BULAN", "Saldo awal: jumlah bulan bekerja"),
+        ],
+        "debit": "payable_pph21", "register": "pph21",
+        "note": "Januari sampai November (dan bulan selain masa pajak terakhir): tarif efektif bulanan (TER) kategori A, B, C dari status PTKP. Desember atau bulan berhenti: pajak setahun tarif Pasal 17 dikurangi yang sudah dipotong (bisa negatif = dikembalikan). Tanpa NPWP dan NIK: 120%. Saldo awal diisi hanya bila sistem dipakai di tengah tahun.",
+    },
+]
+
 RULE_NET = {
     "key": "net", "code": "NET", "name": "Gaji Bersih", "sequence": 900, "category": "NET",
     "python": "result = categories.BASIC + categories.ALW + categories.VAR + categories.DED + categories.POT + categories.BPJSK + categories.PAJAK",
@@ -202,5 +244,5 @@ RULE_NET = {
     "note": "Penghasilan + potongan (potongan, iuran karyawan, dan PPh 21 bernilai negatif). Iuran BPJS perusahaan tidak ikut.",
 }
 
-RULES = RULES_BASE + RULES_BPJS + [RULE_NET]
+RULES = RULES_BASE + RULES_BPJS + RULES_PPH + [RULE_NET]
 PARAMS = PARAMS_BPJS + PARAMS_PPH
