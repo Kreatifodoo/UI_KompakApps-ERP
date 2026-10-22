@@ -40,10 +40,10 @@ PAYROLL_STANDARD_RULES = [
 class ResCompany(models.Model):
     _inherit = "res.company"
 
-    def _kompakapps_payroll_record(self, model, key, values):
+    def _kompakapps_payroll_record(self, model, key, values, prefix="payroll_std"):
         """Ambil catatan setup payroll bertanda xml id (per perusahaan) atau buat bila belum ada atau sudah dihapus."""
         self.ensure_one()
-        name = f"payroll_std_{key}_{self.id}"
+        name = f"{prefix}_{key}_{self.id}"
         imd = self.env["ir.model.data"].sudo().search([("module", "=", "kompakapps_base"), ("name", "=", name)], limit=1)
         record = self.env[model].browse(imd.res_id).exists() if imd else self.env[model]
         if record:

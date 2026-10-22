@@ -19,7 +19,8 @@ const page = createMasterPage({
     { label: "Jumlah Aturan", value: (r) => (r.rule_ids ?? []).length, right: true },
   ],
   search: ["name", "code"],
-  headerAsync: async () => ((await loadPayrollManager()) ? button("payroll-setup", "Pasang Struktur Umum", "primary") : ""),
+  headerAsync: async () =>
+    (await loadPayrollManager()) ? `${button("payroll-setup-id", "Pasang Aturan Indonesia", "primary")} ${button("payroll-setup", "Pasang Struktur Umum", "plain")}` : "",
   loadRefs: async () => {
     const [structures, rules, journals] = await Promise.all([
       searchRead("hr.payroll.structure", [], ["display_name"], { order: "name", limit: 200 }),
@@ -54,6 +55,17 @@ const page = createMasterPage({
       <table class="w-full text-sm"><thead><tr class="text-left text-xs uppercase text-gray-500"><th class="pb-2 pr-3 text-right">Urutan</th><th class="pb-2 pr-3">Aturan</th><th class="pb-2 pr-3">Kode</th><th class="pb-2 pr-3">Kategori</th><th class="pb-2 pr-3">Jenis</th><th class="pb-2 text-right">Jumlah</th></tr></thead><tbody>${rows}</tbody></table></section>`;
   },
   onAction: async (action, el, { reload }) => {
+    if (action === "payroll-setup-id") {
+      if (!isPayrollManager()) return;
+      if (!window.confirm('Pasang struktur "Gaji Indonesia"? Berisi gaji pokok, tunjangan, iuran BPJS, dan aturan lain beserta parameter dan tabel tarif bawaan, akun gaji, dan jurnal Gaji. Aman diulang: yang sudah ada tidak ditimpa. Tarif mengikuti ketentuan per tanggal berlaku dan perlu diperiksa akuntan.')) return;
+      const done = await guarded(el, () => call("res.company", "kompakapps_setup_payroll_indonesia", { ids: [ctx.company.id] }));
+      if (done) {
+        toast(done.created ? `Gaji Indonesia dipasang (${done.parameters} parameter, ${done.rows} baris tarif baru).` : "Gaji Indonesia sudah terpasang.");
+        if (location.hash === `#/salarystruct/${done.structure_id}`) reload();
+        else location.hash = `#/salarystruct/${done.structure_id}`;
+      }
+      return;
+    }
     if (action !== "payroll-setup") return;
     if (!isPayrollManager()) return;
     if (!window.confirm('Pasang struktur umum "Gaji Standar"? Berisi Gaji Pokok (dari kontrak), Tunjangan dan Potongan (dari input slip), dan Gaji Bersih, tanpa BPJS, PPh 21, lembur, atau THR. Aman diulang; yang sudah ada tidak ditimpa.')) return;

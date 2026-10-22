@@ -5,6 +5,10 @@ import { createMasterPage } from "./masters.js";
 
 export const EMPLOYEE_TYPES = [["employee", "Karyawan"], ["worker", "Pekerja"], ["student", "Pelajar"], ["trainee", "Peserta magang"], ["contractor", "Kontraktor"], ["freelance", "Freelancer"]];
 const typeLabel = Object.fromEntries(EMPLOYEE_TYPES);
+export const PTKP_STATUSES = [
+  ["TK/0", "TK/0 - Tidak kawin, tanpa tanggungan"], ["TK/1", "TK/1 - Tidak kawin, 1 tanggungan"], ["TK/2", "TK/2 - Tidak kawin, 2 tanggungan"], ["TK/3", "TK/3 - Tidak kawin, 3 tanggungan"],
+  ["K/0", "K/0 - Kawin, tanpa tanggungan"], ["K/1", "K/1 - Kawin, 1 tanggungan"], ["K/2", "K/2 - Kawin, 2 tanggungan"], ["K/3", "K/3 - Kawin, 3 tanggungan"],
+];
 
 /** Pilihan bersama untuk halaman HR: karyawan, departemen, jabatan, pengguna. */
 export const hrRefs = async () => {
@@ -52,8 +56,18 @@ const page = createMasterPage({
     { key: "identification_id", label: "No. KTP", type: "text" },
     { key: "emergency_contact", label: "Kontak Darurat", type: "text" },
     { key: "emergency_phone", label: "Telepon Darurat", type: "text" },
+    { key: "kompakapps_ptkp_status", label: "Status PTKP (Pajak)", type: "select", options: PTKP_STATUSES, hint: "Status pada awal tahun pajak; menentukan PTKP dan kategori tarif PPh 21 (A: TK/0, TK/1, K/0; B: TK/2, TK/3, K/1, K/2; C: K/3)." },
+    { key: "kompakapps_npwp", label: "NPWP", type: "text", hint: "Tanpa NPWP maupun NIK, PPh 21 dipotong lebih tinggi sesuai ketentuan." },
+    { key: "kompakapps_nik", label: "NIK (KTP) untuk Pajak", type: "text", hint: "NIK yang terdaftar di DJP berfungsi sebagai NPWP." },
+    { key: "kompakapps_bpjs_kes", label: "BPJS Kesehatan", type: "check", checkLabel: "Ikut BPJS Kesehatan" },
+    { key: "kompakapps_bpjs_kes_no", label: "No. Kartu BPJS Kesehatan", type: "text" },
+    { key: "kompakapps_bpjs_jht", label: "BPJS JHT", type: "check", checkLabel: "Ikut BPJS JHT (Jaminan Hari Tua)" },
+    { key: "kompakapps_bpjs_jp", label: "BPJS JP", type: "check", checkLabel: "Ikut BPJS JP (Jaminan Pensiun)" },
+    { key: "kompakapps_bpjs_jkk", label: "BPJS JKK", type: "check", checkLabel: "Ikut BPJS JKK (Kecelakaan Kerja)" },
+    { key: "kompakapps_bpjs_jkm", label: "BPJS JKM", type: "check", checkLabel: "Ikut BPJS JKM (Kematian)" },
+    { key: "kompakapps_bpjs_tk_no", label: "No. Kartu BPJS Ketenagakerjaan", type: "text" },
   ],
-  newValues: () => ({ employee_type: "employee" }),
+  newValues: () => ({ employee_type: "employee", kompakapps_ptkp_status: "TK/0", kompakapps_bpjs_kes: true, kompakapps_bpjs_jht: true, kompakapps_bpjs_jp: true, kompakapps_bpjs_jkk: true, kompakapps_bpjs_jkm: true }),
   readFields: ["attendance_state", "version_ids"],
   tiles: (r) => [
     { count: r.attendance_state === "checked_in" ? 1 : 0, label: "Sedang hadir", icon: "fa-user-check" },

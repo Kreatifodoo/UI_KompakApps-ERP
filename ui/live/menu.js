@@ -158,6 +158,7 @@ export const MENU = [
             title: "Master",
             items: [{ title: "Salary Structures", route: "salarystruct" }, { title: "Salary Rules", route: "salaryrule" }, { title: "Rule Categories", route: "rulecategory" }, { title: "Contribution Registers", route: "contribreg" }],
           },
+          { title: "Setting", items: [{ title: "Parameter Payroll", route: "payrollparam" }, { title: "Tabel Tarif Pajak", route: "payrolltable" }] },
         ],
       },
     ],

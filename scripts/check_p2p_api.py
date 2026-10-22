@@ -246,6 +246,7 @@ def main():
     check_payroll_structure(api)
     check_payroll_batch(api)
     check_payroll_journal(api)
+    check_payroll_indonesia(api)
     check_attachments(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
@@ -5008,6 +5009,55 @@ def check_payroll_journal(api):
     for rule in rules.values():  # kembalikan ke keadaan tanpa akun agar pemeriksaan lain tidak terpengaruh
         api.call("hr.salary.rule", "write", ids=[rule], vals=none)
     api.call("hr.payroll.structure", "write", ids=[structure], vals={"kompakapps_journal_id": False})
+
+
+def check_payroll_indonesia(api):
+    """Payroll Indonesia irisan 1 (D86): Pasang Aturan Indonesia, parameter dan tabel tarif bertanggal, data pajak dan BPJS karyawan, iuran BPJS di slip. Butuh COA Indonesia."""
+    import random
+
+    step("Payroll Indonesia: pasang aturan, parameter bertanggal, tabel TER, iuran BPJS di slip")
+    tag = f"{random.randint(0, 99999):05d}"
+    [company] = [c["id"] for c in api.search("res.company", [], ["id"], limit=1)]
+    first = api.call("res.company", "kompakapps_setup_payroll_indonesia", ids=[company])
+    again = api.call("res.company", "kompakapps_setup_payroll_indonesia", ids=[company])
+    check(first["structure_id"] == again["structure_id"] and not again["created"] and again["parameters"] == 0 and again["rows"] == 0, "Pasang Aturan Indonesia idempoten: diulang tidak membuat apa pun lagi")
+    structure = api.read("hr.payroll.structure", first["structure_id"], ["code", "kompakapps_journal_id", "rule_ids"])
+    check(structure["code"] == "GAJI-ID" and structure["kompakapps_journal_id"] and len(structure["rule_ids"]) >= 11, "struktur Gaji Indonesia terpasang dengan jurnal Gaji dan aturannya")
+    caps = {p["code"]: p["value"] for p in api.search("kompakapps.payroll.parameter", [["company_id", "=", company]], ["code", "value"], limit=100)}
+    check(caps.get("bpjs_kes_batas_atas") == 12_000_000 and caps.get("bpjs_jht_karyawan") == 2.0 and caps.get("bpjs_jkm_perusahaan") == 0.3, "parameter BPJS bawaan terisi (batas Kesehatan 12 juta, JHT karyawan 2%, JKM 0,3%)")
+    sizes = {t: len(api.search("kompakapps.payroll.bracket", [["company_id", "=", company], ["table", "=", t]], ["id"], limit=100)) for t in ("ter_a", "ter_b", "ter_c", "pasal17")}
+    check(sizes == {"ter_a": 44, "ter_b": 40, "ter_c": 41, "pasal17": 5}, "tabel TER A 44, B 40, C 41 baris dan Pasal 17 5 lapisan")
+    check(api.call("kompakapps.payroll.bracket", "kompakapps_ter_rate", table="ter_a", amount=10_000_000, date="2026-10-31") == 2.0, "tarif TER kategori A untuk Rp10.000.000 adalah 2% (contoh resmi PP 58/2023)")
+    check(abs(api.call("kompakapps.payroll.bracket", "kompakapps_progressive_tax", table="pasal17", taxable=382_860_000, date="2026-10-31") - 64_715_000) < 0.01, "Pasal 17 atas Rp382.860.000 menghasilkan Rp64.715.000 (contoh resmi PMK 168/2023)")
+
+    [emp] = api.call("hr.employee", "create", vals_list=[{
+        "name": f"BPJS Regresi {tag}", "contract_date_start": "2026-01-01", "wage": 8_000_000,
+        "kompakapps_ptkp_status": "K/2", "kompakapps_npwp": "09.254.294.3-407.000", "kompakapps_bpjs_jp": False,
+    }])
+    row = api.read("hr.employee", emp, ["kompakapps_ptkp_status", "kompakapps_ter_category", "kompakapps_ptkp_dependents", "kompakapps_bpjs_kes", "kompakapps_bpjs_jp", "kompakapps_npwp"])
+    check(row["kompakapps_ter_category"] == "B" and row["kompakapps_ptkp_dependents"] == 2 and row["kompakapps_bpjs_kes"] and not row["kompakapps_bpjs_jp"] and row["kompakapps_npwp"], "data pajak dan BPJS karyawan tersimpan: K/2 masuk kategori TER B, 2 tanggungan, tanpa JP")
+    [version] = [v["id"] for v in api.search("hr.version", [["employee_id", "=", emp]], ["id"])]
+    api.call("hr.version", "write", ids=[version], vals={"struct_id": first["structure_id"]})
+    slip = api.call("hr.payslip", "kompakapps_create_payslip", employee_id=emp, date_from="2026-10-01", date_to="2026-10-31")
+    inputs = {i["code"]: i["id"] for i in api.call("hr.payslip.input", "read", ids=api.read("hr.payslip", slip, ["input_line_ids"])["input_line_ids"], fields=["code"])}
+    api.call("hr.payslip.input", "write", ids=[inputs["TUNJ"]], vals={"amount": 1_000_000})
+    api.call("hr.payslip", "compute_sheet", ids=[slip])
+    lines = {line["code"]: line["total"] for line in api.search("hr.payslip.line", [["slip_id", "=", slip]], ["code", "total"], limit=50)}
+    check(lines.get("BPJS_KES_K") == -90_000 and lines.get("BPJS_JHT_K") == -180_000, "iuran karyawan dari upah Rp9.000.000: Kesehatan 1% = 90.000 dan JHT 2% = 180.000 (dipotong)")
+    check(lines.get("BPJS_KES_P") == 360_000 and lines.get("BPJS_JHT_P") == 333_000 and lines.get("BPJS_JKK_P") == 21_600 and lines.get("BPJS_JKM_P") == 27_000, "iuran perusahaan: Kesehatan 4% = 360.000, JHT 3,7% = 333.000, JKK 0,24% = 21.600, JKM 0,3% = 27.000")
+    check("BPJS_JP_K" not in lines and "BPJS_JP_P" not in lines, "karyawan yang tidak ikut JP tidak dikenai iuran JP")
+    check(lines["NET"] == 8_000_000 + 1_000_000 - 90_000 - 180_000, "iuran perusahaan tidak mengurangi gaji bersih")
+    [big] = api.call("hr.employee", "create", vals_list=[{"name": f"Gaji Besar Regresi {tag}", "contract_date_start": "2026-01-01", "wage": 20_000_000}])
+    [bigv] = [v["id"] for v in api.search("hr.version", [["employee_id", "=", big]], ["id"])]
+    api.call("hr.version", "write", ids=[bigv], vals={"struct_id": first["structure_id"]})
+    slip = api.call("hr.payslip", "kompakapps_create_payslip", employee_id=big, date_from="2026-10-01", date_to="2026-10-31")
+    api.call("hr.payslip", "compute_sheet", ids=[slip])
+    lines = {line["code"]: line["total"] for line in api.search("hr.payslip.line", [["slip_id", "=", slip]], ["code", "total"], limit=50)}
+    check(lines.get("BPJS_KES_K") == -120_000 and lines.get("BPJS_JP_K") == -110_863 and lines.get("BPJS_JHT_K") == -400_000, "di atas batas upah: Kesehatan dibatasi Rp12 juta (120.000), JP dibatasi Rp11.086.300 (110.863), JHT tanpa batas (400.000)")
+    jan = api.call("hr.payslip", "kompakapps_create_payslip", employee_id=big, date_from="2026-01-01", date_to="2026-01-31")
+    check(fails_with(lambda: api.call("hr.payslip", "compute_sheet", ids=[jan]), "Parameter payroll"), "parameter yang belum berlaku pada periode slip (batas upah JP sebelum Maret 2026) ditolak dengan pesan jelas")
+    api.call("kompakapps.payroll.parameter", "create", vals_list=[{"company_id": company, "code": "bpjs_jkk_perusahaan", "name": f"JKK baru {tag}", "value": 0.89, "unit": "persen", "date_from": "2027-01-01"}])
+    check(api.call("kompakapps.payroll.parameter", "kompakapps_value", code="bpjs_jkk_perusahaan", date="2027-02-01") == 0.89 and api.call("kompakapps.payroll.parameter", "kompakapps_value", code="bpjs_jkk_perusahaan", date="2026-10-31") == 0.24, "parameter bertanggal: versi baru berlaku sejak tanggalnya, versi lama untuk periode sebelumnya")
 
 
 def bill_total(api, bill_id):
