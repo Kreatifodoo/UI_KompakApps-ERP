@@ -3,3 +3,5 @@ access_kompakapps_payroll_parameter_user,kompakapps.payroll.parameter user,model
 access_kompakapps_payroll_parameter_manager,kompakapps.payroll.parameter manager,model_kompakapps_payroll_parameter,payroll.group_payroll_manager,1,1,1,1
 access_kompakapps_payroll_bracket_user,kompakapps.payroll.bracket user,model_kompakapps_payroll_bracket,payroll.group_payroll_user,1,0,0,0
 access_kompakapps_payroll_bracket_manager,kompakapps.payroll.bracket manager,model_kompakapps_payroll_bracket,payroll.group_payroll_manager,1,1,1,1
+access_kompakapps_payslip_self,hr.payslip karyawan (baca slip sendiri),payroll.model_hr_payslip,base.group_user,1,0,0,0
+access_kompakapps_payslip_line_self,hr.payslip.line karyawan (baca baris slip sendiri),payroll.model_hr_payslip_line,base.group_user,1,0,0,0

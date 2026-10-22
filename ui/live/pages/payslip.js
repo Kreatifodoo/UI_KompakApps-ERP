@@ -1,9 +1,9 @@
 // Payslips (hr.payslip): slip gaji OCA payroll. Slip dibuat dari kontrak berjalan karyawan pada periode (hr.payslip.kompakapps_create_payslip: struktur dari kontrak,
 // isian input dari aturan struktur, hari kerja dari jadwal kerja). Alur: Draf, Hitung (aturan dijalankan, status Dihitung), Konfirmasi (Selesai), dengan Kembali ke Draf,
 // Batalkan, dan Refund (slip koreksi) untuk slip selesai. Input (tunjangan, potongan, dan sejenisnya) dan hari kerja diedit sebelum Hitung (D85).
-import { badge, button, call, closeModal, dateText, esc, guarded, INPUT, money, openModal, searchRead, selectOptions, statusbar, toast, today } from "../common.js";
+import { badge, button, call, closeModal, dateText, esc, guarded, hasGroup, INPUT, money, openModal, searchRead, selectOptions, statusbar, toast, today } from "../common.js";
 import { printButton } from "../print.js";
-import { SLIP_STATES, monthBounds, nf, workedLabel } from "../payroll.js";
+import { SLIP_STATES, isPayrollManager, loadPayrollManager, monthBounds, nf, workedLabel } from "../payroll.js";
 import { hrRefs } from "./employee.js";
 import { createMasterPage } from "./masters.js";
 
@@ -76,7 +76,10 @@ const page = createMasterPage({
   ],
   headerExtra: button("slip-new", "Slip Baru", "primary"),
   loadListRefs: async (rows) => ({ net: await slipNet(rows.map((r) => r.id)) }),
-  loadRefs: async () => ({}),
+  loadRefs: async () => {
+    await loadPayrollManager();
+    return {};
+  },
   fields: [
     { key: "name", label: "Nama Slip", type: "text", required: true, readonly: (r) => Boolean(r) && !EDITABLE.includes(r.state), span2: true },
     { key: "note", label: "Catatan Internal", type: "textarea", span2: true, readonly: (r) => Boolean(r) && !EDITABLE.includes(r.state) },
@@ -106,15 +109,20 @@ const page = createMasterPage({
         ${item("Jurnal", journalHtml(record, link))}
       </section>`;
   },
+  // Petugas (Officer) menghitung slip; hanya Manager payroll yang mengonfirmasi, membatalkan, mengembalikan ke draf, me-refund, dan membuat jurnal (D86 irisan 4).
   actions: (r) => {
     const parts = [];
+    const manager = isPayrollManager();
     if (EDITABLE.includes(r.state)) parts.push(button("slip-compute", r.state === "draft" ? "Hitung" : "Hitung Ulang", "primary", { id: r.id }));
-    if (r.state === "verify") parts.push(button("slip-confirm", "Konfirmasi", "success", { id: r.id }));
-    if (r.state === "verify" || r.state === "cancel") parts.push(button("slip-draft", "Kembali ke Draf", "plain", { id: r.id }));
-    if (EDITABLE.includes(r.state) || (r.state === "done" && r.allow_cancel_payslips)) parts.push(button("slip-cancel", "Batalkan", "danger", { id: r.id }));
-    if (r.state === "done" && !r.kompakapps_move_id) parts.push(button("slip-journal", "Buat Jurnal", "plain", { id: r.id }));
-    if (r.state === "done" && !r.credit_note && !r.refunded_id) parts.push(button("slip-refund", "Refund (Slip Koreksi)", "plain", { id: r.id }));
+    if (manager) {
+      if (r.state === "verify") parts.push(button("slip-confirm", "Konfirmasi", "success", { id: r.id }));
+      if (r.state === "verify" || r.state === "cancel") parts.push(button("slip-draft", "Kembali ke Draf", "plain", { id: r.id }));
+      if (EDITABLE.includes(r.state) || (r.state === "done" && r.allow_cancel_payslips)) parts.push(button("slip-cancel", "Batalkan", "danger", { id: r.id }));
+      if (r.state === "done" && !r.kompakapps_move_id) parts.push(button("slip-journal", "Buat Jurnal", "plain", { id: r.id }));
+      if (r.state === "done" && !r.credit_note && !r.refunded_id) parts.push(button("slip-refund", "Refund (Slip Koreksi)", "plain", { id: r.id }));
+    } else if (r.state === "verify") parts.push('<span class="text-xs text-gray-500 self-center">Konfirmasi dilakukan Manager payroll.</span>');
     if (r.state === "draft" || r.state === "cancel") parts.push(button("slip-delete", "Hapus", "danger", { id: r.id }));
+    if (r.state === "done") parts.push(button("slip-email", "Kirim Email", "plain", { id: r.id }));
     if (r.line_ids?.length) parts.push(printButton("hr.payslip", r.id, "Cetak Slip"));
     return parts.join("");
   },
@@ -168,7 +176,13 @@ const page = createMasterPage({
         location.hash = `#/payslip/${created}`;
       }
     } else if (action === "slip-compute") await run(async () => (await saveEdits(), call("hr.payslip", "compute_sheet", { ids: [id] })), "Slip dihitung.");
-    else if (action === "slip-confirm") {
+    else if (action === "slip-email") {
+      const [result] = (await guarded(el, () => call("hr.payslip", "kompakapps_send_email", { ids: [id] }))) ?? [];
+      if (result) {
+        toast(result.message, result.ok ? "ok" : "error");
+        reload();
+      }
+    } else if (action === "slip-confirm") {
       if (!window.confirm("Konfirmasi slip ini? Setelah selesai slip tidak dapat diubah (koreksi lewat Refund).")) return;
       const confirmed = await guarded(el, async () => {
         await saveEdits();
@@ -208,4 +222,12 @@ const page = createMasterPage({
   },
 });
 
-export const { render, onClick, onInput, onChange, leave } = page;
+export const { onClick, onInput, onChange, leave } = page;
+/** Pengguna tanpa peran payroll diarahkan ke Slip Saya (server hanya memberi mereka slip sendiri yang Selesai). */
+export const render = async (sub, query) => {
+  if (!(await hasGroup("payroll.group_payroll_user"))) {
+    location.hash = "#/myslip";
+    return;
+  }
+  return page.render(sub, query);
+};

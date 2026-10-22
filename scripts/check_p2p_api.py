@@ -249,6 +249,7 @@ def main():
     check_payroll_indonesia(api)
     check_payroll_pph21(api)
     check_payroll_components(api)
+    check_payroll_access(api)
     check_attachments(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
@@ -5140,6 +5141,33 @@ def check_payroll_components(api):
     slip(full, "2026-03-01", "2026-03-31")
     thr = slip(full, "2026-03-20", "2026-03-20", structure=setup["thr_structure_id"])[1]
     check(thr["THR"] == 12_000_000, "THR masa kerja 12 bulan = satu bulan upah; slip THR boleh berdampingan dengan slip bulanan (penjaga kembar per struktur)")
+
+
+def check_payroll_access(api):
+    """Hak akses slip dan data slip (D86, irisan 4): data cetak dikelompokkan menurut kategori, kirim email tidak gagal diam, aturan record Slip Saya terpasang. Butuh Pasang Aturan Indonesia."""
+    import random
+
+    step("Payroll Indonesia: data slip, kirim email, aturan record Slip Saya")
+    tag = f"{random.randint(0, 99999):05d}"
+    [company] = [c["id"] for c in api.search("res.company", [], ["id"], limit=1)]
+    setup = api.call("res.company", "kompakapps_setup_payroll_indonesia", ids=[company])
+    [emp] = api.call("hr.employee", "create", vals_list=[{"name": f"Slip Akses {tag}", "contract_date_start": "2026-01-01", "wage": 8_500_000, "work_email": f"slip.{tag}@example.test", "kompakapps_npwp": "09.254.294.3-407.000"}])
+    [version] = [v["id"] for v in api.search("hr.version", [["employee_id", "=", emp]], ["id"])]
+    api.call("hr.version", "write", ids=[version], vals={"struct_id": setup["structure_id"]})
+    slip = api.call("hr.payslip", "kompakapps_create_payslip", employee_id=emp, date_from="2026-10-01", date_to="2026-10-31")
+    api.call("hr.payslip", "compute_sheet", ids=[slip])
+    data = api.call("hr.payslip", "kompakapps_slip_data", ids=[slip])[0]
+    codes = lambda key: {i["code"] for i in data[key]}  # noqa: E731
+    check("GAPOK" in codes("earnings") and "BPJS_JHT_K" in codes("deductions") and "PPH21" in codes("tax") and "BPJS_JHT_P" in codes("employer"), "data slip mengelompokkan penghasilan, potongan, pajak, dan iuran perusahaan")
+    check(abs(data["total_earnings"] + data["total_deductions"] - data["net"]) < 0.01, "penghasilan + potongan = gaji bersih; iuran perusahaan tidak mengurangi gaji bersih")
+    api.call("hr.payslip", "action_payslip_done", ids=[slip])
+    result = api.call("hr.payslip", "kompakapps_send_email", ids=[slip])[0]
+    check(bool(result["message"]) and isinstance(result["ok"], bool), "kirim email mengembalikan hasil dengan pesan jelas (server email belum diatur: ok=False)")
+    notes = api.search("mail.message", [["model", "=", "hr.payslip"], ["res_id", "=", slip], ["body", "ilike", "Kirim email"]], ["id"], limit=1)
+    check(bool(notes), "hasil kirim email tercatat di chatter slip")
+    rules = {r["name"] for r in api.search("ir.rule", [["name", "ilike", "Payslip"]], ["name"], limit=50)}
+    check(any("karyawan membaca slip sendiri" in name for name in rules) and any("baris slip sendiri" in name for name in rules), "aturan record Slip Saya terpasang untuk slip dan baris slip")
+    check(api.call("hr.payslip", "kompakapps_my_employee") in (False,) or "id" in api.call("hr.payslip", "kompakapps_my_employee"), "kompakapps_my_employee mengembalikan karyawan tertaut atau False")
 
 
 def bill_total(api, bill_id):

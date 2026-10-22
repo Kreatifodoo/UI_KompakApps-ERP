@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <!-- Hak akses slip (D86 irisan 4, Q59). noupdate=0: aturan ini diterapkan ulang tiap upgrade modul. -->
+
+    <!-- Officer payroll bekerja atas slip semua karyawan perusahaannya, bukan hanya milik sendiri atau bawahan departemen (aturan OCA bawaan terlalu sempit untuk bagian payroll).
+         Aturan lintas perusahaan (global) tetap berlaku. -->
+    <record id="payroll.hr_payroll_rule_officer" model="ir.rule">
+        <field name="domain_force">[(1, '=', 1)]</field>
+    </record>
+
+    <!-- Slip Saya: karyawan membaca slipnya sendiri yang sudah Selesai (tanpa hak tulis; ACL baca saja di ir.model.access.csv). -->
+    <record id="kompakapps_payslip_rule_self" model="ir.rule">
+        <field name="name">Payslip: karyawan membaca slip sendiri yang selesai</field>
+        <field name="model_id" ref="payroll.model_hr_payslip" />
+        <field name="domain_force">[('employee_id.user_id', '=', user.id), ('state', '=', 'done')]</field>
+        <field name="groups" eval="[(4, ref('base.group_user'))]" />
+        <field name="perm_read" eval="True" />
+        <field name="perm_write" eval="False" />
+        <field name="perm_create" eval="False" />
+        <field name="perm_unlink" eval="False" />
+    </record>
+    <record id="kompakapps_payslip_line_rule_self" model="ir.rule">
+        <field name="name">Payslip line: karyawan membaca baris slip sendiri yang selesai</field>
+        <field name="model_id" ref="payroll.model_hr_payslip_line" />
+        <field name="domain_force">[('slip_id.employee_id.user_id', '=', user.id), ('slip_id.state', '=', 'done')]</field>
+        <field name="groups" eval="[(4, ref('base.group_user'))]" />
+        <field name="perm_read" eval="True" />
+        <field name="perm_write" eval="False" />
+        <field name="perm_create" eval="False" />
+        <field name="perm_unlink" eval="False" />
+    </record>
+    <!-- Begitu ada aturan grup untuk semua pengguna internal, petugas payroll butuh aturan sendiri agar tidak ikut terbatas pada slip miliknya. -->
+    <record id="kompakapps_payslip_line_rule_payroll" model="ir.rule">
+        <field name="name">Payslip line: petugas payroll membaca semua baris slip</field>
+        <field name="model_id" ref="payroll.model_hr_payslip_line" />
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('payroll.group_payroll_user'))]" />
+    </record>
+    <record id="kompakapps_payslip_line_rule_company" model="ir.rule">
+        <field name="name">Payslip line: multi-company</field>
+        <field name="model_id" ref="payroll.model_hr_payslip_line" />
+        <field name="global" eval="True" />
+        <field name="domain_force">['|', ('slip_id.company_id', '=', False), ('slip_id.company_id', 'in', company_ids)]</field>
+    </record>
+</odoo>

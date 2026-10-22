@@ -306,29 +306,33 @@ const BUILDERS = {
     };
   },
 
+  // Slip gaji A4 final (D86 irisan 4): isi dirakit server (`kompakapps_slip_data`, hak baca diperiksa dengan hak pengguna sehingga karyawan hanya bisa
+  // mencetak slipnya sendiri yang Selesai). Penghasilan, potongan termasuk PPh 21, iuran perusahaan (tidak mengurangi gaji), informasi pajak, kehadiran.
   async "hr.payslip"(id) {
-    const [s] = await call("hr.payslip", "read", { ids: [id], fields: ["number", "name", "state", "employee_id", "struct_id", "date_from", "date_to", "credit_note", "payslip_run_id", "note"] });
-    const [lines, days, [emp]] = await Promise.all([
-      call("hr.payslip.line", "search_read", { domain: [["slip_id", "=", id], ["appears_on_payslip", "=", true]], fields: ["name", "code", "quantity", "rate", "amount", "total"], order: "sequence, id" }),
-      call("hr.payslip.worked_days", "search_read", { domain: [["payslip_id", "=", id]], fields: ["name", "code", "number_of_days", "number_of_hours"], order: "sequence, id" }),
-      call("hr.employee", "read", { ids: [s.employee_id[0]], fields: ["name", "job_title", "department_id"] }),
-    ]);
+    const [s] = await call("hr.payslip", "kompakapps_slip_data", { ids: [id] });
+    const cur = ctx.company?.currency_id?.[1] ?? "IDR";
+    const done = s.state === "done";
     const state = { draft: "Draf", verify: "Dihitung", done: "Selesai", cancel: "Dibatalkan" }[s.state] ?? s.state;
-    const net = lines.find((l) => l.code === "NET");
-    const workedName = (d) => (d.code === "WORK100" ? "Hari kerja normal (dibayar 100%)" : d.name);
+    const amountRows = (items, sign = 1) => items.map((l) => ({ cells: [l.name, num(sign * l.amount)] }));
+    const sections = [];
+    const deductions = [...s.deductions, ...s.tax];
+    sections.push({ title: "Potongan", columns: [["Potongan", ""], ["Jumlah", "r"]], rows: amountRows(deductions, -1) });
+    if (s.employer.length) sections.push({ title: "Iuran dibayar perusahaan (tidak mengurangi gaji bersih)", columns: [["Iuran", ""], ["Jumlah", "r"]], rows: amountRows(s.employer) });
+    const taxInfo = [...s.info.map((l) => ({ cells: [l.name, num(l.amount)] }))];
+    if (s.ytd) taxInfo.push({ cells: ["Penghasilan bruto kena pajak sejak Januari sampai periode ini", num(s.ytd.bruto)] }, { cells: ["PPh 21 dipotong sejak Januari sampai periode ini", num(s.ytd.pph21)] });
+    if (taxInfo.length) sections.push({ title: "Informasi pajak", columns: [["Keterangan", ""], ["Jumlah", "r"]], rows: taxInfo });
+    if (s.worked.length) sections.push({ title: "Kehadiran", columns: [["Keterangan", ""], ["Hari", "r"], ["Jam", "r"]], rows: s.worked.map((d) => ({ cells: [d.name, num(d.days), num(d.hours)] })) });
     return {
       title: s.credit_note ? "Slip Koreksi (Refund)" : "Slip Gaji",
       number: s.number || s.name,
-      draft: s.state !== "done",
-      parties: [{ label: "Karyawan", block: { name: emp.name, lines: [text(emp.job_title), name2(emp.department_id)].filter(Boolean) } }],
-      meta: [["Nomor", text(s.number)], ["Periode", `${dateText(s.date_from)} - ${dateText(s.date_to)}`], ["Struktur Gaji", name2(s.struct_id)], ["Batch", name2(s.payslip_run_id)], ["Status", state]],
-      columns: [["Komponen", ""], ["Kode", ""], ["Kuantitas", "r"], ["Tarif (%)", "r"], ["Dasar", "r"], ["Jumlah", "r"]],
-      rows: lines.map((l) => ({ cells: [l.name, text(l.code), num(l.quantity), num(l.rate), num(l.amount), num(s.credit_note ? -l.total : l.total)] })),
-      sections: days.length
-        ? [{ title: "Hari Kerja", columns: [["Keterangan", ""], ["Hari", "r"], ["Jam", "r"]], rows: days.map((d) => ({ cells: [workedName(d), num(d.number_of_days), num(d.number_of_hours)] })) }]
-        : [],
-      totals: net ? [["Gaji Bersih", num(s.credit_note ? -net.total : net.total, ctx.company?.currency_id?.[1] ?? "IDR"), true]] : [],
-      notes: [["Catatan", text(s.note)]],
+      draft: !done,
+      parties: [{ label: "Karyawan", block: { name: s.employee.name, lines: [s.employee.job, s.employee.department].filter(Boolean) } }],
+      meta: [["Nomor", text(s.number)], ["Periode", `${dateText(s.date_from)} - ${dateText(s.date_to)}`], ["NPWP / NIK", text(s.employee.npwp)], ["Status PTKP", text(s.employee.ptkp)], ["Status", done ? "" : state]],
+      columns: [["Penghasilan", ""], ["Jumlah", "r"]],
+      rows: amountRows(s.earnings),
+      sections,
+      totals: [["Total penghasilan", num(s.total_earnings, cur)], ["Total potongan", num(-s.total_deductions, cur)], ["Gaji Bersih", num(s.net, cur), true]],
+      notes: [["Catatan", text(s.note)], ["Keterangan", "Dokumen ini bersifat rahasia dan hanya untuk karyawan yang bersangkutan. Pertanyaan tentang slip ini disampaikan kepada bagian payroll."]],
       signatures: ["Diterima oleh karyawan", "Disetujui oleh"],
     };
   },
@@ -378,6 +382,7 @@ table { width: 100%; border-collapse: collapse; }
 .lines th { background: #f3f4f6; text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; padding: 6px 8px; border-top: 1px solid #d1d5db; border-bottom: 1px solid #d1d5db; }
 .lines td { padding: 6px 8px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
 .r { text-align: right; white-space: nowrap; }
+.lines th.r { text-align: right; }
 .sec td { font-weight: 700; background: #f9fafb; }
 .nt td { font-style: italic; color: #4b5563; }
 .totals { width: 46%; margin: 10px 0 0 auto; }

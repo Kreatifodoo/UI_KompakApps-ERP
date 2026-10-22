@@ -32,6 +32,16 @@ const reportModal = (result) => {
   );
 };
 
+const emailReport = (result) => {
+  const failed = result.failed.map((f) => `<li><strong>${esc(f.employee)}</strong>: ${esc(f.message)}</li>`).join("");
+  openModal(
+    "Hasil Kirim Email Slip",
+    `<p class="text-sm text-gray-700">${result.sent} slip terkirim${result.failed.length ? `, ${result.failed.length} gagal` : ""}${result.skipped ? `; ${result.skipped} slip belum selesai dan tidak dikirim` : ""}.</p>
+     ${failed ? `<ul class="list-disc pl-5 text-sm text-rose-700 space-y-1">${failed}</ul><p class="text-xs text-gray-500">Setiap hasil juga dicatat di chatter slip yang bersangkutan.</p>` : ""}`,
+    button("modal-close", "Tutup", "primary"),
+  );
+};
+
 const page = createMasterPage({
   route: "payslipbatch", title: "Payslip Batches", noun: "Batch Slip", model: "hr.payslip.run", newLabel: "Batch Baru", order: "date_start desc, id desc", limit: 200,
   empty: "Belum ada batch. Buat batch untuk penggajian satu periode.",
@@ -69,6 +79,7 @@ const page = createMasterPage({
       if ((r.slip_ids ?? []).length) parts.push(button("batch-compute", "Hitung Semua", "plain", { id: r.id }), button("batch-confirm", "Konfirmasi Semua", "success", { id: r.id }), button("batch-close", "Tutup Batch", "plain", { id: r.id }));
       else parts.push(button("batch-delete", "Hapus", "danger", { id: r.id }));
     } else parts.push(button("batch-reopen", "Kembali ke Draf", "plain", { id: r.id }));
+    if ((r.slip_ids ?? []).length) parts.push(button("batch-email", "Kirim Slip Lewat Email", "plain", { id: r.id }));
     return parts.join("");
   },
   formNote: "Alur: Buat Slip, Hitung Semua, periksa tiap slip, Konfirmasi Semua, lalu Tutup Batch. Slip dibuat dari kontrak yang berjalan pada periode; karyawan tanpa struktur gaji dilaporkan dan dilewati.",
@@ -109,7 +120,11 @@ const page = createMasterPage({
         reload();
       }
     };
-    if (action === "batch-generate-all") await generate(false);
+    if (action === "batch-email") {
+      if (!window.confirm("Kirim slip yang sudah selesai di batch ini ke email kerja masing-masing karyawan?")) return;
+      const result = await guarded(el, () => call("hr.payslip.run", "kompakapps_send_emails", { ids: [id] }));
+      if (result) emailReport(result);
+    } else if (action === "batch-generate-all") await generate(false);
     else if (action === "batch-pick") {
       employeesCache = (await hrRefs()).employees;
       pickEmployeesModal(id);
