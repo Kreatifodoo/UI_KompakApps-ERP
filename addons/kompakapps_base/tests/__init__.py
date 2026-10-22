@@ -20,3 +20,4 @@ from . import test_stock_journals
 from . import test_subcontracting
 from . import test_hr
 from . import test_payroll
+from . import test_payroll_id

@@ -3,6 +3,8 @@ from . import activity_mixin
 from . import base_import
 from . import mis_loader
 from . import payroll
+from . import payroll_id
+from . import payroll_param
 from . import purchase_order_line
 from . import res_company
 from . import stock_journal

@@ -1,0 +1,5 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_kompakapps_payroll_parameter_user,kompakapps.payroll.parameter user,model_kompakapps_payroll_parameter,payroll.group_payroll_user,1,0,0,0
+access_kompakapps_payroll_parameter_manager,kompakapps.payroll.parameter manager,model_kompakapps_payroll_parameter,payroll.group_payroll_manager,1,1,1,1
+access_kompakapps_payroll_bracket_user,kompakapps.payroll.bracket user,model_kompakapps_payroll_bracket,payroll.group_payroll_user,1,0,0,0
+access_kompakapps_payroll_bracket_manager,kompakapps.payroll.bracket manager,model_kompakapps_payroll_bracket,payroll.group_payroll_manager,1,1,1,1
