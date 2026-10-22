@@ -59,6 +59,7 @@ const page = createMasterPage({
     { key: "kompakapps_ptkp_status", label: "Status PTKP (Pajak)", type: "select", options: PTKP_STATUSES, hint: "Status pada awal tahun pajak; menentukan PTKP dan kategori tarif PPh 21 (A: TK/0, TK/1, K/0; B: TK/2, TK/3, K/1, K/2; C: K/3)." },
     { key: "kompakapps_npwp", label: "NPWP", type: "text", hint: "Tanpa NPWP maupun NIK, PPh 21 dipotong lebih tinggi sesuai ketentuan." },
     { key: "kompakapps_nik", label: "NIK (KTP) untuk Pajak", type: "text", hint: "NIK yang terdaftar di DJP berfungsi sebagai NPWP." },
+    { key: "kompakapps_pph21_company", label: "PPh 21 Ditanggung Perusahaan", type: "check", checkLabel: "PPh 21 ditanggung perusahaan (tunjangan pajak)", hint: "Bila dicentang, slip menambah Tunjangan PPh 21 sebesar pajaknya sehingga gaji bersih tidak berkurang; bila tidak, pajak dipotong dari gaji." },
     { key: "kompakapps_bpjs_kes", label: "BPJS Kesehatan", type: "check", checkLabel: "Ikut BPJS Kesehatan" },
     { key: "kompakapps_bpjs_kes_no", label: "No. Kartu BPJS Kesehatan", type: "text" },
     { key: "kompakapps_bpjs_jht", label: "BPJS JHT", type: "check", checkLabel: "Ikut BPJS JHT (Jaminan Hari Tua)" },

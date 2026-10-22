@@ -247,6 +247,7 @@ def main():
     check_payroll_batch(api)
     check_payroll_journal(api)
     check_payroll_indonesia(api)
+    check_payroll_pph21(api)
     check_attachments(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
@@ -5058,6 +5059,41 @@ def check_payroll_indonesia(api):
     check(fails_with(lambda: api.call("hr.payslip", "compute_sheet", ids=[jan]), "Parameter payroll"), "parameter yang belum berlaku pada periode slip (batas upah JP sebelum Maret 2026) ditolak dengan pesan jelas")
     api.call("kompakapps.payroll.parameter", "create", vals_list=[{"company_id": company, "code": "bpjs_jkk_perusahaan", "name": f"JKK baru {tag}", "value": 0.89, "unit": "persen", "date_from": "2027-01-01"}])
     check(api.call("kompakapps.payroll.parameter", "kompakapps_value", code="bpjs_jkk_perusahaan", date="2027-02-01") == 0.89 and api.call("kompakapps.payroll.parameter", "kompakapps_value", code="bpjs_jkk_perusahaan", date="2026-10-31") == 0.24, "parameter bertanggal: versi baru berlaku sejak tanggalnya, versi lama untuk periode sebelumnya")
+
+
+def check_payroll_pph21(api):
+    """PPh 21 (D86, irisan 2): TER per kategori, setahun penuh dengan penghitungan Desember, tanpa NPWP, pajak ditanggung perusahaan. Butuh Pasang Aturan Indonesia."""
+    import random
+
+    step("Payroll Indonesia: PPh 21 TER, Desember, tanpa NPWP, ditanggung perusahaan")
+    tag = f"{random.randint(0, 99999):05d}"
+    [company] = [c["id"] for c in api.search("res.company", [], ["id"], limit=1)]
+    structure = api.call("res.company", "kompakapps_setup_payroll_indonesia", ids=[company])["structure_id"]
+    flags = {"kompakapps_bpjs_kes": False, "kompakapps_bpjs_jht": False, "kompakapps_bpjs_jp": False, "kompakapps_bpjs_jkk": False, "kompakapps_bpjs_jkm": False}
+
+    def employee(name, wage, **extra):
+        [emp] = api.call("hr.employee", "create", vals_list=[{"name": f"{name} {tag}", "contract_date_start": "2026-01-01", "wage": wage, "kompakapps_npwp": "09.254.294.3-407.000", **flags, **extra}])
+        [version] = [v["id"] for v in api.search("hr.version", [["employee_id", "=", emp]], ["id"])]
+        api.call("hr.version", "write", ids=[version], vals={"struct_id": structure})
+        return emp
+
+    def month(emp, number, confirm=False):
+        last = {2: 28, 4: 30, 6: 30, 9: 30, 11: 30}.get(number, 31)
+        slip = api.call("hr.payslip", "kompakapps_create_payslip", employee_id=emp, date_from=f"2026-{number:02d}-01", date_to=f"2026-{number:02d}-{last}")
+        api.call("hr.payslip", "compute_sheet", ids=[slip])
+        if confirm:
+            api.call("hr.payslip", "action_payslip_done", ids=[slip])
+        return {line["code"]: line["total"] for line in api.search("hr.payslip.line", [["slip_id", "=", slip]], ["code", "total"], limit=60)}
+
+    check(month(employee("TER K3", 12_000_000, kompakapps_ptkp_status="K/3"), 3)["PPH21"] == -240_000, "kategori C (K/3): Rp12.000.000 dikenai 2% = 240.000 (kategori A 4%, B 3%)")
+    full = employee("Setahun", 10_000_000, kompakapps_ptkp_status="K/0")
+    jan_nov = [month(full, number, confirm=True)["PPH21"] for number in range(1, 12)]
+    check(jan_nov == [-200_000] * 11, "Januari sampai November: TER kategori A 2% dari Rp10.000.000 = 200.000 tiap bulan (11 slip dikonfirmasi)")
+    check(month(full, 12)["PPH21"] == -575_000, "Desember: pajak setahun 2.775.000 (PKP 55,5 juta) dikurangi 11 x 200.000 = 575.000")
+    check(month(employee("Tanpa NPWP", 10_000_000, kompakapps_npwp=False, kompakapps_nik=False), 3)["PPH21"] == -240_000, "tanpa NPWP dan NIK: PPh 21 120% = 240.000")
+    lines = month(employee("Gross Up", 10_000_000, kompakapps_pph21_company=True), 4)
+    check(lines["TUNJ_PAJAK"] == 230_179 and lines["PPH21"] == -230_179, "pajak ditanggung perusahaan: Tunjangan PPh 21 230.179 sama dengan pajaknya (titik tetap)")
+    check(lines["NET"] == 10_000_000, "gaji bersih karyawan tetap Rp10.000.000 pada gross-up")
 
 
 def bill_total(api, bill_id):
