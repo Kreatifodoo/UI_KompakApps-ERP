@@ -76,6 +76,27 @@ PARAMS_PPH = [
     ),
 ]
 
+SRC_LEMBUR = "PP 35/2021 Pasal 31 dan 32 (peraturan.go.id, diakses 22 Okt 2026); menggantikan Kepmenakertrans 102/2004 yang disebut di brief"
+SRC_THR = "Permenaker 6/2016 Pasal 2-3 dan PP 36/2021 (PDF resmi berupa pindaian tanpa teks; diverifikasi lewat Hukumonline dan Bisnis.com, 22 Okt 2026)"
+
+PARAMS_COMP = [
+    ("lembur_pembagi", "Lembur - pembagi upah sejam", 173.0, "angka", START, SRC_LEMBUR, "Upah sejam = upah sebulan / 173 (Pasal 32 ayat 2)."),
+    ("lembur_dasar_minimum_persen", "Lembur - dasar upah minimum dari seluruh upah", 75.0, "persen", START, SRC_LEMBUR, "Bila gaji pokok + tunjangan tetap kurang dari 75% seluruh upah (ada tunjangan tidak tetap), dasar lembur 75% seluruh upah (Pasal 32 ayat 4)."),
+    ("lembur_hk_jam_pertama", "Lembur hari kerja - pengali jam pertama", 1.5, "kali", START, SRC_LEMBUR, "Pasal 31 ayat 1 huruf a."),
+    ("lembur_hk_jam_berikutnya", "Lembur hari kerja - pengali jam berikutnya", 2.0, "kali", START, SRC_LEMBUR, "Pasal 31 ayat 1 huruf b."),
+    ("lembur_libur_x1", "Lembur hari istirahat atau libur resmi - pengali jam awal", 2.0, "kali", START, SRC_LEMBUR, "Pasal 31 ayat 2 dan 3."),
+    ("lembur_libur_x2", "Lembur hari istirahat atau libur resmi - pengali jam sesudahnya", 3.0, "kali", START, SRC_LEMBUR, "Satu jam sesudah jam awal."),
+    ("lembur_libur_x3", "Lembur hari istirahat atau libur resmi - pengali jam berikutnya", 4.0, "kali", START, SRC_LEMBUR, "Jam sesudah itu."),
+    ("lembur_libur_jam_x1_5hari", "Lembur hari libur - jumlah jam pengali awal (5 hari kerja)", 8.0, "angka", START, SRC_LEMBUR, "Pasal 31 ayat 3: jam pertama sampai kedelapan 2x, jam kesembilan 3x, kesepuluh dst 4x."),
+    ("lembur_libur_jam_x1_6hari", "Lembur hari libur - jumlah jam pengali awal (6 hari kerja)", 7.0, "angka", START, SRC_LEMBUR, "Pasal 31 ayat 2: jam pertama sampai ketujuh 2x, jam kedelapan 3x, kesembilan dst 4x. Hari libur resmi pada hari kerja terpendek tidak dibedakan."),
+    ("thr_masa_kerja_penuh_bulan", "THR - masa kerja untuk satu bulan upah penuh", 12.0, "angka", START, SRC_THR, "Masa kerja 12 bulan terus-menerus atau lebih = satu bulan upah."),
+    ("thr_masa_kerja_minimum_bulan", "THR - masa kerja minimum", 1.0, "angka", START, SRC_THR, "Masa kerja 1 bulan atau lebih berhak THR proporsional (masa kerja/12)."),
+    ("thr_bulan_upah", "THR - jumlah bulan upah untuk masa kerja penuh", 1.0, "kali", START, SRC_THR, "Naikkan bila perjanjian kerja atau kebiasaan perusahaan memberi lebih dari satu bulan."),
+    ("terlambat_per_kejadian", "Potongan terlambat - per kejadian", 0.0, "rupiah", START, "Kebijakan perusahaan", "NONAKTIF (0). Isi bila perusahaan memotong gaji per hari terlambat."),
+    ("terlambat_per_menit", "Potongan terlambat - per menit", 0.0, "rupiah", START, "Kebijakan perusahaan", "NONAKTIF (0). Isi bila perusahaan memotong gaji per menit terlambat."),
+    ("terlambat_toleransi_menit", "Potongan terlambat - toleransi menit", 0.0, "angka", START, "Kebijakan perusahaan", "Menit pertama yang tidak dihitung terlambat."),
+]
+
 # (tabel, batas atas, tarif) disusun di payroll_id_ter.py; Pasal 17 ditulis di sini
 PASAL17 = [(60_000_000, 5.0), (250_000_000, 15.0), (500_000_000, 25.0), (5_000_000_000, 30.0), (0, 35.0)]
 BRACKETS = [
@@ -96,6 +117,7 @@ ACCOUNTS = [
     ("payable_bpjs_kes", "25110110", "Hutang BPJS Kesehatan", "liability_current"),
     ("payable_bpjs_tk", "25110020", "Hutang BPJS Ketenagakerjaan", "liability_current"),
     ("payable_pph21", "21210010", "Hutang PPh 21", "liability_current"),
+    ("payable_deduction", "21100060", "Hutang Potongan Karyawan", "liability_current"),
 ]
 
 REGISTERS = [("bpjs_kes", "BPJS Kesehatan"), ("bpjs_tk", "BPJS Ketenagakerjaan"), ("pph21", "Kantor Pajak (PPh 21)")]
@@ -195,6 +217,90 @@ RULES_BPJS = [
     },
 ]
 
+RULES_COMP = [
+    {
+        "key": "tunj_transport", "code": "TUNJ_TRANSPORT", "name": "Tunjangan Transport", "sequence": 30, "category": "ALW",
+        "condition": "result = bool(contract.kompakapps_allow_transport)", "python": "result = contract.kompakapps_allow_transport\n",
+        "debit": "expense_salary", "note": "Tunjangan tetap bulanan dari kontrak (kolom Tunjangan Transport Tetap). Ikut dasar BPJS, lembur, dan THR.",
+    },
+    {
+        "key": "tunj_makan", "code": "TUNJ_MAKAN", "name": "Tunjangan Makan", "sequence": 31, "category": "ALW",
+        "condition": "result = bool(contract.kompakapps_allow_meal)", "python": "result = contract.kompakapps_allow_meal\n",
+        "debit": "expense_salary", "note": "Tunjangan tetap bulanan dari kontrak (kolom Tunjangan Makan Tetap). Ikut dasar BPJS, lembur, dan THR.",
+    },
+    {
+        "key": "tunj_harian", "code": "TUNJ_HARIAN", "name": "Tunjangan Harian", "sequence": 40, "category": "VAR",
+        "condition": "result = bool(contract.kompakapps_allow_daily and worked_days.HADIR)",
+        "python": "result = contract.kompakapps_allow_daily * worked_days.HADIR.number_of_days\nresult_name = 'Tunjangan harian x ' + ('%g' % worked_days.HADIR.number_of_days) + ' hari hadir'\n",
+        "debit": "expense_benefit", "note": "Tunjangan harian dari kontrak dikali hari hadir menurut Attendance. Tunjangan tidak tetap: tidak ikut dasar BPJS dan THR.",
+    },
+    {
+        "key": "lembur", "code": "LEMBUR", "name": "Upah Lembur", "sequence": 50, "category": "VAR",
+        "condition": "result = bool(worked_days.LEMBUR_SETARA and worked_days.LEMBUR_SETARA.number_of_hours) or bool(inputs.LEMBUR_KOREKSI and inputs.LEMBUR_KOREKSI.amount)",
+        "python": (
+            "fixed = categories.BASIC + categories.ALW\n"
+            "daily = contract.kompakapps_allow_daily * (worked_days.HADIR.number_of_days if worked_days.HADIR else 0.0)\n"
+            "base = max(fixed, tools.param('lembur_dasar_minimum_persen') / 100.0 * (fixed + daily))\n"
+            "hourly = base / tools.param('lembur_pembagi')\n"
+            "hours = (worked_days.LEMBUR_SETARA.number_of_hours if worked_days.LEMBUR_SETARA else 0.0) + (inputs.LEMBUR_KOREKSI.amount if inputs.LEMBUR_KOREKSI else 0.0)\n"
+            "result = tools.rp(hourly * hours)\n"
+            "result_name = 'Lembur ' + ('%.2f' % hours).replace('.', ',') + ' jam setara x upah sejam Rp' + '{:,.0f}'.format(hourly).replace(',', '.')\n"
+        ),
+        "inputs": [("LEMBUR_KOREKSI", "Koreksi jam lembur setara (boleh negatif)")],
+        "debit": "expense_overtime",
+        "note": "Upah sejam = dasar / 173; dasar = gaji pokok + tunjangan tetap (paling sedikit 75% seluruh upah bila ada tunjangan harian). Jam setara memuat pengali PP 35/2021 Pasal 31 dari Attendance (jam lembur divalidasi).",
+    },
+    {
+        "key": "bonus", "code": "BONUS", "name": "Bonus", "sequence": 60, "category": "VAR",
+        "condition": "result = bool(inputs.BONUS and inputs.BONUS.amount)", "python": "result = inputs.BONUS.amount\n", "inputs": [("BONUS", "Bonus")],
+        "debit": "expense_benefit", "note": "Bonus diisi di input slip; digabung dengan penghasilan bulan itu pada PPh 21.",
+    },
+    {
+        "key": "pot_absen", "code": "POT_ABSEN", "name": "Potongan Absen", "sequence": 70, "category": "DED",
+        "condition": "result = bool((worked_days.ABSEN and worked_days.ABSEN.number_of_days) or (inputs.ABSEN_KOREKSI and inputs.ABSEN_KOREKSI.amount))",
+        "python": (
+            "days = (worked_days.ABSEN.number_of_days if worked_days.ABSEN else 0.0) + (inputs.ABSEN_KOREKSI.amount if inputs.ABSEN_KOREKSI else 0.0)\n"
+            "scheduled = worked_days.JADWAL.number_of_days if worked_days.JADWAL else 0.0\n"
+            "result = -tools.rp(contract.wage * days / scheduled) if scheduled else 0.0\n"
+            "result_name = 'Potongan absen ' + ('%g' % days) + ' dari ' + ('%g' % scheduled) + ' hari kerja'\n"
+        ),
+        "inputs": [("ABSEN_KOREKSI", "Koreksi hari absen (boleh negatif)")],
+        "debit": "expense_salary", "note": "Gaji pokok x hari absen tanpa keterangan / hari kerja terjadwal bulan itu menurut kalender kerja. Hari tanpa kehadiran dan tanpa cuti disetujui.",
+    },
+    {
+        "key": "pot_cuti", "code": "POT_CUTI", "name": "Potongan Cuti Tidak Dibayar", "sequence": 71, "category": "DED",
+        "condition": "result = bool(worked_days.CUTI_TDK_DIBAYAR and worked_days.CUTI_TDK_DIBAYAR.number_of_days)",
+        "python": (
+            "days = worked_days.CUTI_TDK_DIBAYAR.number_of_days\n"
+            "scheduled = worked_days.JADWAL.number_of_days if worked_days.JADWAL else 0.0\n"
+            "result = -tools.rp(contract.wage * days / scheduled) if scheduled else 0.0\n"
+            "result_name = 'Potongan cuti tidak dibayar ' + ('%g' % days) + ' dari ' + ('%g' % scheduled) + ' hari kerja'\n"
+        ),
+        "debit": "expense_salary", "note": "Cuti disetujui dengan jenis bertanda Unpaid mengurangi gaji pokok dengan cara yang sama seperti absen.",
+    },
+    {
+        "key": "pot_terlambat", "code": "POT_TERLAMBAT", "name": "Potongan Terlambat", "sequence": 72, "category": "DED",
+        "condition": "result = bool(worked_days.TERLAMBAT and worked_days.TERLAMBAT.number_of_days and (tools.param('terlambat_per_kejadian') or tools.param('terlambat_per_menit')))",
+        "python": (
+            "result = -tools.rp(worked_days.TERLAMBAT.number_of_days * tools.param('terlambat_per_kejadian') + worked_days.TERLAMBAT.number_of_hours * 60.0 * tools.param('terlambat_per_menit'))\n"
+            "result_name = 'Potongan terlambat ' + ('%g' % worked_days.TERLAMBAT.number_of_days) + ' kali'\n"
+        ),
+        "debit": "expense_salary", "note": "Nonaktif secara bawaan (parameter terlambat bernilai 0). Isi nominal per kejadian atau per menit di Parameter Payroll untuk mengaktifkan.",
+    },
+    {
+        "key": "pot_lain", "code": "POT_LAIN", "name": "Potongan Lain", "sequence": 80, "category": "POT",
+        "condition": "result = bool(inputs.POT_LAIN and inputs.POT_LAIN.amount)", "python": "result = -inputs.POT_LAIN.amount\n", "inputs": [("POT_LAIN", "Potongan Lain")],
+        "debit": "payable_deduction", "note": "Potongan lain (mis. koperasi, kasbon) diisi positif di input slip; menjadi pengurang gaji. Tidak mengurangi dasar pajak.",
+    },
+]
+
+RULE_THR = {
+    "key": "thr", "code": "THR", "name": "Tunjangan Hari Raya", "sequence": 20, "category": "VAR", "in": ("thr",),
+    "python": "calc = payslip.kompakapps_thr()\nresult = calc['amount']\nresult_name = calc['label']\n",
+    "debit": "expense_benefit",
+    "note": "Hanya di struktur THR Indonesia. Tanggal akhir slip = tanggal hari raya yang diisi petugas. Masa kerja 12 bulan atau lebih: satu bulan upah (gaji pokok + tunjangan tetap); 1 sampai kurang dari 12 bulan: proporsional.",
+}
+
 _IURAN = (
     "iuran = 0.0\n"
     "for code in ('BPJS_JHT_K', 'BPJS_JP_K'):\n"
@@ -206,24 +312,24 @@ _BRUTO_PAJAK = "categories.BASIC + categories.ALW + categories.VAR + categories.
 
 RULES_PPH = [
     {
-        "key": "tunj_pajak", "code": "TUNJ_PAJAK", "name": "Tunjangan PPh 21", "sequence": 185, "category": "VAR",
+        "key": "tunj_pajak", "in": ("gaji", "thr"), "code": "TUNJ_PAJAK", "name": "Tunjangan PPh 21", "sequence": 185, "category": "VAR",
         "condition": "result = bool(employee.kompakapps_pph21_company)",
         "python": _IURAN + f"result = payslip.kompakapps_pph21_grossup({_BRUTO_PAJAK}, iuran)\nresult_name = 'Tunjangan PPh 21 (pajak ditanggung perusahaan)'\n",
         "debit": "expense_taxalw",
         "note": "Hanya untuk karyawan yang pajaknya ditanggung perusahaan: sebesar PPh 21 yang dihitung atas penghasilan termasuk tunjangan ini (iterasi sampai sama). Pajak dan tunjangan saling meniadakan pada gaji bersih.",
     },
     {
-        "key": "pph_bruto", "code": "PPH_BRUTO", "name": "Penghasilan bruto kena pajak", "sequence": 190, "category": "INFO",
+        "key": "pph_bruto", "in": ("gaji", "thr"), "code": "PPH_BRUTO", "name": "Penghasilan bruto kena pajak", "sequence": 190, "category": "INFO",
         "python": f"result = {_BRUTO_PAJAK}\n",
         "note": "Informasi: gaji pokok, tunjangan, penghasilan tidak tetap, potongan kehadiran, dan iuran Kesehatan, JKK, JKM perusahaan (PMK 168/2023 Pasal 5 ayat 3). Dasar TER dan penjumlahan setahun.",
     },
     {
-        "key": "pph_iuran", "code": "PPH_IURAN", "name": "Iuran JHT dan JP karyawan (pengurang pajak)", "sequence": 191, "category": "INFO",
+        "key": "pph_iuran", "in": ("gaji", "thr"), "code": "PPH_IURAN", "name": "Iuran JHT dan JP karyawan (pengurang pajak)", "sequence": 191, "category": "INFO",
         "python": _IURAN + "result = iuran\n",
         "note": "Informasi: iuran JHT dan JP yang dibayar karyawan, pengurang penghasilan pada penghitungan masa pajak terakhir (PMK 168/2023 Pasal 10 ayat 1 huruf b).",
     },
     {
-        "key": "pph21", "code": "PPH21", "name": "PPh 21", "sequence": 200, "category": "PAJAK",
+        "key": "pph21", "in": ("gaji", "thr"), "code": "PPH21", "name": "PPh 21", "sequence": 200, "category": "PAJAK",
         "python": "calc = payslip.kompakapps_pph21(PPH_BRUTO, PPH_IURAN)\nresult = -calc['amount']\nresult_name = calc['label']\n",
         "inputs": [
             ("PPH_AKHIR", "Masa pajak terakhir (isi 1 bila karyawan berhenti bulan ini)"),
@@ -238,11 +344,16 @@ RULES_PPH = [
 ]
 
 RULE_NET = {
-    "key": "net", "code": "NET", "name": "Gaji Bersih", "sequence": 900, "category": "NET",
+    "key": "net", "in": ("gaji", "thr"), "code": "NET", "name": "Gaji Bersih", "sequence": 900, "category": "NET",
     "python": "result = categories.BASIC + categories.ALW + categories.VAR + categories.DED + categories.POT + categories.BPJSK + categories.PAJAK",
     "credit": "payable_salary",
     "note": "Penghasilan + potongan (potongan, iuran karyawan, dan PPh 21 bernilai negatif). Iuran BPJS perusahaan tidak ikut.",
 }
 
-RULES = RULES_BASE + RULES_BPJS + RULES_PPH + [RULE_NET]
-PARAMS = PARAMS_BPJS + PARAMS_PPH
+RULES = RULES_BASE + RULES_COMP + RULES_BPJS + RULES_PPH + [RULE_THR, RULE_NET]
+
+STRUCTURES = [
+    ("structure", "Gaji Indonesia", "GAJI-ID", "gaji", "Struktur gaji Indonesia: gaji pokok, tunjangan, lembur, potongan, iuran BPJS, dan PPh 21. Angka hukum ada di Payroll > Setting dan perlu diperiksa akuntan."),
+    ("structure_thr", "THR Indonesia", "THR-ID", "thr", "Slip khusus THR: buat slip dengan struktur ini, periode berakhir pada tanggal hari raya. PPh 21 digabung dengan penghasilan bulan itu (konfirmasi slip bulanan lebih dulu)."),
+]
+PARAMS = PARAMS_BPJS + PARAMS_PPH + PARAMS_COMP
