@@ -30,10 +30,12 @@ class HrPayslipPph(models.Model):
         return line.amount if line else 0.0
 
     def _kompakapps_pph21_history(self):
-        """Penghasilan bruto, iuran, pajak yang sudah dipotong, dan jumlah bulan dari slip selesai karyawan pada tahun pajak yang sama sebelum periode slip ini
-        (slip koreksi mengurangi), ditambah saldo awal yang diisi petugas di input slip bila sistem baru dipakai di tengah tahun."""
+        """Penghasilan bruto, iuran, pajak yang sudah dipotong, dan jumlah bulan dari slip selesai LAIN karyawan pada tahun pajak yang sama (slip koreksi
+        mengurangi), ditambah saldo awal yang diisi petugas di input slip bila sistem baru dipakai di tengah tahun. `bruto_month` dan `pajak_month` adalah
+        bagian dari slip lain pada bulan yang sama dengan slip ini (mis. slip THR dan slip bulanan): TER dihitung atas penghasilan gabungan bulan itu."""
         self.ensure_one()
         year_start = fields.Date.to_date(f"{self.date_to.year}-01-01")
+        year_end = fields.Date.to_date(f"{self.date_to.year}-12-31")
         lines = (
             self.env["hr.payslip.line"]
             .sudo()
@@ -41,22 +43,30 @@ class HrPayslipPph(models.Model):
                 [
                     ("slip_id.employee_id", "=", self.employee_id.id),
                     ("slip_id.state", "=", "done"),
-                    ("slip_id.date_from", ">=", year_start),
-                    ("slip_id.date_to", "<", self.date_from),
+                    ("slip_id.date_to", ">=", year_start),
+                    ("slip_id.date_to", "<=", year_end),
+                    ("slip_id", "!=", self.id),
                     ("code", "in", ["PPH_BRUTO", "PPH_IURAN", "PPH21"]),
                 ]
             )
         )
-        totals = defaultdict(float)
+        this_month = (self.date_to.year, self.date_to.month)
+        totals, same_month = defaultdict(float), defaultdict(float)
         for line in lines:
-            totals[line.code] += (-1 if line.slip_id.credit_note else 1) * line.total
+            amount = (-1 if line.slip_id.credit_note else 1) * line.total
+            totals[line.code] += amount
+            if (line.slip_id.date_to.year, line.slip_id.date_to.month) == this_month:
+                same_month[line.code] += amount
         slips = lines.slip_id
-        months = len(slips.filtered(lambda slip: not slip.credit_note) - slips.filtered("credit_note").refunded_id)
+        prior = slips.filtered(lambda slip: not slip.credit_note) - slips.filtered("credit_note").refunded_id
+        months = len({(slip.date_to.year, slip.date_to.month) for slip in prior} - {this_month})
         return {
             "bruto": totals["PPH_BRUTO"] + self._kompakapps_input("PPH_AWAL_BRUTO"),
             "iuran": totals["PPH_IURAN"] + self._kompakapps_input("PPH_AWAL_IURAN"),
             "pajak": -totals["PPH21"] + self._kompakapps_input("PPH_AWAL_PAJAK"),
             "months": months + int(self._kompakapps_input("PPH_AWAL_BULAN")),
+            "bruto_month": same_month["PPH_BRUTO"],
+            "pajak_month": -same_month["PPH21"],
         }
 
     def _kompakapps_pph21_factor(self):
@@ -79,15 +89,16 @@ class HrPayslipPph(models.Model):
         self.ensure_one()
         factor = self._kompakapps_pph21_factor()
         last_period = self.date_to.month == 12 or self._kompakapps_input("PPH_AKHIR") > 0
+        history = history or self._kompakapps_pph21_history()
         if not last_period:
             category = self.employee_id.kompakapps_ter_category
             if not category:
                 raise UserError(_("Status PTKP %(employee)s belum diisi. Isi di Employees.", employee=self.employee_id.name))
-            rate = self.env["kompakapps.payroll.bracket"].kompakapps_ter_rate(TER_TABLE[category], max(bruto, 0.0), self.date_to, self.company_id)
-            amount = _rupiah(max(bruto, 0.0) * rate / 100.0 * factor)
-            label = _("PPh 21 TER kategori %(category)s %(rate)s%% dari Rp%(bruto)s", category=category, rate=f"{rate:g}".replace(".", ","), bruto=_fmt(bruto))
+            combined = max(bruto + history["bruto_month"], 0.0)
+            rate = self.env["kompakapps.payroll.bracket"].kompakapps_ter_rate(TER_TABLE[category], combined, self.date_to, self.company_id)
+            amount = _rupiah(combined * rate / 100.0 * factor) - history["pajak_month"]
+            label = _("PPh 21 TER kategori %(category)s %(rate)s%% dari Rp%(bruto)s", category=category, rate=f"{rate:g}".replace(".", ","), bruto=_fmt(combined))
             return {"amount": amount, "label": label}
-        history = history or self._kompakapps_pph21_history()
         gross_year = history["bruto"] + bruto
         months = history["months"] + 1
         position = min(
@@ -114,7 +125,7 @@ class HrPayslipPph(models.Model):
         """Tunjangan PPh 21 untuk karyawan yang pajaknya ditanggung perusahaan: nilai T sehingga pajak atas (bruto + T) sama dengan T. Pajak tidak menurun bila T
         naik, jadi iterasi dari nol naik terus sampai tetap (bilangan bulat rupiah)."""
         self.ensure_one()
-        history = self._kompakapps_pph21_history() if (self.date_to.month == 12 or self._kompakapps_input("PPH_AKHIR") > 0) else None
+        history = self._kompakapps_pph21_history()
         tunjangan = 0.0
         for _step in range(200):
             tax = max(0.0, self.kompakapps_pph21(bruto + tunjangan, iuran, history)["amount"])

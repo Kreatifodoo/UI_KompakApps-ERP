@@ -152,7 +152,7 @@ class HrPayslip(models.Model):
         if not values["struct_id"]:
             raise UserError(_("Kontrak %(employee)s belum memiliki Struktur Gaji. Pilih struktur di halaman Contracts.", employee=employee.name))
         duplicate = self.search(
-            [("employee_id", "=", employee.id), ("date_from", "<=", values["date_to"]), ("date_to", ">=", values["date_from"]), ("state", "!=", "cancel"), ("credit_note", "=", False), ("refunded_id", "=", False)],
+            [("employee_id", "=", employee.id), ("date_from", "<=", values["date_to"]), ("date_to", ">=", values["date_from"]), ("state", "!=", "cancel"), ("credit_note", "=", False), ("refunded_id", "=", False), ("struct_id", "=", values["struct_id"])],
             limit=1,
         )
         if duplicate:

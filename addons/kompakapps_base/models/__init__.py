@@ -5,6 +5,7 @@ from . import mis_loader
 from . import payroll
 from . import payroll_id
 from . import payroll_param
+from . import payroll_comp
 from . import payroll_pph
 from . import purchase_order_line
 from . import res_company

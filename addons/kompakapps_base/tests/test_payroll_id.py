@@ -54,7 +54,7 @@ class TestPayrollIndonesiaBase(PayrollIdCommon):
     # ---------- pemasangan ----------
     def test_setup_installs_everything_and_is_idempotent(self):
         self.assertTrue(self.result["created"])
-        self.assertEqual(len(self.rules), len(data.RULES))
+        self.assertEqual(len(self.rules), len([r for r in data.RULES if "gaji" in r.get("in", ("gaji",))]))
         self.assertEqual(self.Param.search_count([("company_id", "=", self.company.id)]), len(data.PARAMS))
         rows = {table: self.Bracket.search_count([("company_id", "=", self.company.id), ("table", "=", table)]) for table in ("ter_a", "ter_b", "ter_c", "pasal17")}
         self.assertEqual(rows, {"ter_a": 44, "ter_b": 40, "ter_c": 41, "pasal17": 5})
@@ -84,7 +84,7 @@ class TestPayrollIndonesiaBase(PayrollIdCommon):
         self.assertEqual(param.value, 0.54)
         self.assertTrue(again["created"])
         self.assertIn("BPJS_JKM_P", self.structure.rule_ids.mapped("code"))
-        self.assertEqual(len(self.structure.rule_ids), len(data.RULES))
+        self.assertEqual(len(self.structure.rule_ids), len([r for r in data.RULES if "gaji" in r.get("in", ("gaji",))]))
 
     def test_setup_requires_payroll_manager(self):
         user = self.env["res.users"].create(
@@ -348,3 +348,181 @@ class TestPayrollPph21(PayrollIdCommon):
             by_account[line.account_id.code] = by_account.get(line.account_id.code, 0.0) + line.credit - line.debit
         self.assertAlmostEqual(by_account["21210010"], 200_000, places=2)  # hutang PPh 21 dikredit
         self.assertAlmostEqual(by_account["21100050"], 9_800_000, places=2)  # hutang gaji = bersih
+
+
+@tagged("post_install", "-at_install", "kompakapps")
+class TestPayrollComponents(PayrollIdCommon):
+    """Komponen gaji (D86, Q59): tunjangan tetap dan harian, lembur dari Attendance (PP 35/2021 Pasal 31 dan 32), potongan absen, cuti tidak dibayar, terlambat,
+    bonus, potongan lain, dan THR. Oktober 2026 punya 22 hari kerja (Senin sampai Jumat); angka dihitung tangan di komentar."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.calendar = cls.env["resource.calendar"].create(
+            {
+                "name": "Kantor Uji Jakarta",
+                "company_id": cls.company.id,
+                "tz": "Asia/Jakarta",
+                "attendance_ids": [(5, 0, 0)]
+                + [
+                    (0, 0, {"name": f"{label} {day}", "dayofweek": str(day), "hour_from": start, "hour_to": end, "day_period": period})
+                    for day in range(5)
+                    for label, start, end, period in (("Pagi", 8.0, 12.0, "morning"), ("Sore", 13.0, 17.0, "afternoon"))
+                ],
+            }
+        )
+
+    def _worker(self, name, wage, start=datetime.date(2026, 1, 1), **extra):
+        values = {"kompakapps_bpjs_kes": False, "kompakapps_bpjs_jht": False, "kompakapps_bpjs_jp": False, "kompakapps_bpjs_jkk": False, "kompakapps_bpjs_jkm": False, "kompakapps_npwp": "09.254.294.3-407.000"}
+        contract = {key: extra.pop(key) for key in list(extra) if key.startswith("kompakapps_allow")}
+        values.update(extra)
+        employee = self.env["hr.employee"].create({"name": name, "company_id": self.company.id, "contract_date_start": start, "wage": wage, **values})
+        employee.current_version_id.write({"struct_id": self.structure.id, "resource_calendar_id": self.calendar.id, **contract})
+        return employee
+
+    def _attend(self, employee, day, start=8.0, end=16.0, overtime=0.0):
+        """Kehadiran WIB pada `day`; jam disimpan UTC (WIB = UTC+7)."""
+        base = datetime.datetime.combine(day, datetime.time.min) - datetime.timedelta(hours=7)
+        attendance = self.env["hr.attendance"].create({"employee_id": employee.id, "check_in": base + datetime.timedelta(hours=start), "check_out": base + datetime.timedelta(hours=end)})
+        if overtime:
+            attendance.write({"validated_overtime_hours": overtime})
+        return attendance
+
+    def _october_days(self, skip=()):
+        days = [datetime.date(2026, 10, d) for d in range(1, 32) if datetime.date(2026, 10, d).weekday() < 5]
+        return [day for day in days if day.day not in skip]
+
+    def _oct(self, employee, inputs=None):
+        slip = self._slip(employee, inputs)
+        return self._lines(slip), slip
+
+    def test_fixed_allowances_count_in_bpjs_base(self):
+        # gaji 8.000.000 + transport 500.000 + makan 300.000 = upah 8.800.000; JHT karyawan 2% = 176.000; JHT perusahaan 3,7% = 325.600
+        employee = self._worker("Tunjangan Tetap", 8_000_000, kompakapps_allow_transport=500_000, kompakapps_allow_meal=300_000, kompakapps_bpjs_jht=True)
+        lines, _slip = self._oct(employee)
+        self.assertEqual(lines["TUNJ_TRANSPORT"], 500_000)
+        self.assertEqual(lines["TUNJ_MAKAN"], 300_000)
+        self.assertEqual(lines["BPJS_JHT_K"], -176_000)
+        self.assertEqual(lines["BPJS_JHT_P"], 325_600)
+
+    def test_attendance_lines_daily_allowance_absence_and_overtime(self):
+        # 22 hari kerja; hadir 20 (absen 14 dan 15 Oktober tanpa cuti). Tunjangan harian 50.000 x 20 = 1.000.000.
+        # Potongan absen = 8.000.000 x 2 / 22 = 727.272,7 -> 727.273.
+        # Lembur: Senin 5 Okt 3 jam (hari kerja: 1 x 1,5 + 2 x 2 = 5,5 jam setara) dan Sabtu 10 Okt 9 jam (hari libur, 5 hari kerja: 8 x 2 + 1 x 3 = 19 jam setara) = 24,5 jam setara.
+        # Dasar = gaji pokok 8.000.000 (lebih besar dari 75% x 9.000.000 = 6.750.000); upah sejam = 8.000.000 / 173; lembur = 24,5 x 46.242,77 = 1.132.948.
+        employee = self._worker("Hadir Lembur", 8_000_000, kompakapps_allow_daily=50_000)
+        for day in self._october_days(skip=(14, 15)):
+            self._attend(employee, day, overtime=3.0 if day.day == 5 else 0.0)
+        self._attend(employee, datetime.date(2026, 10, 10), overtime=9.0)
+        lines, slip = self._oct(employee)
+        worked = {line.code: line for line in slip.worked_days_line_ids}
+        self.assertEqual(worked["JADWAL"].number_of_days, 22)
+        self.assertEqual(worked["HADIR"].number_of_days, 20)
+        self.assertEqual(worked["ABSEN"].number_of_days, 2)
+        self.assertAlmostEqual(worked["LEMBUR_JAM"].number_of_hours, 12.0)
+        self.assertAlmostEqual(worked["LEMBUR_SETARA"].number_of_hours, 24.5)
+        self.assertEqual(lines["TUNJ_HARIAN"], 1_000_000)
+        self.assertEqual(lines["POT_ABSEN"], -727_273)
+        self.assertEqual(lines["LEMBUR"], 1_132_948)
+        self.assertEqual(lines["NET"], 8_000_000 + 1_000_000 - 727_273 + 1_132_948 + lines["PPH21"])
+
+    def test_overtime_base_is_at_least_75_percent_of_total_wage(self):
+        # gaji 3.000.000 dengan tunjangan harian 250.000 x 22 hari hadir = 5.500.000: tetap 3.000.000 < 75% x 8.500.000 = 6.375.000 -> dasar 6.375.000.
+        # Lembur 1 jam hari kerja = 1,5 jam setara: 6.375.000 / 173 x 1,5 = 55.274,6 -> 55.275.
+        employee = self._worker("Dasar 75", 3_000_000, kompakapps_allow_daily=250_000)
+        for day in self._october_days():
+            self._attend(employee, day, overtime=1.0 if day.day == 6 else 0.0)
+        lines, _slip = self._oct(employee)
+        self.assertEqual(lines["TUNJ_HARIAN"], 5_500_000)
+        self.assertEqual(lines["LEMBUR"], 55_275)
+
+    def test_no_attendance_data_means_no_absence_deduction(self):
+        employee = self._worker("Tanpa Kehadiran", 8_000_000)
+        lines, slip = self._oct(employee)
+        self.assertNotIn("POT_ABSEN", lines)
+        self.assertEqual(slip.worked_days_line_ids.filtered(lambda line: line.code == "ABSEN").number_of_days, 0)
+        self.assertEqual(lines["NET"], 8_000_000 + lines["PPH21"])
+
+    def test_unpaid_leave_reduces_wage_and_is_not_counted_absent(self):
+        # cuti tidak dibayar 19-20 Okt (2 hari kerja): 8.000.000 x 2 / 22 = 727.272,7 -> 727.273; hadir 20 hari, absen 0.
+        leave_type = self.env["hr.leave.type"].create({"name": "Cuti Tak Dibayar Uji", "requires_allocation": False, "leave_validation_type": "no_validation", "unpaid": True})
+        employee = self._worker("Cuti Unpaid", 8_000_000)
+        for day in self._october_days(skip=(19, 20)):
+            self._attend(employee, day)
+        self.env["hr.leave"].create({"employee_id": employee.id, "holiday_status_id": leave_type.id, "request_date_from": datetime.date(2026, 10, 19), "request_date_to": datetime.date(2026, 10, 20)})
+        lines, slip = self._oct(employee)
+        worked = {line.code: line.number_of_days for line in slip.worked_days_line_ids}
+        self.assertEqual(worked["CUTI_TDK_DIBAYAR"], 2)
+        self.assertEqual(worked["ABSEN"], 0)
+        self.assertEqual(lines["POT_CUTI"], -727_273)
+        self.assertNotIn("POT_ABSEN", lines)
+
+    def test_late_penalty_is_off_by_default_and_works_when_filled(self):
+        employee = self._worker("Telat", 8_000_000)
+        for day in self._october_days():
+            late = day.day in (1, 2, 5)
+            self._attend(employee, day, start=8.5 if late else 8.0)  # 3 hari terlambat 30 menit
+        lines, slip = self._oct(employee)
+        self.assertNotIn("POT_TERLAMBAT", lines)  # bawaan nol: nonaktif
+        for code, value in (("terlambat_per_kejadian", 10_000.0), ("terlambat_per_menit", 1_000.0), ("terlambat_toleransi_menit", 5.0)):
+            self.Param.search([("company_id", "=", self.company.id), ("code", "=", code)]).value = value
+        slip.compute_sheet()  # Hitung memuat ulang kehadiran dengan parameter terbaru
+        # 3 kali x 10.000 + 3 x (30 - 5 menit toleransi) x 1.000 = 30.000 + 75.000 = 105.000
+        self.assertEqual(self._lines(slip)["POT_TERLAMBAT"], -105_000)
+
+    def test_bonus_other_deduction_and_tax_base(self):
+        # gaji 10 juta + bonus 2 juta = bruto 12 juta, kategori A 4% = 480.000; potongan lain 150.000 mengurangi gaji bersih tetapi bukan dasar pajak.
+        employee = self._worker("Bonus", 10_000_000)
+        lines, slip = self._oct(employee, {"BONUS": 2_000_000, "POT_LAIN": 150_000})
+        self.assertEqual(lines["BONUS"], 2_000_000)
+        self.assertEqual(lines["POT_LAIN"], -150_000)
+        self.assertEqual(lines["PPH_BRUTO"], 12_000_000)
+        self.assertEqual(lines["PPH21"], -480_000)
+        self.assertEqual(lines["NET"], 10_000_000 + 2_000_000 - 150_000 - 480_000)
+        slip.action_payslip_done()
+        move = slip.kompakapps_move_id
+        self.assertTrue(move, slip.kompakapps_move_note)
+        self.assertAlmostEqual(sum(move.line_ids.mapped("debit")), sum(move.line_ids.mapped("credit")), places=2)
+        credits = {line.account_id.code: line.credit - line.debit for line in move.line_ids}
+        self.assertAlmostEqual(credits["21100060"], 150_000, places=2)  # hutang potongan karyawan
+        self.assertAlmostEqual(credits["61100020"], -2_000_000, places=2)  # bonus didebit ke beban bonus
+
+    def test_thr_is_separate_slip_with_tax_combined_with_the_month(self):
+        # THR Maret 2026 (hari raya 20 Maret), masuk 1 Maret 2025: masa kerja 12 bulan = satu bulan upah = 12.000.000 + transport 600.000 = 12.600.000.
+        # Slip bulanan Maret (bruto 12,6 juta, TER A 5% = 630.000) dikonfirmasi lebih dulu. THR: bruto gabungan 25,2 juta (TER A 10%) = 2.520.000 dikurangi 630.000 = 1.890.000.
+        employee = self._worker("Penerima THR", 12_000_000, start=datetime.date(2025, 3, 1), kompakapps_allow_transport=600_000)
+        regular = self._slip(employee, None, datetime.date(2026, 3, 1), datetime.date(2026, 3, 31))
+        self.assertEqual(self._lines(regular)["PPH21"], -630_000)
+        regular.action_payslip_done()
+        holiday = datetime.date(2026, 3, 20)
+        Payslip = self.env["hr.payslip"]
+        slip = Payslip.browse(Payslip.kompakapps_create_payslip(employee.id, holiday, holiday, struct_id=self.result["thr_structure_id"]))
+        slip.compute_sheet()
+        lines = self._lines(slip)
+        self.assertEqual(lines["THR"], 12_600_000)
+        self.assertEqual(lines["PPH21"], -1_890_000)
+        self.assertEqual(lines["NET"], 12_600_000 - 1_890_000)
+        slip.action_payslip_done()
+        self.assertTrue(slip.kompakapps_move_id, slip.kompakapps_move_note)
+
+    def test_thr_is_prorated_for_less_than_twelve_months(self):
+        # masuk 1 Oktober 2025, hari raya 20 Maret 2026: 5 bulan penuh -> 5/12 x 12.000.000 = 5.000.000; masuk 10 Maret 2026 (kurang dari sebulan) = 0.
+        Payslip = self.env["hr.payslip"]
+        newer = self._worker("THR Prorata", 12_000_000, start=datetime.date(2025, 10, 1))
+        holiday = datetime.date(2026, 3, 20)
+        slip = Payslip.browse(Payslip.kompakapps_create_payslip(newer.id, holiday, holiday, struct_id=self.result["thr_structure_id"]))
+        slip.compute_sheet()
+        self.assertEqual(self._lines(slip)["THR"], 5_000_000)
+        fresh = self._worker("THR Baru", 12_000_000, start=datetime.date(2026, 3, 10))
+        slip = Payslip.browse(Payslip.kompakapps_create_payslip(fresh.id, holiday, holiday, struct_id=self.result["thr_structure_id"]))
+        slip.compute_sheet()
+        self.assertEqual(self._lines(slip)["THR"], 0)
+
+    def test_duplicate_guard_is_per_structure(self):
+        employee = self._worker("Dua Struktur", 12_000_000, start=datetime.date(2025, 3, 1))
+        Payslip = self.env["hr.payslip"]
+        Payslip.kompakapps_create_payslip(employee.id, datetime.date(2026, 3, 1), datetime.date(2026, 3, 31))
+        with self.assertRaises(UserError):
+            Payslip.kompakapps_create_payslip(employee.id, datetime.date(2026, 3, 1), datetime.date(2026, 3, 31))
+        holiday = datetime.date(2026, 3, 20)
+        self.assertTrue(Payslip.kompakapps_create_payslip(employee.id, holiday, holiday, struct_id=self.result["thr_structure_id"]))

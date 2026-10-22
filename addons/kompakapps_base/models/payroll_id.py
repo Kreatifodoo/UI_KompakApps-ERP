@@ -153,8 +153,8 @@ class ResCompanyPayroll(models.Model):
         for key, name in data.REGISTERS:
             registers[key], made = self._kompakapps_payroll_record("hr.contribution.register", f"reg_{key}", {"name": name, "company_id": self.id}, prefix="payroll_id")
             created = created or made
-        rules = self.env["hr.salary.rule"]
-        new_rules = self.env["hr.salary.rule"]
+        groups = {"gaji": self.env["hr.salary.rule"], "thr": self.env["hr.salary.rule"]}
+        fresh = {"gaji": self.env["hr.salary.rule"], "thr": self.env["hr.salary.rule"]}
         for spec in data.RULES:
             values = {
                 "code": spec["code"],
@@ -180,24 +180,21 @@ class ResCompanyPayroll(models.Model):
             if spec.get("register"):
                 values["register_id"] = registers[spec["register"]].id
             rule, made = self._kompakapps_payroll_record("hr.salary.rule", f"rule_{spec['key']}", values, prefix="payroll_id")
-            rules |= rule
-            if made:
-                new_rules |= rule
+            for group in spec.get("in", ("gaji",)):
+                groups[group] |= rule
+                if made:
+                    fresh[group] |= rule
             created = created or made
-        structure, made = self._kompakapps_payroll_record(
-            "hr.payroll.structure",
-            "structure",
-            {
-                "name": "Gaji Indonesia",
-                "code": "GAJI-ID",
-                "company_id": self.id,
-                "rule_ids": [Command.set(rules.ids)],
-                "kompakapps_journal_id": accounts["journal"].id,
-                "note": "Struktur gaji Indonesia: gaji pokok, tunjangan, iuran BPJS, PPh 21, lembur, potongan, dan THR. Angka hukum ada di Payroll > Setting dan perlu diperiksa akuntan.",
-            },
-            prefix="payroll_id",
-        )
-        created = created or made
-        if not made and new_rules:  # struktur lama tetap; hanya aturan yang baru ditautkan
-            structure.rule_ids = [Command.link(rule.id) for rule in new_rules]
-        return {"structure_id": structure.id, "created": created, "parameters": counts["parameters"], "rows": counts["rows"]}
+        structure_ids = {}
+        for key, name, code, group, note in data.STRUCTURES:
+            structure, made = self._kompakapps_payroll_record(
+                "hr.payroll.structure",
+                key,
+                {"name": name, "code": code, "company_id": self.id, "rule_ids": [Command.set(groups[group].ids)], "kompakapps_journal_id": accounts["journal"].id, "note": note},
+                prefix="payroll_id",
+            )
+            created = created or made
+            if not made and fresh[group]:  # struktur lama tetap; hanya aturan yang baru ditautkan
+                structure.rule_ids = [Command.link(rule.id) for rule in fresh[group]]
+            structure_ids[key] = structure.id
+        return {"structure_id": structure_ids["structure"], "thr_structure_id": structure_ids["structure_thr"], "created": created, "parameters": counts["parameters"], "rows": counts["rows"]}
