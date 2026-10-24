@@ -4,7 +4,7 @@
 import {
   PRODUCT_PAGE, searchProducts,
   INPUT, app, actionBar, badge, call, cell, chatterHtml, closeLookup, ctx, dateText, esc, fieldBlock, filterSelect, guarded, loadMessages,
-  money, pageHeader, readOne, readonlyValue, registerLookup, rowLink, runLookup, searchRead, selectOptions, statTiles, statusbar, table,
+  money, pageHeader, readOne, readonlyValue, registerLookup, rowLink, runLookup, scopeNote, searchRead, selectOptions, statTiles, statusbar, table,
   toast, today, referenceUsers,
 } from "../common.js";
 import { analyticCell, distributionChange, preloadAnalytic, readDistribution, registerAnalytic } from "../analyticpick.js";
@@ -128,6 +128,7 @@ async function renderList(query) {
        <button data-action="refresh" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50" aria-label="Muat ulang"><i class="fas fa-rotate"></i></button>
        <a href="#/pr/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>Buat Baru</a>`,
     ) +
+    (await scopeNote("purchase")) +
     table(
       [{ label: "Nomor" }, { label: "Tanggal Mulai" }, { label: "Diminta oleh" }, { label: "Dokumen Sumber" }, { label: "Estimasi Biaya", right: true }, { label: "Status" }],
       body,

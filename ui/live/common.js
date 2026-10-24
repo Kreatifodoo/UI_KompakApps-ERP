@@ -281,6 +281,14 @@ const SCOPE_NOTES = {
     own: "sales_team.group_sale_salesman", lift: ["sales_team.group_sale_salesman_all_leads", "account.group_account_invoice"],
     text: "Cakupan data Anda: hanya faktur pelanggan atas nama Anda atau yang belum punya penanggung jawab. Faktur penjual lain tidak tampil.",
   },
+  purchase: {
+    own: "kompakapps_base.group_purchase_own", lift: ["purchase.group_purchase_manager", "base.group_system"],
+    text: "Cakupan data Anda: hanya Purchase Order dengan Anda sebagai pembeli dan Purchase Request yang Anda ajukan. Dokumen pembeli lain, beserta penerimaan barang dan tagihan vendor dari PO mereka, tidak tampil.",
+  },
+  bill: {
+    own: "kompakapps_base.group_purchase_own", lift: ["purchase.group_purchase_manager", "base.group_system", "account.group_account_invoice"],
+    text: "Cakupan data Anda: hanya tagihan vendor dari PO milik Anda atau yang Anda buat sendiri. Tagihan dari PO pembeli lain tidak tampil.",
+  },
 };
 export async function scopeNote(kind) {
   const spec = SCOPE_NOTES[kind];

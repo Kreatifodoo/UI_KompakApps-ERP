@@ -28,8 +28,12 @@ const APPS = [
  */
 const SCOPES = [
   {
-    key: "sale", app: "sale", label: "Sales dan CRM", when: "user", group: "sales_team.group_sale_salesman_all_leads", means: "all",
+    key: "sale", app: "sale", label: "Sales dan CRM", when: "user", group: "sales_team.group_sale_salesman_all_leads", means: "all", initial: "own",
     hint: "Sendiri: hanya quotation, Sales Order, faktur penjualan, dan peluang miliknya (atau yang belum punya penanggung jawab). Semua: dokumen semua penjual. Manajer dan Administrator selalu melihat semua.",
+  },
+  {
+    key: "purchase", app: "purchase", label: "Purchase dan Purchase Request", when: "user", group: "kompakapps_base.group_purchase_own", means: "own", initial: "all",
+    hint: "Sendiri: hanya Purchase Order dengan dirinya sebagai pembeli, Purchase Request yang ia ajukan, serta penerimaan barang dan tagihan vendor dari PO miliknya. Semua: seluruh dokumen pembelian. Manajer dan Administrator selalu melihat semua.",
   },
 ];
 const SCOPE_OPTIONS = [["own", "Hanya dokumen sendiri"], ["all", "Semua dokumen"]];
@@ -116,7 +120,7 @@ const page = createMasterPage({
   },
   newValues: () => ({
     ...Object.fromEntries(APPS.map((a) => [`role_${a.key}`, ""])),
-    ...Object.fromEntries(SCOPES.map((s) => [`scope_${s.key}`, "own"])),
+    ...Object.fromEntries(SCOPES.map((s) => [`scope_${s.key}`, s.initial])),
     company_ids: [ctx.company.id], company_id: ctx.company.id,
   }),
   extraCreate: (v) => (String(v.login).includes("@") ? { email: String(v.login).trim() } : {}),

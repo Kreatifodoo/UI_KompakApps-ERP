@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <!-- Cakupan data Purchase dan Purchase Request (D87, Q9 irisan 2). noupdate=0: aturan ini diterapkan ulang tiap upgrade modul.
+         Grup penanda "hanya dokumen sendiri" membatasi pemegangnya; pengguna tanpa grup ini tetap melihat semua seperti bawaan Odoo.
+         Aturan grup digabung OR, jadi Manajer Purchase dan Administrator mendapat aturan "semua" sendiri agar tidak ikut terbatas bila
+         keliru diberi grup penanda. Aturan "semua" tidak dibuat untuk Purchase Request: pengguna dan manajer PR sudah punya aturan bawaan OCA,
+         dan menambahkannya akan melonggarkan aturan bawaan itu. -->
+
+    <record id="group_purchase_own" model="res.groups">
+        <field name="name">Purchase: hanya dokumen sendiri</field>
+        <field name="comment">Membatasi pemegangnya pada Purchase Order milik sendiri (pembeli = pengguna), Purchase Request yang ia ajukan, serta penerimaan barang dan tagihan vendor yang berasal dari PO miliknya. Diatur lewat Users &amp; Access &gt; Cakupan data.</field>
+    </record>
+
+    <!-- ===== Dokumen utama ===== -->
+    <record id="kompakapps_purchase_order_rule_own" model="ir.rule">
+        <field name="name">Purchase Order: hanya pesanan sendiri</field>
+        <field name="model_id" ref="purchase.model_purchase_order" />
+        <field name="domain_force">[('user_id', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('group_purchase_own'))]" />
+    </record>
+    <record id="kompakapps_purchase_order_line_rule_own" model="ir.rule">
+        <field name="name">Purchase Order Line: hanya baris pesanan sendiri</field>
+        <field name="model_id" ref="purchase.model_purchase_order_line" />
+        <field name="domain_force">[('order_id.user_id', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('group_purchase_own'))]" />
+    </record>
+    <record id="kompakapps_purchase_report_rule_own" model="ir.rule">
+        <field name="name">Purchase Analysis: hanya pesanan sendiri</field>
+        <field name="model_id" ref="purchase.model_purchase_report" />
+        <field name="domain_force">[('user_id', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('group_purchase_own'))]" />
+    </record>
+    <record id="kompakapps_purchase_request_rule_own" model="ir.rule">
+        <field name="name">Purchase Request: hanya yang diajukan sendiri</field>
+        <field name="model_id" ref="purchase_request.model_purchase_request" />
+        <field name="domain_force">[('requested_by', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('group_purchase_own'))]" />
+    </record>
+    <record id="kompakapps_purchase_request_line_rule_own" model="ir.rule">
+        <field name="name">Purchase Request Line: hanya baris PR yang diajukan sendiri</field>
+        <field name="model_id" ref="purchase_request.model_purchase_request_line" />
+        <field name="domain_force">[('request_id.requested_by', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('group_purchase_own'))]" />
+    </record>
+
+    <!-- ===== Dokumen turunan dari PO: penerimaan barang dan gerakan stoknya ===== -->
+    <!-- Hanya yang berasal dari PO milik orang lain disembunyikan; transfer tanpa PO (internal, pengiriman, penerimaan manual) tetap terlihat. -->
+    <record id="kompakapps_picking_rule_purchase_own" model="ir.rule">
+        <field name="name">Transfer: sembunyikan penerimaan dari PO milik pembeli lain</field>
+        <field name="model_id" ref="stock.model_stock_picking" />
+        <field name="domain_force">[('move_ids', 'not any', [('purchase_line_id', '!=', False), ('purchase_line_id.order_id.user_id', '!=', user.id)])]</field>
+        <field name="groups" eval="[(4, ref('group_purchase_own'))]" />
+    </record>
+    <record id="kompakapps_stock_move_rule_purchase_own" model="ir.rule">
+        <field name="name">Gerakan stok: sembunyikan yang berasal dari PO milik pembeli lain</field>
+        <field name="model_id" ref="stock.model_stock_move" />
+        <field name="domain_force">['|', ('purchase_line_id', '=', False), ('purchase_line_id.order_id.user_id', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('group_purchase_own'))]" />
+    </record>
+    <record id="kompakapps_stock_move_line_rule_purchase_own" model="ir.rule">
+        <field name="name">Detail gerakan stok: sembunyikan yang berasal dari PO milik pembeli lain</field>
+        <field name="model_id" ref="stock.model_stock_move_line" />
+        <field name="domain_force">[('move_id', 'not any', [('purchase_line_id', '!=', False), ('purchase_line_id.order_id.user_id', '!=', user.id)])]</field>
+        <field name="groups" eval="[(4, ref('group_purchase_own'))]" />
+    </record>
+
+    <!-- ===== Manajer Purchase dan Administrator: selalu semua ===== -->
+    <record id="kompakapps_purchase_order_rule_all" model="ir.rule">
+        <field name="name">Purchase Order: manajer dan administrator melihat semua</field>
+        <field name="model_id" ref="purchase.model_purchase_order" />
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('purchase.group_purchase_manager')), (4, ref('base.group_system'))]" />
+    </record>
+    <record id="kompakapps_purchase_order_line_rule_all" model="ir.rule">
+        <field name="name">Purchase Order Line: manajer dan administrator melihat semua</field>
+        <field name="model_id" ref="purchase.model_purchase_order_line" />
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('purchase.group_purchase_manager')), (4, ref('base.group_system'))]" />
+    </record>
+    <record id="kompakapps_purchase_report_rule_all" model="ir.rule">
+        <field name="name">Purchase Analysis: manajer dan administrator melihat semua</field>
+        <field name="model_id" ref="purchase.model_purchase_report" />
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('purchase.group_purchase_manager')), (4, ref('base.group_system'))]" />
+    </record>
+    <record id="kompakapps_picking_rule_purchase_all" model="ir.rule">
+        <field name="name">Transfer: manajer Purchase dan administrator melihat semua</field>
+        <field name="model_id" ref="stock.model_stock_picking" />
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('purchase.group_purchase_manager')), (4, ref('base.group_system'))]" />
+    </record>
+    <record id="kompakapps_stock_move_rule_purchase_all" model="ir.rule">
+        <field name="name">Gerakan stok: manajer Purchase dan administrator melihat semua</field>
+        <field name="model_id" ref="stock.model_stock_move" />
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('purchase.group_purchase_manager')), (4, ref('base.group_system'))]" />
+    </record>
+    <record id="kompakapps_stock_move_line_rule_purchase_all" model="ir.rule">
+        <field name="name">Detail gerakan stok: manajer Purchase dan administrator melihat semua</field>
+        <field name="model_id" ref="stock.model_stock_move_line" />
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('purchase.group_purchase_manager')), (4, ref('base.group_system'))]" />
+    </record>
+
+    <!-- ===== Tagihan vendor ===== -->
+    <!-- Aturan bawaan Purchase / User memberi semua tagihan vendor. Grup beraturan digabung OR, jadi aturan tambahan tidak bisa membatasinya;
+         domain bawaan diperketat hanya untuk pemegang grup penanda yang bukan manajer Purchase atau administrator (tagihan dari PO miliknya
+         atau yang ia buat sendiri). Aturan bawaan itu berada di data noupdate modul purchase sehingga tidak bisa ditimpa lewat record XML saat
+         upgrade; metode ini menulis ulang domainnya (idempoten) tiap install dan upgrade. Accounting Penagihan tetap melihat semua lewat aturannya. -->
+    <function model="ir.rule" name="kompakapps_apply_purchase_scope" />
+</odoo>
