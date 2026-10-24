@@ -252,6 +252,7 @@ def main():
     check_payroll_access(api)
     check_attachments(api)
     check_access_scope(api)
+    check_access_scope_purchase(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -5249,6 +5250,70 @@ def check_access_scope(api):
     check(ids(every, "crm.lead", both) == sorted([lead_a, lead_b]), "peluang: cakupan 'semua dokumen' melihat semua")
     check(bool(a.search("res.partner", [["id", "=", customer]], ["id"])), "pelanggan adalah master bersama: terlihat oleh semua penjual (tidak dibatasi per penjual)")
     check(a.call("res.users", "has_group", ids=[uid["a"]], group_ext_id="sales_team.group_sale_salesman_all_leads") is False, "pengguna 'sendiri' tidak punya grup 'semua dokumen' (dasar catatan Cakupan data di UI)")
+
+
+def check_access_scope_purchase(api):
+    """Cakupan data Purchase dan Purchase Request (D87, Q9 irisan 2): pembeli 'sendiri' hanya melihat PO, PR, penerimaan, dan tagihan miliknya."""
+    step("Cakupan data Purchase dan Purchase Request: aturan record per pengguna")
+    apis = scope_apis(api, "PURCHASE_A", "PURCHASE_B", "PURCHASE_ALL")
+    if not apis:
+        return
+    a, b, every = apis
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    uid = {name: client.call("res.users", "context_get")["uid"] for name, client in (("a", a), ("b", b), ("all", every))}
+    [product] = api.search("product.product", [["purchase_ok", "=", True], ["is_storable", "=", True]], ["id", "uom_id"], limit=1)
+    [vendor] = api.call("res.partner", "create", vals_list=[{"name": f"Pemasok Cakupan {tag}", "is_company": True, "supplier_rank": 1}])
+    ids = lambda client, model, domain: sorted(r["id"] for r in client.search(model, domain, ["id"]))  # noqa: E731
+
+    def order(owner):
+        vals = {"partner_id": vendor, "user_id": owner or False, "order_line": [[0, 0, {"product_id": product["id"], "product_qty": 5.0, "price_unit": 100000.0}]]}
+        [oid] = api.call("purchase.order", "create", vals_list=[vals])
+        return oid
+
+    po_a, po_b, po_none = order(uid["a"]), order(uid["b"]), order(None)
+    api.call("purchase.order", "button_confirm", ids=[po_a, po_b])
+    orders = [po_a, po_b, po_none]
+    in_orders = [["id", "in", orders]]
+    check(ids(a, "purchase.order", in_orders) == [po_a] and ids(b, "purchase.order", in_orders) == [po_b], "pembeli sendiri hanya melihat PO miliknya (PO tanpa pembeli tersembunyi)")
+    check(a.call("purchase.order", "search_count", domain=in_orders) == 1, "hitungan (search_count) pembeli sendiri hanya PO miliknya")
+    groups = a.call("purchase.order", "formatted_read_group", domain=in_orders, groupby=["user_id"], aggregates=["__count"])
+    check(sum(g["__count"] for g in groups) == 1, "pengelompokan (dashboard, laporan) tidak menghitung PO pembeli lain")
+    check(denied(a, "purchase.order", "read", ids=[po_b], fields=["name"]) and denied(a, "purchase.order", "write", ids=[po_b], vals={"partner_ref": "x"}), "membuka dan mengubah PO pembeli lain ditolak (403)")
+    check(denied(a, "purchase.order", "button_cancel", ids=[po_b]) and denied(a, "purchase.order", "unlink", ids=[po_b]), "membatalkan dan menghapus PO pembeli lain ditolak (403)")
+    check(ids(every, "purchase.order", in_orders) == sorted(orders) and ids(api, "purchase.order", in_orders) == sorted(orders), "pembeli tanpa grup penanda dan admin melihat semua PO")
+    rows = a.call("purchase.report", "formatted_read_group", domain=[["order_id", "in", orders]], groupby=["user_id"], aggregates=["__count"])
+    check({g["user_id"][0] for g in rows if g["user_id"]} == {uid["a"]}, "analisis pembelian (purchase.report) mengikuti cakupan yang sama")
+
+    pickings = api.call("purchase.order", "read", ids=[po_a, po_b], fields=["picking_ids"])
+    receipt_a, receipt_b = pickings[0]["picking_ids"][0], pickings[1]["picking_ids"][0]
+    both = [["id", "in", [receipt_a, receipt_b]]]
+    check(ids(a, "stock.picking", both) == [receipt_a] and ids(every, "stock.picking", both) == sorted([receipt_a, receipt_b]), "penerimaan dari PO pembeli lain tersembunyi; pembeli tanpa grup penanda melihat semua")
+    check(denied(a, "stock.picking", "read", ids=[receipt_b], fields=["name"]), "membuka penerimaan dari PO pembeli lain ditolak (403)")
+
+    [warehouse] = api.search("stock.warehouse", [], ["in_type_id"], limit=1)
+    def request(owner):
+        [rid] = api.call("purchase.request", "create", vals_list=[{
+            "picking_type_id": warehouse["in_type_id"][0], "requested_by": owner,
+            "line_ids": [[0, 0, {"product_id": product["id"], "product_uom_id": product["uom_id"][0], "product_qty": 3.0}]],
+        }])
+        return rid
+
+    pr_a, pr_b = request(uid["a"]), request(uid["b"])
+    both = [["id", "in", [pr_a, pr_b]]]
+    check(ids(a, "purchase.request", both) == [pr_a] and ids(every, "purchase.request", both) == sorted([pr_a, pr_b]), "Purchase Request: pembeli sendiri hanya yang ia ajukan, tanpa grup penanda melihat semua")
+    check(denied(a, "purchase.request", "write", ids=[pr_b], vals={"description": "x"}), "mengubah PR pembeli lain ditolak (403)")
+
+    def bill(client):
+        [mid] = client.call("account.move", "create", vals_list=[{
+            "move_type": "in_invoice", "partner_id": vendor, "invoice_date": datetime.date.today().isoformat(),
+            "invoice_line_ids": [[0, 0, {"name": "Biaya", "quantity": 1, "price_unit": 250_000.0}]],
+        }])
+        return mid
+
+    bill_a = bill(a)
+    check(ids(a, "account.move", [["id", "=", bill_a]]) == [bill_a] and not ids(b, "account.move", [["id", "=", bill_a]]), "tagihan vendor buatan pembeli sendiri tersembunyi dari pembeli lain")
+    check(ids(every, "account.move", [["id", "=", bill_a]]) == [bill_a] and denied(b, "account.move", "read", ids=[bill_a], fields=["name"]), "pembeli tanpa grup penanda melihat tagihan; pembeli lain ditolak membukanya (403)")
+    check(a.call("res.users", "has_group", ids=[uid["a"]], group_ext_id="kompakapps_base.group_purchase_own") is True and every.call("res.users", "has_group", ids=[uid["all"]], group_ext_id="kompakapps_base.group_purchase_own") is False, "grup penanda hanya dimiliki pembeli sendiri (dasar catatan Cakupan data di UI)")
 
 
 def bill_total(api, bill_id):

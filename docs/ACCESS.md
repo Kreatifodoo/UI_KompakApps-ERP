@@ -18,7 +18,7 @@ Bagian **Cakupan data** muncul di form pengguna bila pengguna punya peran pada a
 | Aplikasi | Peran yang bisa dibatasi | Pilihan | Grup yang ditulis | Irisan |
 | --- | --- | --- | --- | --- |
 | Sales dan CRM | Salesperson | Hanya dokumen sendiri / Semua dokumen | `sales_team.group_sale_salesman_all_leads` (ada = Semua) | 1 |
-| Purchase dan Purchase Request | Pengguna | Hanya dokumen sendiri / Semua dokumen | `kompakapps_base.group_purchase_own` (ada = Sendiri) | 2 (menyusul) |
+| Purchase dan Purchase Request | Pengguna | Hanya dokumen sendiri / Semua dokumen | `kompakapps_base.group_purchase_own` (ada = Sendiri) | 2 |
 | Inventory | Pengguna | Gudang yang diizinkan | `res.users.kompakapps_warehouse_ids` | 3 (menyusul) |
 
 Peran per aplikasi dipetakan ke grup bertingkat Odoo: peran lebih tinggi membawa peran di bawahnya secara tersirat (Manajer Sales membawa "Semua dokumen", yang membawa "Dokumen sendiri"). Pencabutan manajer mencabut grup manajernya saja; grup "semua dokumen" yang ditulis eksplisit ikut dicabut atau dipasang sesuai pilihan Cakupan data, jadi turun dari Manajer ke Salesperson "Sendiri" benar-benar membatasi (diuji).
@@ -64,14 +64,24 @@ Faktur yang dibuat dari Sales Order mewarisi penjualnya (`invoice_user_id`); fak
 
 ### Purchase dan Purchase Request
 
-Keadaan bawaan, sebelum irisan 2: **tidak ada aturan "sendiri" pada Purchase Order**; semua pengguna Purchase melihat semua PO, penerimaan barang, dan tagihan vendor. Purchase Request sudah dibatasi bawaan OCA.
+Bawaan Odoo: **tidak ada aturan "sendiri" pada Purchase Order**; semua pengguna Purchase melihat semua PO, penerimaan barang, dan tagihan vendor, dan Purchase Request Pengguna sudah dibatasi bawaan OCA. KompakApps menambah grup penanda **`kompakapps_base.group_purchase_own`** ("Purchase: hanya dokumen sendiri") yang membatasi hanya pemegangnya (Users & Access > Cakupan data > Hanya dokumen sendiri). Pengguna tanpa grup ini, Manajer Purchase, dan Administrator tetap melihat semua. Aturan ada di `security/access_scope.xml`.
 
 | Objek | Peran | Apa yang terlihat | Sumber rule |
 | --- | --- | --- | --- |
-| Purchase Order dan barisnya | Purchase Pengguna dan Manajer (ACL penuh) | Semua PO perusahaan | hanya aturan perusahaan (`purchase.purchase_order_comp_rule`) |
-| Tagihan vendor (`account.move` in_invoice, in_refund, in_receipt) | Purchase Pengguna | Semua tagihan vendor (bukan faktur pelanggan) | `purchase.purchase_user_account_move_rule` |
+| Purchase Order, barisnya, dan analisis pembelian | Purchase Pengguna **tanpa** grup penanda | Semua PO perusahaan (bawaan) | hanya aturan perusahaan |
+| idem | Purchase Pengguna **dengan** grup penanda | Hanya PO dengan `user_id` (pembeli) = dirinya; PO tanpa pembeli tersembunyi | `kompakapps_base.kompakapps_purchase_order_rule_own`, `..._order_line_rule_own`, `..._purchase_report_rule_own` |
+| idem | Manajer Purchase dan Administrator (walau keliru diberi grup penanda) | Semua | `kompakapps_base.kompakapps_purchase_order_rule_all` (dan baris, analisis) |
+| Penerimaan barang (`stock.picking`), gerakan stok, dan detailnya | Pemegang grup penanda | Penerimaan dari PO milik pembeli lain **tersembunyi**; transfer tanpa PO (internal, pengiriman, penerimaan manual) tetap terlihat | `kompakapps_base.kompakapps_picking_rule_purchase_own`, `..._stock_move_rule_purchase_own`, `..._stock_move_line_rule_purchase_own` |
+| idem | Manajer Purchase dan Administrator | Semua | `kompakapps_base.kompakapps_picking_rule_purchase_all` (dan gerakan, detail) |
+| Tagihan vendor (`account.move` in_invoice, in_refund, in_receipt) dan item jurnalnya | Purchase Pengguna tanpa grup penanda | Semua tagihan vendor (bawaan; bukan faktur pelanggan) | `purchase.purchase_user_account_move_rule` dan `..._line_rule` |
+| idem | Pemegang grup penanda (bukan manajer atau administrator) | Hanya tagihan dari PO miliknya atau yang ia buat sendiri | domain aturan bawaan yang sama, **diperketat** oleh `ir.rule.kompakapps_apply_purchase_scope` (menulis ulang tiap install dan upgrade karena aturan bawaan berada di data noupdate modul purchase) |
+| idem | Accounting Penagihan, Akuntan, Advisor | Semua tagihan (aturan grup digabung OR) | `account.account_move_see_all` |
 | Purchase Request dan barisnya | Purchase Request Pengguna | Hanya PR dengan `requested_by` = dirinya, ditambah PR yang ia ikuti (follower) | `purchase_request.purchase_request_rule`, `purchase_request.purchase_request_followers_rule` (dan versi baris) |
 | idem | Purchase Request Manajer | Semua PR | `purchase_request.purchase_request_manager_rule` |
+| idem | Pengguna Purchase **tanpa** peran Purchase Request (ACL baca) | Semua PR (bawaan) | hanya aturan perusahaan |
+| idem | Pemegang grup penanda | Hanya PR yang ia ajukan | `kompakapps_base.kompakapps_purchase_request_rule_own` (dan `..._line_rule_own`) |
+
+Alur P2P untuk pembeli "sendiri" (diuji): ia mengonfirmasi PO miliknya, menerima barangnya, dan membuat tagihan dari PO itu; hanya dokumen turunan PO miliknya yang terlihat. Dua hal yang bukan akibat Cakupan data tetapi perlu peran lain (bawaan Odoo): **menerima barang** butuh peran Inventory (validasi penerimaan membaca referensi stok yang menyentuh Sales Order) dan **memposting tagihan** butuh Accounting Penagihan.
 
 ### Inventory, Manufacture, POS
 
@@ -108,12 +118,14 @@ Laporan keuangan (neraca, laba rugi, buku besar) dibaca dengan hak Accounting; t
 
 - **Pelanggan dan pemasok tidak dibatasi per penjual atau pembeli** (lihat di atas). Bila suatu saat diperlukan, jalurnya adalah aturan pada `res.partner` berbasis penjual, tetapi harus diuji terhadap Purchase, Accounting, dan POS lebih dulu.
 - **Pesanan tanpa penanggung jawab** terlihat oleh semua penjual "sendiri". Ini perilaku bawaan Odoo dan dipertahankan agar permintaan masuk tanpa penjual tetap terlihat.
+- **Purchase Request**: aturan "sendiri" memakai pengaju (`requested_by`), bukan penerima tugas (`assigned_to`), mengikuti keputusan Q9 dan agar tidak melonggarkan aturan OCA; pembeli yang perlu mengubah PR orang lain menjadi RFQ harus tidak dibatasi (tanpa grup penanda) atau Manajer. PO tanpa pembeli tersembunyi dari pembeli "sendiri" (hanya terlihat oleh yang tidak dibatasi).
 - **Aturan grup digabung OR**: pengguna yang diberi banyak peran melihat gabungan cakupannya. Contoh yang diuji: Salesperson "sendiri" yang juga Accounting Penagihan melihat semua faktur penjualan.
 - **Peran Inventory, Manufacture, dan Accounting Penagihan melihat semua Sales Order** karena hak model Odoo tanpa aturan grup; tidak diperketat karena mereka memprosesnya.
 - Pesan galat Odoo berbahasa Inggris untuk penolakan akses diganti kalimat Indonesia di UI (`ui/live/odoo.js`); rincian teknis tetap ada di respons API.
 
 ## Pembuktian
 
+- Test Odoo `TestAccessScopePurchase` (8 test): PO, baris, hitungan, pengelompokan, analisis, baca/ubah/batalkan/hapus PO pembeli lain ditolak, tanpa grup penanda dan manajer dan administrator melihat semua, Purchase Request, penerimaan, gerakan stok, dan tagihan dari PO ikut pemilik PO, pembeli menjalankan konfirmasi sampai tagihan, tagihan manual, serta perintah grup Users & Access.
 - Test Odoo `TestAccessScopeSales` (`addons/kompakapps_base/tests/test_access_scope.py`): daftar, `search_count`, `formatted_read_group`, akses langsung ke ID orang lain (baca, ubah, hapus, batalkan) ditolak, analisis penjualan, faktur, peluang, pelanggan bersama, pengguna tanpa peran, dan perintah grup yang dipakai Users & Access.
-- Skrip regresi `scripts/check_p2p_api.py` (`check_access_scope`): dua penjual "sendiri" dan satu "semua" dengan API key sementara dari `scripts/access_test_users.py`, buat dan hapus lewat `odoo shell`.
+- Skrip regresi `scripts/check_p2p_api.py` (`check_access_scope` dan `check_access_scope_purchase`): dua penjual "sendiri" dan satu "semua" dengan API key sementara dari `scripts/access_test_users.py`, buat dan hapus lewat `odoo shell`.
 - Uji browser dengan pengguna terbatas: daftar hanya miliknya, membuka dokumen orang lain menampilkan kartu "Akses ditolak", dan Users & Access menulis grup yang benar.

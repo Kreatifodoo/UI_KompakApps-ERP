@@ -292,7 +292,7 @@ export function createInvoicePage(config) {
          <button data-action="refresh" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50" aria-label="Muat ulang"><i class="fas fa-rotate"></i></button>
          ${createMenu}`,
       ) +
-      (config.moveType.startsWith("out_") ? await scopeNote("invoice") : "") +
+      (config.moveType.startsWith("out_") ? await scopeNote("invoice") : await scopeNote("bill")) +
       (partner
         ? `<p class="text-sm text-gray-500 mb-3">Difilter ${config.partnerFilter}. <a href="#/${config.route}" class="text-indigo-600 hover:underline">Tampilkan semua</a></p>`
         : "") +

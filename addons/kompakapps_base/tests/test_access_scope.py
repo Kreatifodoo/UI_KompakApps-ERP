@@ -8,6 +8,14 @@ SALES_ALL = "sales_team.group_sale_salesman_all_leads"  # Odoo: "User: All Docum
 SALES_MANAGER = "sales_team.group_sale_manager"
 
 
+def make_scope_user(env, login, xmlids):
+    """Pengguna internal dengan grup tertentu (di luar pengguna internal) untuk menguji cakupan data."""
+    groups = [env.ref("base.group_user").id] + [env.ref(x).id for x in xmlids]
+    return env["res.users"].create(
+        {"name": login, "login": login, "group_ids": [Command.set(groups)], "company_ids": [Command.set(env.company.ids)], "company_id": env.company.id}
+    )
+
+
 @tagged("post_install", "-at_install", "kompakapps")
 class TestAccessScopeSales(AccountTestInvoicingCommon):
     """Cakupan data Sales dan CRM (D87, Q9 irisan 1): penjual "sendiri" hanya melihat dan mengubah dokumennya, "semua" dan manajer melihat semua."""
@@ -47,10 +55,7 @@ class TestAccessScopeSales(AccountTestInvoicingCommon):
 
     @classmethod
     def _scope_user(cls, login, xmlids):
-        groups = [cls.env.ref("base.group_user").id] + [cls.env.ref(x).id for x in xmlids]
-        return cls.env["res.users"].create(
-            {"name": login, "login": login, "group_ids": [Command.set(groups)], "company_ids": [Command.set(cls.env.company.ids)], "company_id": cls.env.company.id}
-        )
+        return make_scope_user(cls.env, login, xmlids)
 
     @classmethod
     def _order(cls, user):
@@ -218,3 +223,203 @@ class TestAccessScopeSales(AccountTestInvoicingCommon):
         self._apply_sales_role(user, "", "own")
         with self.assertRaises(AccessError):
             self._as(user, "sale.order").search_count([])
+
+
+PURCHASE_USER = "purchase.group_purchase_user"
+PURCHASE_MANAGER = "purchase.group_purchase_manager"
+PURCHASE_OWN = "kompakapps_base.group_purchase_own"
+STOCK_USER = "stock.group_stock_user"
+
+
+@tagged("post_install", "-at_install", "kompakapps")
+class TestAccessScopePurchase(AccountTestInvoicingCommon):
+    """Cakupan data Purchase dan Purchase Request (D87, Q9 irisan 2): pembeli "sendiri" hanya melihat PO, penerimaan, dan tagihan dari PO miliknya."""
+
+    @classmethod
+    @AccountTestInvoicingCommon.setup_country("id")
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.env.user.write(
+            {"group_ids": [Command.link(cls.env.ref(x).id) for x in (PURCHASE_MANAGER, "purchase_request.group_purchase_request_manager", "stock.group_stock_manager")]}
+        )
+        # Pembeli yang juga menerima barang butuh peran Inventory (bawaan Odoo: validasi penerimaan membaca referensi stok yang menyentuh Sales Order)
+        cls.buyer_a = cls._scope_user("scope_buyer_a", [PURCHASE_USER, STOCK_USER, PURCHASE_OWN])
+        cls.buyer_b = cls._scope_user("scope_buyer_b", [PURCHASE_USER, STOCK_USER, PURCHASE_OWN])
+        cls.buyer_all = cls._scope_user("scope_buyer_all", [PURCHASE_USER, STOCK_USER])
+        cls.manager = cls._scope_user("scope_buyer_mgr", [PURCHASE_MANAGER, PURCHASE_OWN])  # keliru diberi grup penanda: tetap melihat semua
+        cls.sysadmin = cls._scope_user("scope_buyer_admin", ["base.group_system", PURCHASE_USER, PURCHASE_OWN])
+        cls.accountant = cls._scope_user("scope_buyer_acct", ["account.group_account_invoice"])
+        cls.plain = cls._scope_user("scope_buyer_plain", [])
+        cls.vendor = cls.env["res.partner"].create({"name": "PT Pemasok Cakupan", "is_company": True})
+        cls.material = cls._create_product(
+            name="Bahan Cakupan Data", type="consu", is_storable=True, standard_price=100000.0, supplier_taxes_id=cls.company_data["default_tax_purchase"]
+        )
+        cls.po_a = cls._order(cls.buyer_a)
+        cls.po_b = cls._order(cls.buyer_b)
+        cls.po_none = cls._order(None)
+        (cls.po_a | cls.po_b).button_confirm()
+        cls.orders = cls.po_a | cls.po_b | cls.po_none
+
+    @classmethod
+    def _scope_user(cls, login, xmlids):
+        return make_scope_user(cls.env, login, xmlids)
+
+    @classmethod
+    def _order(cls, user):
+        return cls.env["purchase.order"].create(
+            {
+                "partner_id": cls.vendor.id,
+                "user_id": user.id if user else False,
+                "order_line": [Command.create({"product_id": cls.material.id, "product_qty": 10.0, "price_unit": 100000.0})],
+            }
+        )
+
+    def _visible(self, user, records):
+        return records.with_user(user).search([("id", "in", records.ids)])
+
+    # ---------- Purchase Order ----------
+    def test_own_buyer_sees_only_own_orders_lines_counts_groups_and_analysis(self):
+        orders = self.env["purchase.order"].with_user(self.buyer_a)
+        domain = [("id", "in", self.orders.ids)]
+        self.assertEqual(orders.search(domain), self.po_a, "Pembeli sendiri hanya melihat PO miliknya (PO tanpa pembeli tersembunyi)")
+        self.assertEqual(orders.search_count(domain), 1)
+        groups = orders.formatted_read_group(domain, ["user_id"], ["__count"])
+        self.assertEqual(sum(g["__count"] for g in groups), 1)
+        lines = self.env["purchase.order.line"].with_user(self.buyer_a)
+        self.assertEqual(lines.search([("order_id", "in", self.orders.ids)]).order_id, self.po_a, "Baris PO ikut terbatas")
+        report = self.env["purchase.report"].with_user(self.buyer_a)
+        rows = report.formatted_read_group([("order_id", "in", self.orders.ids)], ["user_id"], ["__count"])
+        self.assertEqual({g["user_id"][0] for g in rows if g["user_id"]}, {self.buyer_a.id}, "Analisis pembelian ikut terbatas")
+        self.assertEqual(self._visible(self.buyer_b, self.orders), self.po_b)
+
+    def test_own_buyer_cannot_read_write_cancel_or_delete_other_buyers_order(self):
+        other = self.po_b.with_user(self.buyer_a)
+        with self.assertRaises(AccessError):
+            other.read(["name"])
+        with self.assertRaises(AccessError):
+            other.write({"partner_ref": "diubah"})
+        with self.assertRaises(AccessError):
+            other.button_cancel()
+        with self.assertRaises(AccessError):
+            other.unlink()
+        self.assertFalse(self.po_b.partner_ref)
+
+    def test_users_without_own_group_managers_and_administrators_see_every_order(self):
+        for user in (self.buyer_all, self.manager, self.sysadmin):
+            self.assertEqual(self._visible(user, self.orders), self.orders, user.login)
+            self.assertEqual(len(self.env["purchase.order.line"].with_user(user).search([("order_id", "in", self.orders.ids)]).order_id), 3)
+        self.po_b.with_user(self.manager).write({"partner_ref": "oleh manajer"})
+        self.assertEqual(self.po_b.partner_ref, "oleh manajer")
+
+    def test_user_without_purchase_role_has_no_purchase_access(self):
+        with self.assertRaises(AccessError):
+            self.env["purchase.order"].with_user(self.plain).search_count([])
+
+    # ---------- Purchase Request ----------
+    def test_purchase_requests_follow_own_scope_for_users_without_a_request_role(self):
+        warehouse = self.env["stock.warehouse"].search([("company_id", "=", self.env.company.id)], limit=1)
+
+        def make(user):
+            return self.env["purchase.request"].create(
+                {
+                    "picking_type_id": warehouse.in_type_id.id,
+                    "requested_by": user.id,
+                    "line_ids": [Command.create({"product_id": self.material.id, "product_uom_id": self.material.uom_id.id, "product_qty": 5.0})],
+                }
+            )
+
+        pr_a, pr_b = make(self.buyer_a), make(self.buyer_b)
+        both = pr_a | pr_b
+        self.assertEqual(self._visible(self.buyer_a, both), pr_a, "Pembeli sendiri melihat PR yang ia ajukan")
+        self.assertEqual(self.env["purchase.request.line"].with_user(self.buyer_a).search([("request_id", "in", both.ids)]).request_id, pr_a)
+        self.assertEqual(self._visible(self.buyer_all, both), both, "Pembeli tanpa grup penanda dan tanpa peran PR melihat semua PR (bawaan Odoo)")
+        self.assertEqual(self._visible(self.env.user, both), both, "Manajer PR melihat semua")
+        with self.assertRaises(AccessError):
+            pr_b.with_user(self.buyer_a).write({"description": "diubah"})
+
+    # ---------- Dokumen turunan ----------
+    def test_receipts_moves_and_bills_follow_the_order_owner_and_the_buyer_can_run_the_flow(self):
+        receipt_a, receipt_b = self.po_a.picking_ids, self.po_b.picking_ids
+        self.assertTrue(receipt_a and receipt_b)
+        pickings = receipt_a | receipt_b
+        self.assertEqual(self._visible(self.buyer_a, pickings), receipt_a, "Penerimaan dari PO pembeli lain tersembunyi")
+        self.assertEqual(self._visible(self.buyer_all, pickings), pickings)
+        self.assertEqual(self._visible(self.manager, pickings), pickings)
+        with self.assertRaises(AccessError):
+            receipt_b.with_user(self.buyer_a).read(["name"])
+        moves = pickings.move_ids
+        self.assertEqual(self._visible(self.buyer_a, moves).picking_id, receipt_a)
+        move_lines = pickings.move_ids.move_line_ids
+        self.assertEqual(self._visible(self.buyer_a, move_lines).move_id.picking_id, receipt_a)
+        warehouse = self.env["stock.warehouse"].search([("company_id", "=", self.env.company.id)], limit=1)
+        internal = self.env["stock.picking"].create({"picking_type_id": warehouse.int_type_id.id})
+        self.assertEqual(self._visible(self.buyer_a, internal), internal, "Transfer tanpa PO tetap terlihat")
+
+        # pembeli sendiri menerima barang dan membuat tagihan dari PO miliknya
+        for receipt in (receipt_a, receipt_b):
+            receipt.move_ids.quantity = 10.0
+            receipt.move_ids.picked = True
+        receipt_a.with_user(self.buyer_a).button_validate()
+        self.assertEqual(receipt_a.state, "done")
+        self.po_a.with_user(self.buyer_a).action_create_invoice()
+        bill_a = self.po_a.invoice_ids
+        self.assertEqual(len(bill_a), 1)
+        receipt_b.with_user(self.buyer_b).button_validate()
+        self.po_b.with_user(self.buyer_b).action_create_invoice()
+        bill_b = self.po_b.invoice_ids
+        bills = bill_a | bill_b
+        self.assertEqual(self._visible(self.buyer_a, bills), bill_a, "Tagihan dari PO milik pembeli lain tersembunyi")
+        self.assertEqual(self._visible(self.buyer_b, bills), bill_b)
+        for user in (self.buyer_all, self.manager, self.accountant, self.sysadmin):
+            self.assertEqual(self._visible(user, bills), bills, user.login)
+        with self.assertRaises(AccessError):
+            bill_b.with_user(self.buyer_a).read(["name"])
+        with self.assertRaises(AccessError):
+            bill_b.with_user(self.buyer_a).write({"ref": "diubah"})
+        journal_items = self.env["account.move.line"].with_user(self.buyer_a).search([("move_id", "in", bills.ids)]).move_id
+        self.assertEqual(journal_items, bill_a, "Item jurnal tagihan pembeli lain tersembunyi")
+        bill_a.invoice_date = fields.Date.today()
+        bill_a.with_user(self.accountant).action_post()  # memposting adalah hak Accounting Penagihan (bawaan Odoo), bukan pembeli
+        self.assertEqual(bill_a.state, "posted")
+        self.assertEqual(self._visible(self.buyer_a, bills), bill_a, "Tagihan terposting tetap terlihat oleh pembeli pemilik PO")
+
+    def test_manual_vendor_bill_is_visible_to_its_creator_only_among_own_scope_buyers(self):
+        vals = {
+            "move_type": "in_invoice",
+            "partner_id": self.vendor.id,
+            "invoice_date": fields.Date.today(),
+            "invoice_line_ids": [Command.create({"name": "Biaya lain", "quantity": 1, "price_unit": 250_000.0})],
+        }
+        bill = self.env["account.move"].with_user(self.buyer_a).create(vals)
+        self.assertEqual(self._visible(self.buyer_a, bill), bill)
+        self.assertFalse(self._visible(self.buyer_b, bill), "Tagihan manual buatan pembeli lain tersembunyi")
+        self.assertEqual(self._visible(self.buyer_all, bill), bill)
+
+    # ---------- Perintah grup yang dipakai Users & Access ----------
+    def test_users_and_access_commands_switch_purchase_scope(self):
+        own, user_group, manager_group = (self.env.ref(x).id for x in (PURCHASE_OWN, PURCHASE_USER, PURCHASE_MANAGER))
+        user = self._scope_user("scope_purchase_switch", [])
+
+        def apply(role, scope, admin=False):
+            """Meniru afterSave di ui/live/pages/users.js untuk Purchase (grup penanda berarti Sendiri)."""
+            desired = {"": -1, "user": 0, "manager": 1}[role]
+            commands = []
+            for index, gid in enumerate((user_group, manager_group)):
+                if index == desired:
+                    commands.append(Command.link(gid))
+                elif index > desired:
+                    commands.append(Command.unlink(gid))
+            effective = "all" if admin or role != "user" else scope
+            commands.append(Command.link(own) if role == "user" and effective == "own" else Command.unlink(own))
+            user.write({"group_ids": commands})
+
+        apply("user", "own")
+        self.assertFalse(self._visible(user, self.orders), "Pembeli sendiri tanpa PO miliknya tidak melihat PO orang lain")
+        apply("user", "all")
+        self.assertEqual(self._visible(user, self.orders), self.orders)
+        apply("user", "own")
+        apply("manager", "own")
+        self.assertNotIn(self.env.ref(PURCHASE_OWN), user.all_group_ids, "Manajer: grup penanda dicabut")
+        self.assertEqual(self._visible(user, self.orders), self.orders)
+        apply("user", "own", admin=True)
+        self.assertNotIn(self.env.ref(PURCHASE_OWN), user.all_group_ids, "Administrator otomatis Semua")

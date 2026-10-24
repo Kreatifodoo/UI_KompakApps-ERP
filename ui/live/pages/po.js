@@ -5,7 +5,7 @@
 import {
   PRODUCT_PAGE, searchProducts,
   INPUT, actionBar, app, badge, call, cell, attachmentsPendingHtml, chatterHtml, closeLookup, ctx, dateText, esc, fieldBlock, filterSelect, fromInputDateTime,
-  guarded, loadMessages, money, pageHeader, readOne, readonlyValue, referenceUsers, referenceWarehouses, registerLookup, rowLink, runLookup, searchRead,
+  guarded, loadMessages, money, pageHeader, readOne, readonlyValue, referenceUsers, referenceWarehouses, registerLookup, rowLink, runLookup, scopeNote, searchRead,
   selectOptions, statTiles, statusbar, table, toInputDateTime, toast, dateTimeText,
 } from "../common.js";
 import { loadTaxNames, productDefaultTaxes, registerTaxes, taxCell, taxChange, taxList } from "../taxpick.js";
@@ -217,6 +217,7 @@ async function renderList(query) {
        <button data-action="refresh" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50" aria-label="Muat ulang"><i class="fas fa-rotate"></i></button>
        <a href="#/po/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>RFQ Baru</a>`,
     ) +
+    (await scopeNote("purchase")) +
     (partner
       ? `<p class="text-sm text-gray-500 mb-3">Difilter per pemasok. <a href="#/po" class="text-indigo-600 hover:underline">Tampilkan semua</a></p>`
       : "") +

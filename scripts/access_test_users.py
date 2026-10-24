@@ -7,6 +7,7 @@ HANYA untuk stack uji sendiri, bukan database pemilik. Dijalankan lewat `odoo sh
 
 Simpan keluaran KEY ke berkas berizin 600 (jangan dicetak ke obrolan), lalu ekspor sebagai KOMPAKAPPS_KEY_<NAMA> untuk check_p2p_api.py.
 Peran: SALES_A dan SALES_B = Salesperson "hanya dokumen sendiri", SALES_ALL = Salesperson "semua dokumen".
+PURCHASE_A dan PURCHASE_B = Purchase "hanya dokumen sendiri", PURCHASE_ALL = Purchase tanpa pembatasan (semua dokumen).
 """
 
 import os
@@ -18,6 +19,10 @@ USERS = {
     "SALES_A": ("akses.sales.a", ["sales_team.group_sale_salesman"]),
     "SALES_B": ("akses.sales.b", ["sales_team.group_sale_salesman"]),
     "SALES_ALL": ("akses.sales.all", ["sales_team.group_sale_salesman_all_leads"]),
+    # pembeli yang juga menerima barang butuh peran Inventory (bawaan Odoo)
+    "PURCHASE_A": ("akses.purchase.a", ["purchase.group_purchase_user", "stock.group_stock_user", "kompakapps_base.group_purchase_own"]),
+    "PURCHASE_B": ("akses.purchase.b", ["purchase.group_purchase_user", "stock.group_stock_user", "kompakapps_base.group_purchase_own"]),
+    "PURCHASE_ALL": ("akses.purchase.all", ["purchase.group_purchase_user", "stock.group_stock_user"]),
 }
 
 
