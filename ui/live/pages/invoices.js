@@ -6,7 +6,7 @@ import {
   PRODUCT_PAGE, searchProducts,
   ACCOUNT_TYPE_LABELS, INPUT, actionBar, app, badge, call, cell, attachmentsPendingHtml, chatterHtml, closeLookup, closeModal, ctx, dateText, esc, fieldBlock, filterSelect, guarded,
   journalHtml, loadJournalItems, loadMessages, money, openModal, pageHeader, plain, readOne, readonlyValue, referenceAssetProfiles, referenceCurrencies,
-  referenceJournals, referenceSelection, referenceTerms, registerLookup, rowLink, runLookup, searchAccounts, searchRead, selectOptions, statTiles, statusbar,
+  referenceJournals, referenceSelection, referenceTerms, registerLookup, rowLink, runLookup, scopeNote, searchAccounts, searchRead, selectOptions, statTiles, statusbar,
   table, toast, today,
 } from "../common.js";
 import { loadTaxNames, productDefaultTaxes, registerTaxes, taxCell, taxChange, taxList } from "../taxpick.js";
@@ -292,6 +292,7 @@ export function createInvoicePage(config) {
          <button data-action="refresh" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50" aria-label="Muat ulang"><i class="fas fa-rotate"></i></button>
          ${createMenu}`,
       ) +
+      (config.moveType.startsWith("out_") ? await scopeNote("invoice") : "") +
       (partner
         ? `<p class="text-sm text-gray-500 mb-3">Difilter ${config.partnerFilter}. <a href="#/${config.route}" class="text-indigo-600 hover:underline">Tampilkan semua</a></p>`
         : "") +

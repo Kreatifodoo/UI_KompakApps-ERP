@@ -267,6 +267,28 @@ export const resetReferences = () => {
 };
 /** Apakah pengguna saat ini termasuk grup Odoo (fitur yang diaktifkan lewat pengaturan, mis. Lots & Serial Numbers). */
 export const hasGroup = (group) => reference(`group-${group}`, () => call("res.users", "has_group", { ids: [ctx.user.id], group_ext_id: group }).then(Boolean));
+/**
+ * Cakupan data (Q9, D87): aturan record Odoo membatasi daftar, hitungan, laporan, dan dashboard ke dokumen milik pengguna. Catatan ini
+ * tampil di atas daftar yang terbatas supaya daftar kosong atau pendek tidak membingungkan. `own` = grup yang membatasi; `lift` = grup
+ * yang (salah satunya) melonggarkan batas itu. Mengembalikan HTML kosong bila pengguna tidak terbatas.
+ */
+const SCOPE_NOTES = {
+  sale: {
+    own: "sales_team.group_sale_salesman", lift: ["sales_team.group_sale_salesman_all_leads"],
+    text: "Cakupan data Anda: hanya dokumen milik Anda atau yang belum punya penanggung jawab. Quotation, Sales Order, peluang, dan angka dashboard milik penjual lain tidak tampil.",
+  },
+  invoice: {
+    own: "sales_team.group_sale_salesman", lift: ["sales_team.group_sale_salesman_all_leads", "account.group_account_invoice"],
+    text: "Cakupan data Anda: hanya faktur pelanggan atas nama Anda atau yang belum punya penanggung jawab. Faktur penjual lain tidak tampil.",
+  },
+};
+export async function scopeNote(kind) {
+  const spec = SCOPE_NOTES[kind];
+  if (!spec || !ctx.user) return "";
+  const [limited, ...lifted] = await Promise.all([spec.own, ...spec.lift].map((group) => hasGroup(group)));
+  if (!limited || lifted.some(Boolean)) return "";
+  return `<div class="mb-4 text-xs text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-2" data-scope-note="${esc(kind)}"><i class="fas fa-user-lock mr-2"></i>${esc(spec.text)} Minta administrator mengubah Cakupan data Anda di General Setting &gt; Users &amp; Access bila perlu.</div>`;
+}
 /** Gudang aktif beserta tipe operasi penerimaan, pengiriman, dan produksinya; pemilih gudang di dokumen hanya muncul bila ada lebih dari satu (D42). */
 export const referenceWarehouses = () =>
   reference("warehouses", () => searchRead("stock.warehouse", [], ["display_name", "code", "lot_stock_id", "in_type_id", "out_type_id", "manu_type_id", "sequence"], { order: "name" }));

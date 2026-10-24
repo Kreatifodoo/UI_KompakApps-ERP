@@ -4,7 +4,7 @@
 import {
   INPUT, actionBar, app, badge, button, call, cell, changedValues, attachmentsPendingHtml, chatterHtml, closeLookup, closeModal, ctx, dateText, esc, fieldBlock, filterSelect, guarded,
   hasGroup, loadMessages, money, openModal, pageHeader, plain, readOne, readonlyValue, referenceCountries, referenceUsers, registerLookup, resetReferences,
-  rowLink, runLookup, searchBox, searchRead, selectOptions, statTiles, statusbar, table, toast,
+  rowLink, runLookup, scopeNote, searchBox, searchRead, selectOptions, statTiles, statusbar, table, toast,
 } from "../common.js";
 
 const PRIORITY = { 0: "Normal", 1: "Rendah", 2: "Tinggi", 3: "Sangat Tinggi" };
@@ -106,6 +106,7 @@ export function createLeadPage(config) {
          <a href="#/${config.route}/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>${config.newLabel}</a>`,
       ) +
       (enabled ? "" : leadsOff()) +
+      (await scopeNote("sale")) +
       table(heads, body, config.empty);
   }
 
@@ -153,6 +154,7 @@ export function createLeadPage(config) {
          <a href="#/opportunity?view=list" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50"><i class="fas fa-list mr-2"></i>Daftar</a>
          <a href="#/${config.route}/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>${config.newLabel}</a>`,
       ) +
+      (await scopeNote("sale")) +
       `<div class="grid md:grid-cols-3 gap-4 mb-4">
          <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4"><div class="text-xs font-medium text-gray-500 uppercase">Peluang berjalan</div><div class="text-xl font-semibold mt-1">${open.length}</div></div>
          <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4"><div class="text-xs font-medium text-gray-500 uppercase">Pendapatan diharapkan</div><div class="text-xl font-semibold mt-1">${esc(money(totalOpen))}</div></div>
