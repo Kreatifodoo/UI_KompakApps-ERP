@@ -251,6 +251,7 @@ def main():
     check_payroll_components(api)
     check_payroll_access(api)
     check_attachments(api)
+    check_access_scope(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -5168,6 +5169,86 @@ def check_payroll_access(api):
     rules = {r["name"] for r in api.search("ir.rule", [["name", "ilike", "Payslip"]], ["name"], limit=50)}
     check(any("karyawan membaca slip sendiri" in name for name in rules) and any("baris slip sendiri" in name for name in rules), "aturan record Slip Saya terpasang untuk slip dan baris slip")
     check(api.call("hr.payslip", "kompakapps_my_employee") in (False,) or "id" in api.call("hr.payslip", "kompakapps_my_employee"), "kompakapps_my_employee mengembalikan karyawan tertaut atau False")
+
+
+def scope_apis(api, *names):
+    """Klien API untuk pengguna uji Cakupan data (scripts/access_test_users.py); None bila API key-nya tidak diisi (pemeriksaan dilewati)."""
+    keys = [os.environ.get(f"KOMPAKAPPS_KEY_{name}", "") for name in names]
+    if not all(keys):
+        print("  lewati: isi " + ", ".join(f"KOMPAKAPPS_KEY_{n}" for n in names) + " (buat lewat scripts/access_test_users.py)")
+        return None
+    return [Api(api.base, key) for key in keys]
+
+
+def denied(api, model, method, **params):
+    """True bila Odoo menolak panggilan dengan HTTP 403 (aturan record atau hak model)."""
+    try:
+        api.call(model, method, **params)
+    except RuntimeError as error:
+        return "HTTP 403" in str(error)
+    return False
+
+
+def check_access_scope(api):
+    """Cakupan data Sales dan CRM (D87, Q9 irisan 1): penjual 'sendiri' hanya melihat, menghitung, dan mengubah dokumennya; 'semua' dan admin melihat semua."""
+    step("Cakupan data Sales dan CRM: aturan record per pengguna")
+    apis = scope_apis(api, "SALES_A", "SALES_B", "SALES_ALL")
+    if not apis:
+        return
+    a, b, every = apis
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    uid = {name: client.call("res.users", "context_get")["uid"] for name, client in (("a", a), ("b", b), ("all", every))}
+    [product] = api.search("product.product", [["sale_ok", "=", True]], ["id"], limit=1)
+    [customer] = api.call("res.partner", "create", vals_list=[{"name": f"Pelanggan Cakupan {tag}", "is_company": True, "customer_rank": 1}])
+
+    def order(owner):
+        vals = {"partner_id": customer, "user_id": owner or False, "order_line": [[0, 0, {"product_id": product["id"], "product_uom_qty": 1}]]}
+        [oid] = api.call("sale.order", "create", vals_list=[vals])
+        return oid
+
+    so_a, so_b, so_none = order(uid["a"]), order(uid["b"]), order(None)
+    api.call("sale.order", "action_confirm", ids=[so_a, so_b])
+    orders = [so_a, so_b, so_none]
+    ids = lambda client, model, domain: sorted(r["id"] for r in client.search(model, domain, ["id"]))  # noqa: E731
+    in_orders = [["id", "in", orders]]
+    check(ids(a, "sale.order", in_orders) == sorted([so_a, so_none]), "penjual sendiri melihat pesanannya dan yang belum punya penanggung jawab, bukan milik penjual lain")
+    check(a.call("sale.order", "search_count", domain=in_orders) == 2, "hitungan (search_count) penjual sendiri hanya dokumen yang boleh dilihat")
+    groups = a.call("sale.order", "formatted_read_group", domain=in_orders, groupby=["user_id"], aggregates=["__count"])
+    check(sum(g["__count"] for g in groups) == 2 and uid["b"] not in [g["user_id"][0] for g in groups if g["user_id"]], "pengelompokan (dashboard, laporan) tidak menghitung dokumen penjual lain")
+    check(denied(a, "sale.order", "read", ids=[so_b], fields=["name"]), "membuka pesanan penjual lain ditolak (403)")
+    check(denied(a, "sale.order", "write", ids=[so_b], vals={"client_order_ref": "diubah"}), "mengubah pesanan penjual lain ditolak (403)")
+    check(denied(a, "sale.order", "unlink", ids=[so_b]), "menghapus pesanan penjual lain ditolak (403)")
+    check(ids(b, "sale.order", in_orders) == sorted([so_b, so_none]), "penjual lain melihat pesanannya sendiri")
+    check(ids(every, "sale.order", in_orders) == sorted(orders) and ids(api, "sale.order", in_orders) == sorted(orders), "cakupan 'semua dokumen' dan admin melihat semua pesanan")
+    [own] = a.call("sale.order", "create", vals_list=[{"partner_id": customer, "order_line": [[0, 0, {"product_id": product["id"], "product_uom_qty": 1}]]}])
+    check(a.read("sale.order", own, ["user_id"])["user_id"][0] == uid["a"], "quotation baru otomatis milik pembuatnya dan langsung terlihat")
+    report = [["name", "in", [r["name"] for r in api.search("sale.order", [["id", "in", [so_a, so_b]]], ["name"])]]]
+    rows = a.call("sale.report", "formatted_read_group", domain=report, groupby=["user_id"], aggregates=["__count"])
+    check({g["user_id"][0] for g in rows if g["user_id"]} == {uid["a"]}, "analisis penjualan (sale.report) mengikuti cakupan yang sama")
+
+    def invoice(owner):
+        [mid] = api.call("account.move", "create", vals_list=[{
+            "move_type": "out_invoice", "partner_id": customer, "invoice_user_id": owner, "invoice_date": datetime.date.today().isoformat(),
+            "invoice_line_ids": [[0, 0, {"name": "Jasa", "quantity": 1, "price_unit": 1_000_000.0}]],
+        }])
+        return mid
+
+    inv_a, inv_b = invoice(uid["a"]), invoice(uid["b"])
+    both = [["id", "in", [inv_a, inv_b]]]
+    check(ids(a, "account.move", both) == [inv_a] and ids(every, "account.move", both) == sorted([inv_a, inv_b]), "faktur penjualan: sendiri hanya miliknya, semua melihat semua")
+    check(denied(a, "account.move", "read", ids=[inv_b], fields=["name"]) and denied(a, "account.move", "write", ids=[inv_b], vals={"ref": "x"}), "membuka dan mengubah faktur penjual lain ditolak (403)")
+
+    def lead(name, owner):
+        vals = {"name": f"{name} {tag}", "type": "opportunity", "expected_revenue": 5_000_000.0, "user_id": owner or False}
+        return api.call("crm.lead", "create", vals_list=[vals])[0]
+
+    lead_a, lead_b = lead("Peluang A", uid["a"]), lead("Peluang B", uid["b"])
+    both = [["id", "in", [lead_a, lead_b]]]
+    check(ids(a, "crm.lead", both) == [lead_a] and a.call("crm.lead", "search_count", domain=both) == 1, "peluang: sendiri hanya miliknya, hitungan ikut")
+    check(denied(a, "crm.lead", "write", ids=[lead_b], vals={"name": "dicuri"}), "mengubah peluang penjual lain ditolak (403)")
+    check(ids(every, "crm.lead", both) == sorted([lead_a, lead_b]), "peluang: cakupan 'semua dokumen' melihat semua")
+    check(bool(a.search("res.partner", [["id", "=", customer]], ["id"])), "pelanggan adalah master bersama: terlihat oleh semua penjual (tidak dibatasi per penjual)")
+    check(a.call("res.users", "has_group", ids=[uid["a"]], group_ext_id="sales_team.group_sale_salesman_all_leads") is False, "pengguna 'sendiri' tidak punya grup 'semua dokumen' (dasar catatan Cakupan data di UI)")
 
 
 def bill_total(api, bill_id):

@@ -1,6 +1,6 @@
 // Dashboard per modul (menu Dashboard di tiap modul): angka kunci yang bisa diklik menuju daftar terkait, grafik 6 bulan atau
 // 7 hari, dan tabel ringkas. Semua angka dibaca langsung dari Odoo saat halaman dibuka.
-import { app, call, dateText, esc, money, pageHeader, searchRead } from "../common.js";
+import { app, call, dateText, esc, money, pageHeader, scopeNote, searchRead } from "../common.js";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
 const nf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 1 });
@@ -272,8 +272,8 @@ const KEYS = { pr: "pr", purchase: "purchase", inventory: "inventory", manufactu
 export async function render(sub) {
   const key = KEYS[sub] ?? "sales";
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat dashboard...</p>';
-  const result = await BUILDERS[key]();
-  app.innerHTML = pageHeader(result.title, `<button data-action="refresh" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50" aria-label="Muat ulang"><i class="fas fa-rotate"></i></button>`) + result.html;
+  const [result, note] = await Promise.all([BUILDERS[key](), key === "sales" || key === "crm" ? scopeNote("sale") : ""]);
+  app.innerHTML = pageHeader(result.title, `<button data-action="refresh" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50" aria-label="Muat ulang"><i class="fas fa-rotate"></i></button>`) + note + result.html;
   last = sub;
 }
 

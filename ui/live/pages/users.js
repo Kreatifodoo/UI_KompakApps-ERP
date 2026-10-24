@@ -1,6 +1,7 @@
 // Users & Access (res.users): pengguna internal dengan peran per aplikasi (tanpa akses, pengguna, atau manajer) yang dipetakan ke grup
 // Odoo, serta peran administrator. Kata sandi dan API key tidak diatur di sini: pengguna menyetel kata sandi lewat undangan Odoo dan
-// membuat API key sendiri di profilnya.
+// membuat API key sendiri di profilnya. Cakupan data (Q9, D87) menentukan dokumen siapa yang terlihat (sendiri atau semua) lewat grup
+// kecil; aturan record Odoo yang menegakkannya, jadi daftar, form, laporan, dan dashboard ikut terbatas.
 import { call, ctx, dateTimeText, searchRead } from "../common.js";
 import { createMasterPage } from "./masters.js";
 
@@ -20,8 +21,20 @@ const APPS = [
   { key: "payroll", label: "Payroll (gaji)", levels: [["officer", "Petugas (lihat, buat, hitung slip; kirim email)", "payroll.group_payroll_user"], ["manager", "Manajer (konfirmasi, batalkan, refund, jurnal, aturan, batch, parameter)", "payroll.group_payroll_manager"]] },
   { key: "account", label: "Accounting", levels: [["invoice", "Penagihan (faktur dan tagihan)", "account.group_account_invoice"], ["user", "Akuntan", "account.group_account_user"], ["manager", "Advisor (penuh)", "account.group_account_manager"]] },
 ];
+/**
+ * Cakupan data per aplikasi. Hanya berlaku pada peran `when` (peran di atasnya melihat semua; tanpa peran tidak ada akses). `group` adalah
+ * grup tambahan yang menandai cakupan; `means` = arti keanggotaan grup itu: "all" (melonggarkan) atau "own" (membatasi). Administrator
+ * selalu mendapat Semua dokumen.
+ */
+const SCOPES = [
+  {
+    key: "sale", app: "sale", label: "Sales dan CRM", when: "user", group: "sales_team.group_sale_salesman_all_leads", means: "all",
+    hint: "Sendiri: hanya quotation, Sales Order, faktur penjualan, dan peluang miliknya (atau yang belum punya penanggung jawab). Semua: dokumen semua penjual. Manajer dan Administrator selalu melihat semua.",
+  },
+];
+const SCOPE_OPTIONS = [["own", "Hanya dokumen sendiri"], ["all", "Semua dokumen"]];
 const ADMIN_GROUP = "base.group_system";
-const XML_IDS = [...APPS.flatMap((a) => a.levels.map((l) => l[2])), ADMIN_GROUP];
+const XML_IDS = [...APPS.flatMap((a) => a.levels.map((l) => l[2])), ...SCOPES.map((s) => s.group), ADMIN_GROUP];
 
 let groupIds = null; // xmlid -> id grup
 const loadGroupIds = async () => {
@@ -30,6 +43,12 @@ const loadGroupIds = async () => {
   const byName = new Map(rows.map((r) => [`${r.module}.${r.name}`, r.res_id]));
   groupIds = Object.fromEntries(XML_IDS.map((x) => [x, byName.get(x) ?? null]));
   return groupIds;
+};
+
+/** Cakupan data efektif ("own" atau "all") dari grup pengguna; peran di atas `when` otomatis "all" karena grupnya tersirat. */
+const scopeOf = (scope, memberOf, ids) => {
+  const member = Boolean(ids[scope.group] && memberOf.has(ids[scope.group]));
+  return (scope.means === "all" ? member : !member) ? "all" : "own";
 };
 
 /** Peran tertinggi yang dimiliki pengguna pada sebuah aplikasi, dari grupnya (termasuk yang tersirat). */
@@ -54,7 +73,9 @@ const page = createMasterPage({
         if (refs.ids?.[ADMIN_GROUP] && memberOf.has(refs.ids[ADMIN_GROUP])) return "Administrator";
         const parts = APPS.map((a) => {
           const role = roleOf(a, memberOf, refs.ids ?? {});
-          return role ? `${a.label}${role === "manager" ? " (manajer)" : ""}` : "";
+          const scope = SCOPES.find((s) => s.app === a.key && s.when === role);
+          const suffix = role === "manager" ? " (manajer)" : scope ? ` (${scopeOf(scope, memberOf, refs.ids ?? {}) === "all" ? "semua dokumen" : "dokumen sendiri"})` : "";
+          return role ? `${a.label}${suffix}` : "";
         }).filter(Boolean);
         return parts.join(", ") || "-";
       },
@@ -69,8 +90,16 @@ const page = createMasterPage({
     ...APPS.map((a) => ({
       key: `role_${a.key}`, label: `Peran ${a.label}`, type: "select", virtual: true,
       options: [["", "Tanpa akses"], ...a.levels.map(([v, l]) => [v, l])],
+      rerender: SCOPES.some((s) => s.app === a.key),
     })),
-    { key: "is_admin", label: "Administrator", type: "check", virtual: true, checkLabel: "Administrator: akses penuh ke pengaturan dan seluruh modul" },
+    { key: "is_admin", label: "Administrator", type: "check", virtual: true, rerender: true, checkLabel: "Administrator: akses penuh ke pengaturan dan seluruh modul" },
+    // Cakupan data: tampil bila pengguna punya peran pada aplikasinya; hanya bisa diubah pada peran `when` dan bukan Administrator
+    ...SCOPES.map((s) => ({
+      key: `scope_${s.key}`, label: `Cakupan data ${s.label}`, type: "select", virtual: true, hint: s.hint,
+      show: (v) => v[`role_${s.app}`] !== "",
+      readonly: (record, v) => v[`role_${s.app}`] !== s.when || Boolean(v.is_admin),
+      optionsOf: (refs, v) => (v[`role_${s.app}`] !== s.when || v.is_admin ? [["all", "Semua dokumen (otomatis untuk peran ini)"]] : SCOPE_OPTIONS),
+    })),
     // hak perusahaan hanya relevan bila ada lebih dari satu perusahaan (D62)
     { key: "company_ids", label: "Perusahaan yang boleh diakses", type: "m2m", optionsOf: (refs) => refs.companies ?? [], show: () => ctx.multiCompany, hint: "Pengguna hanya melihat dokumen perusahaan yang dicentang dan bisa berpindah di antaranya lewat pemilih di header." },
     { key: "company_id", label: "Perusahaan bawaan", type: "m2o", optionsOf: (refs) => refs.companies ?? [], blank: "-", show: () => ctx.multiCompany, hint: "Perusahaan yang aktif saat pengguna masuk; harus termasuk yang boleh diakses." },
@@ -79,9 +108,17 @@ const page = createMasterPage({
   readFields: ["all_group_ids", "login_date"],
   virtualValues: async (record, refs) => {
     const memberOf = new Set(record.all_group_ids);
-    return { ...Object.fromEntries(APPS.map((a) => [`role_${a.key}`, roleOf(a, memberOf, refs.ids)])), is_admin: Boolean(refs.ids[ADMIN_GROUP] && memberOf.has(refs.ids[ADMIN_GROUP])) };
+    return {
+      ...Object.fromEntries(APPS.map((a) => [`role_${a.key}`, roleOf(a, memberOf, refs.ids)])),
+      ...Object.fromEntries(SCOPES.map((s) => [`scope_${s.key}`, scopeOf(s, memberOf, refs.ids)])),
+      is_admin: Boolean(refs.ids[ADMIN_GROUP] && memberOf.has(refs.ids[ADMIN_GROUP])),
+    };
   },
-  newValues: () => ({ ...Object.fromEntries(APPS.map((a) => [`role_${a.key}`, ""])), company_ids: [ctx.company.id], company_id: ctx.company.id }),
+  newValues: () => ({
+    ...Object.fromEntries(APPS.map((a) => [`role_${a.key}`, ""])),
+    ...Object.fromEntries(SCOPES.map((s) => [`scope_${s.key}`, "own"])),
+    company_ids: [ctx.company.id], company_id: ctx.company.id,
+  }),
   extraCreate: (v) => (String(v.login).includes("@") ? { email: String(v.login).trim() } : {}),
   validate: (v, id) => {
     if (id === ctx.user.id && !v.is_admin) throw new Error("Anda tidak bisa mencabut peran administrator dari akun Anda sendiri.");
@@ -101,11 +138,19 @@ const page = createMasterPage({
         else if (i > desired) commands.push([3, gid]); // tingkat yang lebih tinggi dicabut; yang lebih rendah tetap (tersirat)
       });
     }
+    // Cakupan data: grup penanda dipasang hanya pada peran `when` dengan cakupan yang sesuai; Administrator dan peran di atasnya = Semua
+    for (const s of SCOPES) {
+      const gid = refs.ids[s.group];
+      if (!gid) continue;
+      const role = v[`role_${s.app}`];
+      const effective = v.is_admin || role !== s.when ? "all" : v[`scope_${s.key}`];
+      commands.push([role === s.when && effective === (s.means === "all" ? "all" : "own") ? 4 : 3, gid]);
+    }
     const admin = refs.ids[ADMIN_GROUP];
     if (admin) commands.push([v.is_admin ? 4 : 3, admin]);
     if (commands.length) await call("res.users", "write", { ids: [userId], vals: { group_ids: commands } });
   },
-  formNote: "Peran per aplikasi menentukan menu dan tindakan yang tersedia: Pengguna membuat dan mengedit dokumennya, Manajer juga menyetujui dan mengubah pengaturan modulnya. Kata sandi disetel pengguna lewat undangan Odoo; API key dibuat pengguna di profilnya.",
+  formNote: "Peran per aplikasi menentukan menu dan tindakan yang tersedia: Pengguna membuat dan mengedit dokumennya, Manajer juga menyetujui dan mengubah pengaturan modulnya. Cakupan data menentukan dokumen siapa yang terlihat: pengguna dengan cakupan Sendiri tidak bisa melihat, membuka, mengubah, atau menghitung dokumen orang lain (daftar, laporan, dan dashboard ikut terbatas). Kata sandi disetel pengguna lewat undangan Odoo; API key dibuat pengguna di profilnya.",
 });
 
 export const { render, onClick, onInput, onChange, leave } = page;

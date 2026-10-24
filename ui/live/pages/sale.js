@@ -6,7 +6,7 @@ import {
   PRODUCT_PAGE, searchProducts,
   INPUT, actionBar, app, badge, call, cell, attachmentsPendingHtml, chatterHtml, closeLookup, closeModal, ctx, dateText, esc, fieldBlock, filterSelect, fromInputDateTime,
   guarded, loadMessages, money, openModal, pageHeader, readOne, readonlyValue, referencePricelists, referenceTerms, referenceUsers, referenceWarehouses, registerLookup,
-  rowLink, runLookup, searchBox, searchRead, selectOptions, statTiles, statusbar, table, toInputDateTime, toast, dateTimeText,
+  rowLink, runLookup, scopeNote, searchBox, searchRead, selectOptions, statTiles, statusbar, table, toInputDateTime, toast, dateTimeText,
 } from "../common.js";
 import { loadTaxNames, productDefaultTaxes, registerTaxes, taxCell, taxChange, taxList } from "../taxpick.js";
 import { analyticCell, distributionChange, preloadAnalytic, readDistribution, registerAnalytic } from "../analyticpick.js";
@@ -199,6 +199,7 @@ async function renderList(query) {
     ["name", "partner_id", "user_id", "date_order", "amount_total", "currency_id", "state", "invoice_status", "delivery_status"],
     { order: "id desc", limit: 80 },
   );
+  const note = await scopeNote("sale");
   const options = [["", "Semua status"], ["quotation", "Quotation (draft, terkirim)"], ["sale", "Sales Order"], ["cancel", "Dibatalkan"]];
   const body = rows
     .map((r) =>
@@ -221,6 +222,7 @@ async function renderList(query) {
        <button data-action="refresh" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50" aria-label="Muat ulang"><i class="fas fa-rotate"></i></button>
        <a href="#/sale/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>Quotation Baru</a>`,
     ) +
+    note +
     (partner
       ? '<p class="text-sm text-gray-500 mb-3">Difilter per pelanggan. <a href="#/sale" class="text-indigo-600 hover:underline">Tampilkan semua</a></p>'
       : "") +
