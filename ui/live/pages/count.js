@@ -3,7 +3,7 @@
 // opsi "Blokir jumlah melebihi stok" di Inventory Setting menolak penerapannya (D70). Penyesuaian dinilai pada pergerakan stok dan dijurnal ke akun Selisih Persediaan bila lokasi Inventory adjustment punya akun valuasi (D69).
 import {
   PRODUCT_PAGE, searchProducts,
-  INPUT, app, call, esc, guarded, pageHeader, registerLookup, runLookup, searchBox, searchRead, selectOptions, toast,
+  INPUT, app, call, esc, guarded, pageHeader, registerLookup, runLookup, scopeNote, searchBox, searchRead, selectOptions, toast,
 } from "../common.js";
 import { blockOverStock, stockAt, stockText } from "../stockqty.js";
 
@@ -75,6 +75,7 @@ export async function render(sub, query) {
       `${searchBox(text, "Cari produk")}
        <button data-action="apply-all" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Terapkan Semua yang Dihitung</button>`,
     ) +
+    (await scopeNote("warehouse")) +
     `<div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
       <table class="w-full text-left" data-list="on"><thead class="bg-gray-50 border-b border-gray-200"><tr>${["Produk", "Lokasi", "Lot/Serial", "Tercatat", "Tersedia", "Hasil Hitung", "Selisih", ""]
         .map((h, i) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${[3, 4, 5, 6].includes(i) ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>

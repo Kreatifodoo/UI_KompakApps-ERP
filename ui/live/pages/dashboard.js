@@ -272,7 +272,7 @@ const KEYS = { pr: "pr", purchase: "purchase", inventory: "inventory", manufactu
 export async function render(sub) {
   const key = KEYS[sub] ?? "sales";
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat dashboard...</p>';
-  const noteKind = key === "sales" || key === "crm" ? "sale" : key === "purchase" || key === "pr" ? "purchase" : "";
+  const noteKind = key === "sales" || key === "crm" ? "sale" : key === "purchase" || key === "pr" ? "purchase" : key === "inventory" ? "warehouse" : "";
   const [result, note] = await Promise.all([BUILDERS[key](), noteKind ? scopeNote(noteKind) : ""]);
   app.innerHTML = pageHeader(result.title, `<button data-action="refresh" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50" aria-label="Muat ulang"><i class="fas fa-rotate"></i></button>`) + note + result.html;
   last = sub;

@@ -62,7 +62,7 @@ const ACCESS_DENIED = /doesn't have '(\w+)' access to:\s*-\s*([^\n]+)/;
 const ACCESS_ACTION = { read: "membuka", write: "mengubah", create: "membuat", unlink: "menghapus" };
 function describeAccessDenied(message) {
   const [, action, target] = ACCESS_DENIED.exec(message);
-  return `Anda tidak berhak ${ACCESS_ACTION[action] ?? action} ${target.replace(/\s*\([\w.]+\)\s*$/, "")}. Dokumen ini mungkin milik pengguna lain, atau peran dan Cakupan data Anda belum mencakupnya.`;
+  return `Anda tidak berhak ${ACCESS_ACTION[action] ?? action} ${target.replace(/\s*\([\w.]+\)\s*$/, "")}. Dokumen ini mungkin milik pengguna lain atau gudang lain, atau peran dan Cakupan data Anda belum mencakupnya.`;
 }
 
 function describeError(status, body) {

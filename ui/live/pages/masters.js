@@ -14,7 +14,7 @@ const ARCHIVE_FILTERS = [["active", "Aktif"], ["archived", "Diarsipkan"]];
  *   listFields: [...], columns: [{ label, value(record), right?, raw? }], search: ["name", ...],
  *   filters: [{ key, label, options: [[value, label]], domain(value) }],
  *   fields: [{ key, label, type, required?, options?, optionsOf?(refs, values), readonly?, show?(values), span2?, hint?, placeholder? }],
- *   readFields, loadRefs?(), newValues?(refs), extraCreate?(values, refs), tiles?(record), extra?(record, refs), titleOf?(record),
+ *   listTop?() (HTML async di atas daftar, mis. catatan Cakupan data), readFields, loadRefs?(), newValues?(refs), extraCreate?(values, refs), tiles?(record), extra?(record, refs), titleOf?(record),
  *   formTop?(record, refs) (HTML di atas isian), readOnly?() (true = daftar tanpa tombol baru, form tanpa Simpan dan Arsipkan, semua isian terkunci; dievaluasi setelah loadRefs/loadListRefs),
  * }
  */
@@ -66,6 +66,7 @@ export function createMasterPage(config) {
         `${config.search?.length ? searchBox(text, "Cari...") : ""}${filterControls}${config.archive ? filterSelect(ARCHIVE_FILTERS, state) : ""}${config.headerExtra ?? ""}${(await config.headerAsync?.()) ?? ""}
          ${config.noNew || config.readOnly?.() ? "" : `<a href="#/${config.route}/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>${esc(config.newLabel)}</a>`}`,
       ) +
+      ((await config.listTop?.()) ?? "") +
       table(config.columns.map((c) => ({ label: c.label, right: c.right })), body, config.empty) +
       (config.listNote ? `<p class="text-xs text-gray-500 mt-3">${config.listNote}</p>` : "") +
       (rows.length >= (config.limit ?? 200) ? `<p class="text-xs text-gray-500 mt-3">Menampilkan ${rows.length} pertama; gunakan pencarian atau filter.</p>` : "");

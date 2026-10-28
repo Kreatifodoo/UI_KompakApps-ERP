@@ -1,6 +1,6 @@
 # Hak akses per rekaman: siapa melihat dokumen siapa (Q9, D87)
 
-Dokumen ini mencatat aturan akses yang berlaku di KompakApps: aturan record Odoo (`ir.rule`) per modul, aturan tambahan buatan `kompakapps_base`, dan cara mengaturnya per pengguna di **General Setting > Users & Access** sebagai **Cakupan data**. Isinya hasil audit pada instalasi segar (nama grup dan aturan dibaca dari database, bukan ditebak) dan diperbarui tiap irisan Q9.
+Dokumen ini mencatat aturan akses yang berlaku di KompakApps: aturan record Odoo (`ir.rule`) per modul, aturan tambahan buatan `kompakapps_base`, dan cara mengaturnya per pengguna di **General Setting > Users & Access** sebagai **Cakupan data**. Isinya hasil audit pada instalasi segar (nama grup dan aturan dibaca dari database, bukan ditebak) dan diperbarui tiap irisan Q9 (irisan 1: Sales dan CRM; 2: Purchase; 3: Inventory per gudang serta audit HR dan Accounting).
 
 ## Prinsip
 
@@ -8,18 +8,19 @@ Dokumen ini mencatat aturan akses yang berlaku di KompakApps: aturan record Odoo
 2. **Cara aturan digabung**: aturan global (mis. multi-perusahaan) berlaku untuk semua pengguna dan digabung dengan AND. Aturan milik grup digabung dengan OR **hanya untuk grup yang dimiliki pengguna itu**. Akibatnya: (a) pengguna yang punya grup "sendiri" dan grup "semua" melihat semua; (b) menambah grup lain yang punya aturan lebih longgar melonggarkan cakupan (mis. peran Accounting Penagihan membuat semua faktur penjualan terlihat); (c) pengguna yang tidak punya grup yang beraturan sama sekali hanya dibatasi aturan global, jadi bisa melihat semua dokumen bila grupnya memberi hak model (ACL) pada modelnya.
 3. **Akses ditolak tampil jelas**: membuka dokumen yang tidak boleh dilihat menampilkan kartu "Akses ditolak" dengan penjelasan dalam bahasa Indonesia (bukan layar kosong). Daftar yang terbatas menampilkan catatan "Cakupan data Anda: hanya dokumen milik Anda".
 4. **Pengguna tanpa dokumen** (belum ada tim penjualan atau karyawan terkait) melihat daftar kosong, bukan galat; dokumen baru yang ia buat otomatis menjadi miliknya.
-5. **Administrator** (centang di Users & Access) mendapat cakupan **Semua dokumen** secara otomatis. Administrator Odoo (`base.group_system`) mengatur sistem; akses ke dokumen modul tetap lewat peran modulnya (Manajer melihat semua).
+5. **Administrator** (centang di Users & Access) mendapat cakupan **Semua dokumen** dan **Semua gudang** secara otomatis. Administrator Odoo (`base.group_system`) mengatur sistem; akses ke dokumen modul tetap lewat peran modulnya (Manajer melihat semua dokumen Sales dan Purchase). Pembatasan gudang Inventory sengaja juga bisa dikenakan pada Manajer Inventory (kepala gudang), karena hanya Manajer yang boleh membaca nilai stok; Administrator tidak pernah dibatasi.
 6. Aturan Odoo bawaan tidak dilonggarkan. Penambahan KompakApps hanya berupa grup kecil dan aturan tambahan di `kompakapps_base`.
 
 ## Cakupan data di Users & Access
 
-Bagian **Cakupan data** muncul di form pengguna bila pengguna punya peran pada aplikasinya. Pilihan hanya bisa diubah untuk peran terendah ("Salesperson"); Manajer dan Administrator otomatis Semua dokumen. Daftar pengguna menampilkan cakupannya, mis. "Sales dan CRM (dokumen sendiri)".
+Bagian **Cakupan data** muncul di form pengguna bila pengguna punya peran pada aplikasinya. Untuk Sales dan Purchase pilihan hanya bisa diubah untuk peran terendah ("Salesperson", "Pengguna"); Manajer dan Administrator otomatis Semua dokumen. Untuk Inventory pemilihnya berupa **daftar gudang** (kosong = semua) bagi peran Pengguna dan Manajer; Administrator otomatis semua gudang. Peran HR dan Accounting punya cakupan bawaan Odoo yang tidak diatur per pengguna; petunjuk di bawah pemilih peran menjelaskan apa yang terlihat tiap peran. Daftar pengguna menampilkan cakupannya, mis. "Sales dan CRM (dokumen sendiri)" atau "Inventory (gudang: Gudang Surabaya)".
 
 | Aplikasi | Peran yang bisa dibatasi | Pilihan | Grup yang ditulis | Irisan |
 | --- | --- | --- | --- | --- |
 | Sales dan CRM | Salesperson | Hanya dokumen sendiri / Semua dokumen | `sales_team.group_sale_salesman_all_leads` (ada = Semua) | 1 |
 | Purchase dan Purchase Request | Pengguna | Hanya dokumen sendiri / Semua dokumen | `kompakapps_base.group_purchase_own` (ada = Sendiri) | 2 |
-| Inventory | Pengguna | Gudang yang diizinkan | `res.users.kompakapps_warehouse_ids` | 3 (menyusul) |
+| Inventory | Pengguna dan Manajer | Gudang yang diizinkan (kosong = semua gudang) | `res.users.kompakapps_warehouse_ids` (daftar gudang di pengguna, bukan grup) | 3 |
+| Attendance, Time Off, Expenses, Accounting | semua peran | Tidak ada pemilih: cakupan mengikuti peran Odoo (lihat tabel HR dan Accounting) | grup peran | 3 (audit, petunjuk di UI) |
 
 Peran per aplikasi dipetakan ke grup bertingkat Odoo: peran lebih tinggi membawa peran di bawahnya secara tersirat (Manajer Sales membawa "Semua dokumen", yang membawa "Dokumen sendiri"). Pencabutan manajer mencabut grup manajernya saja; grup "semua dokumen" yang ditulis eksplisit ikut dicabut atau dipasang sesuai pilihan Cakupan data, jadi turun dari Manajer ke Salesperson "Sendiri" benar-benar membatasi (diuji).
 
@@ -83,34 +84,63 @@ Bawaan Odoo: **tidak ada aturan "sendiri" pada Purchase Order**; semua pengguna 
 
 Alur P2P untuk pembeli "sendiri" (diuji): ia mengonfirmasi PO miliknya, menerima barangnya, dan membuat tagihan dari PO itu; hanya dokumen turunan PO miliknya yang terlihat. Dua hal yang bukan akibat Cakupan data tetapi perlu peran lain (bawaan Odoo): **menerima barang** butuh peran Inventory (validasi penerimaan membaca referensi stok yang menyentuh Sales Order) dan **memposting tagihan** butuh Accounting Penagihan.
 
-### Inventory, Manufacture, POS
+### Inventory per gudang (irisan 3), Manufacture, POS
+
+Bawaan Odoo: semua pengguna Inventory melihat semua gudang perusahaan (hanya aturan multi-perusahaan). KompakApps menambah **field `res.users.kompakapps_warehouse_ids`** ("Gudang yang diizinkan"; Users & Access > Cakupan data Inventory) dan sekumpulan aturan **global** (tanpa grup) di `security/access_scope.xml` yang membaca field itu. Aturan global digabung AND dengan aturan lain, jadi aturan "hanya PO sendiri" milik `group_purchase_own` tidak dilonggarkan. Domain aturan kosong (tidak membatasi) bila pengguna tidak punya gudang terpilih (**kosong = semua**) atau Administrator (`base.group_system`); selain itu berlaku untuk semua peran, termasuk Manajer Inventory (kepala gudang). Pengguna membaca daftar gudangnya sendiri (`SELF_READABLE_FIELDS`) untuk catatan di UI; mengubahnya hak administrator. Perubahan field membersihkan cache aturan (`_get_invalidation_fields`), jadi berlaku seketika.
+
+"Terkait gudang" berarti: gudang dari **tipe operasi**, **lokasi asal**, atau **lokasi tujuan** dokumen. Dokumen terlihat bila salah satunya gudang pengguna, atau bila sama sekali tidak menyentuh gudang (mis. dropship pemasok ke pelanggan). Transfer antar gudang (A ke B) terlihat oleh pengguna kedua gudang dan bisa divalidasi oleh pengguna gudang asal.
+
+| Objek | Apa yang terlihat bagi pengguna dengan gudang terpilih | Sumber rule |
+| --- | --- | --- |
+| Transfer (penerimaan, pengiriman, internal) | Hanya yang terkait gudangnya; membuka, mengubah, membatalkan, memvalidasi, atau membuat transfer di gudang lain ditolak | `kompakapps_base.kompakapps_picking_rule_warehouse` |
+| Gerakan stok dan detail gerakan | Hanya yang terkait gudangnya (riwayat pergerakan, laporan) | `..._stock_move_rule_warehouse`, `..._stock_move_line_rule_warehouse` |
+| Stok on-hand (`stock.quant`), hitungan fisik, penyesuaian stok | Hanya quant di lokasi gudangnya (dan lokasi tanpa gudang); jumlah tersedia produk, laporan stok, dan pengelompokan ikut terbatas; mengubah hitungan atau membuat penyesuaian di gudang lain ditolak | `..._stock_quant_rule_warehouse` |
+| Scrap | Hanya scrap di lokasi gudangnya; scrap di gudang lain ditolak | `..._stock_scrap_rule_warehouse` |
+| Tipe operasi, gudang, lokasi | Gudang dan lokasi gudang lain disembunyikan dari pilihan (tipe operasi tanpa gudang dan lokasi tanpa gudang tetap terlihat) | `..._picking_type_rule_warehouse`, `..._stock_warehouse_rule_warehouse`, `..._stock_location_rule_warehouse` |
+
+Penambal: mode inventaris Odoo membuat quant sebagai superuser (penghitungan fisik dan penyesuaian langsung), yang melewati aturan record; `models/stock_quant.py` memeriksa ulang quant yang dibuat dengan hak pengguna dan membatalkan seluruh transaksi bila ada di gudang yang tidak diizinkan (diuji lewat API dan Odoo, termasuk `inventory_quantity_auto_apply`).
+
+Tidak dibatasi per gudang (data referensi atau di luar cakupan irisan ini): rute dan aturan stok (`stock.route`, `stock.rule`), aturan stok minimum (`stock.warehouse.orderpoint`), lot dan serial, kemasan, Manufacturing Order (hanya gerakan stoknya yang ikut terbatas), valuasi dan jurnal persediaan (hak Accounting).
 
 | Objek | Peran | Apa yang terlihat | Sumber rule |
 | --- | --- | --- | --- |
-| Transfer (penerimaan, pengiriman), gerakan, stok on-hand, lokasi, gudang | Inventory Pengguna dan Manajer | Semua gudang perusahaan (belum ada pembatasan per gudang; irisan 3) | hanya aturan perusahaan (`stock.stock_picking_rule`, `stock.stock_move_rule`, `stock.stock_quant_rule`, `stock.stock_location_comp_rule`, `stock.stock_warehouse_comp_rule`) |
 | Perintah produksi | Manufacture Pengguna | Semua MO perusahaan | `mrp.mrp_production_rule` |
 | Pesanan POS | Kasir dan Manajer POS | Semua pesanan POS perusahaan | `point_of_sale.rule_pos_multi_company` |
 
-### Human Resources dan Payroll (audit awal; dirinci dan diuji pada irisan 3)
+### Human Resources dan Payroll (audit irisan 3)
 
-| Objek | Peran | Apa yang terlihat | Sumber rule |
+Odoo memetakan Attendance, Time Off, dan Expenses ke peran **bertingkat**: pengguna internal tanpa peran (`base.group_user`, "Role / User") hanya mengakses data **miliknya**; peran di atasnya menambah **tim** atau **semua**. Nama grup dan aturan di bawah dibaca dari database (`ir.rule` dan `res.groups`), dan tiap baris dibuktikan oleh `TestAccessScopeHR`. Di Users & Access peran dipilih per aplikasi (label dan petunjuk di bawah pemilih peran menjelaskan cakupannya); cakupan "tim" ditentukan di data karyawan (pengelola kehadiran, penyetuju cuti, penyetuju biaya, atasan departemen), bukan di Users & Access.
+
+| Objek | Peran di Users & Access (grup Odoo) | Apa yang terlihat | Sumber rule |
 | --- | --- | --- | --- |
-| Karyawan | Petugas HR (ACL penuh) | Karyawan perusahaan yang diizinkan (aturan perusahaan tetap menampilkan dirinya, atasan, dan bawahannya lintas perusahaan). Pengguna tanpa peran HR tidak punya hak baca pada data karyawan lengkap | `hr.hr_employee_comp_rule` |
-| Kehadiran | Peran Attendance Odoo bertingkat: baca milik sendiri, kelola karyawan yang ia atur, atau semua | Sendiri, kelolaan, atau semua | `hr_attendance.hr_attendance_rule_attendance_simple_user`, `..._manager_restrict`, `..._attendance_admin` |
-| Cuti dan alokasi | Karyawan: milik sendiri; Penyetuju tim: karyawan yang ia setujui; Petugas dan Administrator: semua | Sendiri, tim, atau semua | `hr_holidays.hr_leave_rule_employee`, `..._responsible_read`, `..._user_read`, `..._manager` (dan aturan alokasi) |
-| Biaya karyawan | Karyawan: milik sendiri; Penyetuju tim: tim; Petugas dan Administrator: semua | Sendiri, tim, atau semua | `hr_expense.ir_rule_hr_expense_employee`, `..._approver`, `..._manager` |
+| Kehadiran (`hr.attendance`) | Tanpa peran (`base.group_user` membawa `hr_attendance.group_hr_attendance_own_reader`) | Hanya kehadirannya sendiri (baca) | `hr_attendance.hr_attendance_rule_attendance_simple_user` |
+| idem | Petugas (`group_hr_attendance_officer`, "Officer: Manage attendances"), butuh peran ini untuk halaman Attendance di UI | Kehadiran karyawan yang **ia kelola** (field "Attendance Manager" di karyawan) ditambah miliknya; **bukan** semua karyawan | `hr_attendance.hr_attendance_rule_attendance_manager_restrict` |
+| idem | Manajer (`group_hr_attendance_manager`, membawa "Manage all attendances") | Semua kehadiran | `hr_attendance.hr_attendance_rule_attendance_admin` |
+| Cuti (`hr.leave`) dan alokasi | Tanpa peran | Hanya cuti dan alokasinya sendiri; mengubah selama belum disetujui | `hr_holidays.hr_leave_rule_employee` (dan `_update`, `_unlink`), `hr_leave_allocation_rule_employee` |
+| idem | Penyetuju tim (`group_hr_holidays_responsible`) | Cuti karyawan yang ia setujui (field "Time Off" pada karyawan) ditambah miliknya | `hr_holidays.hr_leave_rule_responsible_read`, `..._update` |
+| idem | Petugas (`group_hr_holidays_user`) | Semua cuti dan alokasi; **membawa Petugas HR** (data semua karyawan) secara tersirat | `hr_holidays.hr_leave_rule_user_read`, `..._officer_update` |
+| idem | Administrator (`group_hr_holidays_manager`) | Semua, plus pengaturan jenis cuti | `hr_holidays.hr_leave_rule_manager` |
+| Biaya (`hr.expense`) | Tanpa peran | Hanya biayanya sendiri (draft bisa diubah; yang diajukan hanya dibaca) | `hr_expense.ir_rule_hr_expense_employee`, `..._employee_not_draft` |
+| idem | Penyetuju tim (`group_hr_expense_team_approver`) | Biaya karyawan yang atasan departemennya, atasannya, atau penyetuju biayanya adalah dirinya, ditambah miliknya | `hr_expense.ir_rule_hr_expense_approver` |
+| idem | Petugas (`group_hr_expense_user`, "All Approver"), Administrator, dan **Akuntan Accounting** (`account.group_account_user`) | Semua biaya | `hr_expense.ir_rule_hr_expense_manager` |
+| Karyawan (`hr.employee`) | Petugas HR (`hr.group_hr_user`) dan Administrator HR | Karyawan perusahaan yang diizinkan; pengguna tanpa peran HR tidak punya hak baca `hr.employee` penuh | `hr.hr_employee_comp_rule` (global) |
 | Slip gaji dan baris slip | Petugas dan Manajer Payroll: semua; karyawan: slipnya sendiri yang selesai (Slip Saya) | Semua atau sendiri | `payroll.hr_payroll_rule_officer` (dilebarkan D86), `payroll.hr_payslip_rule_manager`, `kompakapps_base.kompakapps_payslip_rule_self` |
 
-Hak Payroll dan Slip Saya diputuskan di D86 dan tidak diubah oleh Q9.
+Hak Payroll dan Slip Saya diputuskan di D86 dan tidak diubah oleh Q9. Semua tabel HR juga dibatasi aturan multi-perusahaan.
+
+Di UI, daftar Attendance, Time Off, dan Expenses menampilkan catatan "Cakupan data Anda: hanya ... milik Anda" (ditambah tim bila punya peran tim) bagi pengguna yang tidak punya peran "semua" (`scopeNote` jenis `attendance`, `leave`, `expense` di `ui/live/common.js`).
 
 ### Accounting (audit saja; tidak diperketat)
 
-| Objek | Peran | Apa yang terlihat | Sumber rule |
+Cakupan Accounting **tidak dibatasi per pengguna**: peran Accounting melihat seluruh jurnal perusahaan, dan Q9 tidak menambahkan pembatasan tanpa dasar (laporan keuangan dan rekonsiliasi memerlukan data utuh). Yang perlu diketahui: (a) aturan grup digabung OR, jadi peran Accounting **melonggarkan** Cakupan data Sales dan Purchase (semua faktur penjualan dan tagihan vendor terlihat); (b) pengguna tanpa peran Accounting tidak bisa membuka jurnal, faktur, atau tagihan kecuali lewat aturan khusus yang dipetakan di bawah. Diuji oleh `TestAccessScopeHR`.
+
+| Objek | Peran (grup Odoo) | Apa yang terlihat | Sumber rule |
 | --- | --- | --- | --- |
-| Jurnal, item jurnal, faktur, tagihan | Accounting Penagihan, Akuntan, Advisor | Semua jurnal dan item perusahaan | `account.account_move_see_all`, `account.account_move_line_see_all` |
-| idem | Accounting Hanya baca | Semua, baca saja | `account.account_move_rule_group_readonly` |
-| Jurnal dan faktur | Penyetuju tim Expenses, Kasir POS, Purchase Pengguna | Hanya yang terkait (biaya karyawan, faktur pesanan POS, tagihan vendor) | `hr_expense.hr_expense_team_approver_account_move_rule`, `point_of_sale.rule_invoice_pos_user`, `purchase.purchase_user_account_move_rule` |
-| Pembayaran, mutasi bank | Accounting Penagihan | Semua pembayaran dan mutasi perusahaan | hanya aturan perusahaan |
+| Jurnal, item jurnal, faktur, tagihan | Penagihan (`account.group_account_invoice`), Akuntan (`group_account_user`, "Bookkeeper"), Advisor (`group_account_manager`) | Semua jurnal dan item perusahaan (baca dan tulis) | `account.account_move_see_all`, `account.account_move_rule_group_invoice`, `account.account_move_line_see_all` |
+| idem | Hanya baca (`account.group_account_readonly`) | Semua, baca saja; menulis ditolak | `account.account_move_rule_group_readonly` |
+| Jurnal dan faktur | Penyetuju tim Expenses, Kasir POS, Purchase Pengguna, Salesperson | Hanya yang terkait (jurnal biaya karyawan, faktur pesanan POS, tagihan vendor, faktur penjualan); Purchase dan Sales mengikuti Cakupan data masing-masing | `hr_expense.hr_expense_team_approver_account_move_rule`, `point_of_sale.rule_invoice_pos_user`, `purchase.purchase_user_account_move_rule`, `sale.account_invoice_rule_see_personal` |
+| Pembayaran, mutasi bank, analitik, aset | Peran Accounting | Semua (hanya aturan perusahaan; analitik punya aturan "semua" untuk Penagihan) | `account.account_payment_comp_rule`, `account.account_bank_statement_comp_rule`, `account.account_analytic_line_rule_billing_user` |
+| Pengguna tanpa peran Accounting (termasuk Penyetuju tim Expenses) | - | Tidak ada akses ke jurnal, faktur, dan tagihan di luar aturan khusus di atas | tanpa ACL |
 
 Laporan keuangan (neraca, laba rugi, buku besar) dibaca dengan hak Accounting; tidak ada pembatasan per pengguna di atas jurnal, dan Q9 tidak menambahkannya tanpa dasar.
 
@@ -121,11 +151,16 @@ Laporan keuangan (neraca, laba rugi, buku besar) dibaca dengan hak Accounting; t
 - **Purchase Request**: aturan "sendiri" memakai pengaju (`requested_by`), bukan penerima tugas (`assigned_to`), mengikuti keputusan Q9 dan agar tidak melonggarkan aturan OCA; pembeli yang perlu mengubah PR orang lain menjadi RFQ harus tidak dibatasi (tanpa grup penanda) atau Manajer. PO tanpa pembeli tersembunyi dari pembeli "sendiri" (hanya terlihat oleh yang tidak dibatasi).
 - **Aturan grup digabung OR**: pengguna yang diberi banyak peran melihat gabungan cakupannya. Contoh yang diuji: Salesperson "sendiri" yang juga Accounting Penagihan melihat semua faktur penjualan.
 - **Peran Inventory, Manufacture, dan Accounting Penagihan melihat semua Sales Order** karena hak model Odoo tanpa aturan grup; tidak diperketat karena mereka memprosesnya.
+- **Inventory per gudang**: (a) memilih gudang untuk pengguna yang bekerja di beberapa perusahaan harus mencakup gudang tiap perusahaannya, karena pengguna dengan gudang terpilih tidak melihat dokumen gudang mana pun yang tidak dipilih (termasuk di perusahaan lain); (b) transfer manual antar gudang A ke B terlihat oleh pengguna kedua gudang; (c) menghapus gudang satu-satunya yang dipilih mengosongkan daftar sehingga pengguna kembali melihat semua; (d) aturan stok minimum, rute, lot, dan Manufacturing Order tidak dibatasi (lihat bagian Inventory); (e) Laporan Stok per produk dan Physical Inventory di UI membaca nilai stok (`stock.quant.value`, hanya Manajer Inventory) dan jurnal akun Persediaan, sehingga Pengguna Inventory biasa sudah ditolak sebelum Q9 (bukan akibat pembatasan gudang); Manajer Inventory yang dibatasi per gudang melihat laporan itu hanya untuk gudangnya, dengan catatan cakupan (Laporan Stok per produk tetap butuh peran Accounting untuk membaca saldo buku besar).
+- **Time Off Petugas membawa Petugas HR** (data semua karyawan) secara tersirat; **Attendance Petugas** hanya melihat karyawan yang ia kelola (bukan semua): beri peran Manajer Attendance bagi yang perlu melihat semua. Pengguna tanpa peran Attendance membaca kehadirannya sendiri lewat API, tetapi halaman Attendance di UI membaca data karyawan sehingga memerlukan peran Attendance.
+- **Akuntan Accounting melihat semua biaya karyawan** (`hr_expense.ir_rule_hr_expense_manager`), walau tanpa peran Expenses.
 - Pesan galat Odoo berbahasa Inggris untuk penolakan akses diganti kalimat Indonesia di UI (`ui/live/odoo.js`); rincian teknis tetap ada di respons API.
 
 ## Pembuktian
 
+- Test Odoo `TestAccessScopeInventory` (14 test): transfer, gerakan, dan detail gerakan per gudang (termasuk transfer antar gudang dan transfer tanpa gudang), hitungan dan pengelompokan, baca/ubah/batalkan/validasi/hapus dokumen gudang lain ditolak, membuat transfer di gudang lain ditolak, gudang dan lokasi gudang lain tersembunyi dari pilihan, pengguna menjalankan penerimaan, pengiriman, dan transfer antar gudang dari gudangnya, jumlah on-hand produk dan quant per gudang, penyesuaian dan penghitungan langsung di gudang lain ditolak (termasuk jalur superuser mode inventaris) dan scrap di gudang lain ditolak, tanpa gudang terpilih dan Administrator melihat semua sedangkan Manajer Inventory dengan gudang tetap dibatasi, perubahan pilihan gudang berlaku seketika (cache aturan), pengguna membaca daftar gudangnya sendiri tetapi tidak mengubahnya, kombinasi dengan `group_purchase_own` dan Manajer Purchase tidak saling melonggarkan, dan perintah Users & Access.
+- Test Odoo `TestAccessScopeHR` (4 test): kehadiran (sendiri, kelolaan, semua), cuti (sendiri, penyetuju tim, semua; Petugas Time Off membawa Petugas HR), biaya (sendiri, penyetuju tim, Petugas dan Akuntan semua), dan Accounting (peran Accounting melihat semua jurnal, Hanya baca tidak bisa menulis, pengguna tanpa peran Accounting tidak bisa membuka).
 - Test Odoo `TestAccessScopePurchase` (8 test): PO, baris, hitungan, pengelompokan, analisis, baca/ubah/batalkan/hapus PO pembeli lain ditolak, tanpa grup penanda dan manajer dan administrator melihat semua, Purchase Request, penerimaan, gerakan stok, dan tagihan dari PO ikut pemilik PO, pembeli menjalankan konfirmasi sampai tagihan, tagihan manual, serta perintah grup Users & Access.
 - Test Odoo `TestAccessScopeSales` (`addons/kompakapps_base/tests/test_access_scope.py`): daftar, `search_count`, `formatted_read_group`, akses langsung ke ID orang lain (baca, ubah, hapus, batalkan) ditolak, analisis penjualan, faktur, peluang, pelanggan bersama, pengguna tanpa peran, dan perintah grup yang dipakai Users & Access.
-- Skrip regresi `scripts/check_p2p_api.py` (`check_access_scope` dan `check_access_scope_purchase`): dua penjual "sendiri" dan satu "semua" dengan API key sementara dari `scripts/access_test_users.py`, buat dan hapus lewat `odoo shell`.
-- Uji browser dengan pengguna terbatas: daftar hanya miliknya, membuka dokumen orang lain menampilkan kartu "Akses ditolak", dan Users & Access menulis grup yang benar.
+- Skrip regresi `scripts/check_p2p_api.py` (`check_access_scope`, `check_access_scope_purchase`, `check_access_scope_inventory` 22 pemeriksaan, `check_access_scope_hr` 7 pemeriksaan): pengguna uji dengan API key sementara dari `scripts/access_test_users.py`, buat dan hapus lewat `odoo shell`.
+- Uji browser dengan pengguna terbatas: daftar hanya miliknya, membuka dokumen orang lain menampilkan kartu "Akses ditolak", dan Users & Access menulis grup yang benar. Irisan 3: pengguna gudang A melihat catatan "hanya gudang ..." di dashboard Inventory, penerimaan, pengiriman, riwayat gerakan, scrap, dan laporan stok, dengan daftar hanya gudang A dan pilihan lokasi tanpa gudang lain; pemilih gudang di Users & Access (disimpan, dikosongkan saat peran dicabut, tersembunyi untuk Administrator); catatan cakupan HR di daftar Attendance, Time Off, dan Expenses.

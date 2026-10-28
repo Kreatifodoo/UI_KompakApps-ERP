@@ -5,7 +5,7 @@
 import {
   PRODUCT_PAGE, searchProducts,
   INPUT, app, badge, call, cell, dateTimeText, esc, fieldBlock, guarded, pageHeader, readOne, readonlyValue, registerLookup, rowLink, runLookup,
-  searchBox, searchRead, selectOptions, statusbar, table, toast, button, filterSelect, attachmentsPendingHtml, chatterHtml, loadMessages,
+  searchBox, searchRead, selectOptions, statusbar, table, toast, button, filterSelect, attachmentsPendingHtml, chatterHtml, loadMessages, scopeNote,
 } from "../common.js";
 import { blockOverStock, stockAt, stockText } from "../stockqty.js";
 
@@ -118,6 +118,7 @@ async function renderList(query) {
       `${searchBox(text, "Cari nomor atau produk")}${filterSelect(FILTERS, filter)}
        <a href="#/scrap/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>Scrap Baru</a>`,
     ) +
+    (await scopeNote("warehouse")) +
     table([{ label: "Nomor" }, { label: "Produk" }, { label: "Jumlah", right: true }, { label: "Dari Lokasi" }, { label: "Tanggal" }, { label: "Status" }], body, "Belum ada scrap.");
 }
 

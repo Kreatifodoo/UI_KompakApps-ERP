@@ -1,7 +1,7 @@
 // Laporan Stok (stock.quant): stok per produk dan per lokasi dengan jumlah, terpesan, tersedia, dan nilai (biaya
 // rata-rata). Kartu atas membandingkan nilai stok dengan saldo akun Persediaan di buku besar: Sistem tidak membuat
 // jurnal untuk penyesuaian stok dan scrap pada valuasi perpetual, jadi selisihnya perlu dipantau.
-import { app, call, esc, filterSelect, money, pageHeader, searchBox, searchRead } from "../common.js";
+import { app, call, esc, filterSelect, money, pageHeader, scopeNote, searchBox, searchRead } from "../common.js";
 
 const MODES = {
   report: { title: "Stok per Produk", group: (q) => `p${q.product_id[0]}`, label: (q) => q.product_id[1], sub: (q) => q.product_categ_id?.[1] ?? "", detail: "location" },
@@ -87,6 +87,7 @@ export async function render(sub, query) {
          .map(([key]) => `<a href="#/stock/${key}" class="px-3 py-2 ${key === mode ? "bg-indigo-600 text-white" : "hover:bg-gray-50"}">${MODE_LABEL[key]}</a>`)
          .join("")}</div>`,
     ) +
+    (await scopeNote("warehouse")) +
     (productId
       ? `<div class="mb-4 flex flex-wrap items-center justify-between gap-2 text-sm bg-indigo-50 border border-indigo-200 text-indigo-900 rounded-lg px-4 py-2"><span>Menampilkan stok produk <b>${esc(product?.display_name ?? `#${productId}`)}</b></span><a href="#/stock/${mode}" class="text-indigo-700 underline">Tampilkan semua produk</a></div>`
       : "") +
@@ -192,6 +193,7 @@ async function renderWarehouse(query) {
          .map((key) => `<a href="#/stock/${key}" class="px-3 py-2 ${key === "warehouse" ? "bg-indigo-600 text-white" : "hover:bg-gray-50"}">${MODE_LABEL[key]}</a>`)
          .join("")}</div>`,
     ) +
+    (await scopeNote("warehouse")) +
     `<div class="grid md:grid-cols-3 gap-4 mb-4" id="wh-cards">
       ${card("Total stok semua gudang", esc(nf.format(totalQty)), `${visible.filter(([, g]) => g.products.size).length} gudang berisi stok, nilai ${esc(money(totalValue))}`)}
       ${card("Jumlah per gudang", esc(nf.format(groupTotal)), Math.abs(groupTotal - totalQty) < 0.0005 ? "sama dengan total keseluruhan" : "tidak sama dengan total: periksa lokasi di luar gudang")}

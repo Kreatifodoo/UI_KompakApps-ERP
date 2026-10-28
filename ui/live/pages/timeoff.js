@@ -1,6 +1,6 @@
 // Time Off (hr.leave): pengajuan cuti. Draft-nya langsung berstatus "Menunggu persetujuan"; penyetuju menekan Setujui atau Tolak sesuai jenis cuti
 // (tanpa persetujuan, oleh manajer, oleh petugas HR, atau keduanya). Jenis berunit setengah hari memakai pilihan Pagi/Siang, berunit jam memakai jam mulai dan selesai (D83).
-import { badge, button, call, esc, guarded, searchRead, toast } from "../common.js";
+import { badge, button, call, esc, guarded, scopeNote, searchRead, toast } from "../common.js";
 import { hrRefs } from "./employee.js";
 import { createMasterPage } from "./masters.js";
 
@@ -31,6 +31,7 @@ const page = createMasterPage({
     { label: "Status", value: (r) => badge(LEAVE_STATES, r.state), raw: true },
   ],
   search: ["employee_id.name", "holiday_status_id.name"],
+  listTop: () => scopeNote("leave"),
   filters: [
     { key: "status", label: "Semua status", options: Object.entries(LEAVE_STATES).map(([k, v]) => [k, v[0]]), domain: (v) => [["state", "=", v]] },
     { key: "employee", hidden: true, label: "Karyawan", options: [], domain: (v) => [["employee_id", "=", Number(v)]] },
