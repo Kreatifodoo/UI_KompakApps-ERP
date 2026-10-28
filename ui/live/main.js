@@ -155,7 +155,7 @@ async function doRoute() {
     }
     if (error instanceof OdooError && error.status === 403) {
       app.innerHTML = `<section class="max-w-2xl bg-amber-50 border border-amber-200 rounded-xl p-6"><div class="font-semibold text-amber-900"><i class="fas fa-lock mr-2"></i>Akses ditolak</div>
-        <p class="text-sm text-amber-900 mt-2">Akun Anda belum punya hak akses untuk halaman atau dokumen ini. Bila ini dokumen milik pengguna lain, Cakupan data Anda hanya mencakup dokumen sendiri. Minta administrator memberi peran atau Cakupan data yang sesuai di General Setting &gt; Users &amp; Access (mis. Human Resources untuk menu SDM).</p>
+        <p class="text-sm text-amber-900 mt-2">Akun Anda belum punya hak akses untuk halaman atau dokumen ini. Bila ini dokumen milik pengguna lain atau gudang lain, Cakupan data Anda hanya mencakup dokumen sendiri atau gudang yang diizinkan. Minta administrator memberi peran atau Cakupan data yang sesuai di General Setting &gt; Users &amp; Access (mis. Human Resources untuk menu SDM).</p>
         <p class="text-xs text-amber-800 mt-2">Rincian: ${esc(error.message)}</p></section>`;
       return;
     }

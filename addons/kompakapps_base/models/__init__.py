@@ -11,4 +11,6 @@ from . import payroll_pph
 from . import payroll_slip
 from . import purchase_order_line
 from . import res_company
+from . import res_users
 from . import stock_journal
+from . import stock_quant

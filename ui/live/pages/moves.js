@@ -1,6 +1,6 @@
 // Riwayat Pergerakan Stok (stock.move.line selesai): tanggal, dokumen, produk, lot, dari dan ke lokasi, jumlah.
 // Mode "loss" menampilkan hanya pergerakan dari atau ke lokasi Inventory Loss (penyesuaian stok dan scrap).
-import { INPUT, app, dateTimeText, esc, filterSelect, pageHeader, searchBox, searchRead, table, cell, rowLink, dayBoundary } from "../common.js";
+import { INPUT, app, dateTimeText, esc, filterSelect, pageHeader, scopeNote, searchBox, searchRead, table, cell, rowLink, dayBoundary } from "../common.js";
 
 const DIRECTIONS = [["", "Semua arah"], ["in", "Masuk ke gudang"], ["out", "Keluar dari gudang"], ["adjust", "Penyesuaian dan scrap"]];
 const nf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 });
@@ -56,6 +56,7 @@ export async function render(sub, query) {
        <label class="text-xs font-medium text-gray-500 uppercase">Dari<input type="date" data-moves="from" value="${esc(from)}" class="${INPUT} mt-1 w-40"></label>
        <label class="text-xs font-medium text-gray-500 uppercase">Sampai<input type="date" data-moves="to" value="${esc(to)}" max="${today()}" class="${INPUT} mt-1 w-40"></label>`,
     ) +
+    (await scopeNote("warehouse")) +
     table(
       [{ label: "Tanggal" }, { label: "Dokumen" }, { label: "Produk" }, { label: "Lot/Serial" }, { label: "Dari" }, { label: "Ke" }, { label: "Jumlah", right: true }],
       body,

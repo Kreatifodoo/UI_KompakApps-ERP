@@ -253,6 +253,8 @@ def main():
     check_attachments(api)
     check_access_scope(api)
     check_access_scope_purchase(api)
+    check_access_scope_inventory(api)
+    check_access_scope_hr(api)
 
     print("\n" + ("SEMUA LULUS" if not failures else f"{len(failures)} PEMERIKSAAN GAGAL"))
     sys.exit(1 if failures else 0)
@@ -4958,7 +4960,7 @@ def check_payroll_journal(api):
     expense = [a["id"] for a in api.search("account.account", [["account_type", "=", "expense"]], ["id"], order="code", limit=2)]
     [liability] = [a["id"] for a in api.search("account.account", [["account_type", "=", "liability_current"]], ["id"], order="code", limit=1)]
     [payable] = [a["id"] for a in api.search("account.account", [["account_type", "=", "liability_payable"]], ["id"], order="code", limit=1)]
-    [journal] = [j["id"] for j in api.search("account.journal", [["type", "=", "general"]], ["id"], limit=1)]
+    [journal] = [j["id"] for j in api.search("account.journal", [["type", "=", "general"], ["company_id", "=", company]], ["id"], limit=1)]  # per perusahaan: urutan jurnal bertipe sama antar perusahaan tidak tetap
     none = {"kompakapps_account_debit_id": False, "kompakapps_account_credit_id": False}
     for rule in rules.values():
         api.call("hr.salary.rule", "write", ids=[rule], vals=none)
@@ -5314,6 +5316,109 @@ def check_access_scope_purchase(api):
     check(ids(a, "account.move", [["id", "=", bill_a]]) == [bill_a] and not ids(b, "account.move", [["id", "=", bill_a]]), "tagihan vendor buatan pembeli sendiri tersembunyi dari pembeli lain")
     check(ids(every, "account.move", [["id", "=", bill_a]]) == [bill_a] and denied(b, "account.move", "read", ids=[bill_a], fields=["name"]), "pembeli tanpa grup penanda melihat tagihan; pembeli lain ditolak membukanya (403)")
     check(a.call("res.users", "has_group", ids=[uid["a"]], group_ext_id="kompakapps_base.group_purchase_own") is True and every.call("res.users", "has_group", ids=[uid["all"]], group_ext_id="kompakapps_base.group_purchase_own") is False, "grup penanda hanya dimiliki pembeli sendiri (dasar catatan Cakupan data di UI)")
+
+
+def check_access_scope_inventory(api):
+    """Cakupan data Inventory per gudang (D87, Q9 irisan 3): pengguna dengan gudang terpilih hanya melihat dan memproses dokumen gudangnya."""
+    step("Cakupan data Inventory per gudang: aturan record per pengguna")
+    apis = scope_apis(api, "STOCK_A", "STOCK_B", "STOCK_ALL", "STOCK_MGR_A")
+    if not apis:
+        return
+    a, b, every, manager_a = apis
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    warehouses = api.search("stock.warehouse", [], ["id", "code", "lot_stock_id", "in_type_id", "out_type_id"], order="id")
+    wh_b = next((w for w in warehouses if w["code"] == "UJB"), None)
+    wh_a = next((w for w in warehouses if w["code"] != "UJB"), None)
+    if not (wh_a and wh_b):
+        print("  lewati: butuh gudang kedua berkode UJB (dibuat scripts/access_test_users.py)")
+        return
+    uid = {name: client.call("res.users", "context_get")["uid"] for name, client in (("a", a), ("b", b), ("all", every))}
+    ids = lambda client, model, domain: sorted(r["id"] for r in client.search(model, domain, ["id"]))  # noqa: E731
+    check(a.read("res.users", uid["a"], ["kompakapps_warehouse_ids"])["kompakapps_warehouse_ids"] == [wh_a["id"]] and not every.read("res.users", uid["all"], ["kompakapps_warehouse_ids"])["kompakapps_warehouse_ids"], "pengguna membaca daftar gudangnya sendiri (dasar catatan Cakupan data di UI); kosong = semua")
+    [supplier] = api.search("stock.location", [["usage", "=", "supplier"]], ["id"], limit=1)
+    [customer] = api.search("stock.location", [["usage", "=", "customer"]], ["id"], limit=1)
+    [product] = api.call("product.product", "create", vals_list=[{"name": f"Barang Cakupan Gudang {tag}", "type": "consu", "is_storable": True, "standard_price": 100000.0}])
+    for wh, qty in ((wh_a, 10.0), (wh_b, 6.0)):
+        api.call("stock.quant", "create", vals_list=[{"product_id": product, "location_id": wh["lot_stock_id"][0], "inventory_quantity_auto_apply": qty}], context={"inventory_mode": True})
+    stock_domain = [["product_id", "=", product], ["location_id.usage", "=", "internal"]]
+    check(ids(a, "stock.quant", stock_domain) == ids(api, "stock.quant", [["product_id", "=", product], ["location_id", "=", wh_a["lot_stock_id"][0]]]) and a.call("stock.quant", "search_count", domain=stock_domain) == 1, "stok on-hand pengguna gudang A hanya gudang A (daftar dan hitungan)")
+    sums = a.call("stock.quant", "formatted_read_group", domain=stock_domain, groupby=["location_id"], aggregates=["quantity:sum"])
+    check({g["location_id"][0]: g["quantity:sum"] for g in sums} == {wh_a["lot_stock_id"][0]: 10.0}, "pengelompokan stok (laporan, dashboard) tidak menghitung gudang lain")
+    qty = lambda client: client.read("product.product", product, ["qty_available"])["qty_available"]  # noqa: E731
+    check((qty(a), qty(b), qty(every), qty(api)) == (10.0, 6.0, 16.0, 16.0), "jumlah tersedia produk mengikuti gudang yang diizinkan (A 10, B 6, tanpa batas 16)")
+    values = manager_a.search("stock.quant", stock_domain, ["location_id", "value"])
+    check({r["location_id"][0] for r in values} == {wh_a["lot_stock_id"][0]} and qty(manager_a) == 10.0, "Manajer Inventory dengan gudang terpilih (kepala gudang) membaca nilai stok hanya di gudangnya")
+
+    def picking(type_id, source, dest, quantity):
+        vals = {"picking_type_id": type_id, "location_id": source, "location_dest_id": dest, "move_ids": [[0, 0, {"product_id": product, "product_uom_qty": quantity, "location_id": source, "location_dest_id": dest}]]}
+        [pid] = api.call("stock.picking", "create", vals_list=[vals])
+        api.call("stock.picking", "action_confirm", ids=[pid])
+        return pid
+
+    receipt_a = picking(wh_a["in_type_id"][0], supplier["id"], wh_a["lot_stock_id"][0], 4.0)
+    receipt_b = picking(wh_b["in_type_id"][0], supplier["id"], wh_b["lot_stock_id"][0], 3.0)
+    cross = picking(wh_a["out_type_id"][0], wh_a["lot_stock_id"][0], wh_b["lot_stock_id"][0], 1.0)
+    pickings = [receipt_a, receipt_b, cross]
+    in_pickings = [["id", "in", pickings]]
+    check(ids(a, "stock.picking", in_pickings) == sorted([receipt_a, cross]) and ids(b, "stock.picking", in_pickings) == sorted([receipt_b, cross]), "transfer: tiap pengguna melihat gudangnya; transfer antar gudang tampil di kedua gudang")
+    check(ids(every, "stock.picking", in_pickings) == sorted(pickings) and ids(api, "stock.picking", in_pickings) == sorted(pickings), "pengguna tanpa gudang terpilih dan admin melihat semua transfer")
+    check(a.call("stock.picking", "search_count", domain=in_pickings) == 2, "hitungan transfer (search_count) hanya gudang A")
+    groups = a.call("stock.picking", "formatted_read_group", domain=in_pickings, groupby=["picking_type_id"], aggregates=["__count"])
+    check(sum(g["__count"] for g in groups) == 2, "pengelompokan transfer (dashboard Inventory) tidak menghitung gudang lain")
+    check(denied(a, "stock.picking", "read", ids=[receipt_b], fields=["name"]) and denied(a, "stock.picking", "write", ids=[receipt_b], vals={"origin": "x"}), "membuka dan mengubah transfer gudang lain ditolak (403)")
+    check(denied(a, "stock.picking", "action_cancel", ids=[receipt_b]) and denied(a, "stock.picking", "button_validate", ids=[receipt_b]), "membatalkan dan memvalidasi transfer gudang lain ditolak (403)")
+    check(denied(a, "stock.picking", "create", vals_list=[{"picking_type_id": wh_b["in_type_id"][0], "location_id": supplier["id"], "location_dest_id": wh_b["lot_stock_id"][0]}]), "membuat transfer di gudang lain ditolak (403)")
+    types = [wh_a["in_type_id"][0], wh_b["in_type_id"][0]]
+    check(ids(a, "stock.picking.type", [["id", "in", types]]) == [wh_a["in_type_id"][0]], "tipe operasi gudang lain tidak tampil (tidak bisa dipilih)")
+    moves = [["picking_id", "in", pickings]]
+    check({r["picking_id"][0] for r in a.search("stock.move", moves, ["picking_id"])} == {receipt_a, cross} and {r["picking_id"][0] for r in a.search("stock.move.line", [["picking_id", "in", pickings]], ["picking_id"])} <= {receipt_a, cross}, "gerakan stok dan detail gerakan mengikuti gudang yang diizinkan")
+
+    [quant_b] = api.search("stock.quant", [["product_id", "=", product], ["location_id", "=", wh_b["lot_stock_id"][0]]], ["id"])
+    inventory = {"inventory_mode": True}
+    check(denied(a, "stock.quant", "write", ids=[quant_b["id"]], vals={"inventory_quantity": 99.0}, context=inventory), "mengubah hitungan stok gudang lain ditolak (403)")
+    for field in ("inventory_quantity", "inventory_quantity_auto_apply"):
+        check(denied(a, "stock.quant", "create", vals_list=[{"product_id": product, "location_id": wh_b["lot_stock_id"][0], field: 1.0}], context=inventory), f"penyesuaian stok ({field}) di gudang lain ditolak (403)")
+    check(qty(b) == 6.0, "stok gudang B tidak berubah oleh percobaan penyesuaian pengguna gudang A")
+    a.call("stock.quant", "create", vals_list=[{"product_id": product, "location_id": wh_a["lot_stock_id"][0], "inventory_quantity_auto_apply": 8.0}], context=inventory)
+    check(qty(a) == 8.0, "pengguna gudang A menyesuaikan stok di gudangnya sendiri")
+    check(denied(a, "stock.scrap", "create", vals_list=[{"product_id": product, "scrap_qty": 1.0, "location_id": wh_b["lot_stock_id"][0]}]), "scrap di gudang lain ditolak (403)")
+
+    api.call("res.users", "write", ids=[uid["b"]], vals={"kompakapps_warehouse_ids": [[6, 0, [wh_a["id"], wh_b["id"]]]]})
+    check(ids(b, "stock.picking", in_pickings) == sorted(pickings), "mengubah daftar gudang oleh admin berlaku seketika (cache aturan dibersihkan)")
+    api.call("res.users", "write", ids=[uid["b"]], vals={"kompakapps_warehouse_ids": [[6, 0, [wh_b["id"]]]]})
+    check(ids(b, "stock.picking", in_pickings) == sorted([receipt_b, cross]), "daftar gudang dipulihkan ke gudang B saja")
+
+
+def check_access_scope_hr(api):
+    """Audit HR (D87, Q9 irisan 3): Attendance, Time Off, dan Expenses; pengguna tanpa peran HR hanya melihat data miliknya, peran Petugas atau Administrator melihat semua."""
+    step("Cakupan data HR: kehadiran, cuti, dan biaya karyawan per pengguna")
+    apis = scope_apis(api, "HR_A", "HR_B", "HR_ALL")
+    if not apis:
+        return
+    a, b, every = apis
+    tag = datetime.datetime.now().strftime("%H%M%S")
+    uid = {name: client.call("res.users", "context_get")["uid"] for name, client in (("a", a), ("b", b), ("all", every))}
+    emp = {name: api.search("hr.employee", [["user_id", "=", user]], ["id"])[0]["id"] for name, user in uid.items()}
+    ids = lambda client, model, domain: sorted(r["id"] for r in client.search(model, domain, ["id"]))  # noqa: E731
+    now = datetime.datetime.now().replace(microsecond=0)
+    fmt = lambda moment: moment.strftime("%Y-%m-%d %H:%M:%S")  # noqa: E731
+    att = {name: api.call("hr.attendance", "create", vals_list=[{"employee_id": emp[name], "check_in": fmt(now - datetime.timedelta(hours=9)), "check_out": fmt(now - datetime.timedelta(hours=1))}])[0] for name in ("a", "b")}
+    in_att = [["id", "in", list(att.values())]]
+    check(ids(a, "hr.attendance", in_att) == [att["a"]] and ids(b, "hr.attendance", in_att) == [att["b"]], "kehadiran: pengguna tanpa peran Attendance hanya melihat kehadirannya sendiri")
+    check(ids(every, "hr.attendance", in_att) == sorted(att.values()), "kehadiran: Administrator Attendance melihat semua")
+    check(denied(a, "hr.attendance", "read", ids=[att["b"]], fields=["check_in"]), "membaca kehadiran karyawan lain ditolak (403)")
+
+    [leave_type] = api.call("hr.leave.type", "create", vals_list=[{"name": f"Cuti Uji Cakupan {tag}", "requires_allocation": False, "leave_validation_type": "no_validation"}])
+    day = datetime.date.today() + datetime.timedelta(days=(7 - datetime.date.today().weekday()) % 7 + 14)
+    leave = {name: api.call("hr.leave", "create", vals_list=[{"employee_id": emp[name], "holiday_status_id": leave_type, "request_date_from": day.isoformat(), "request_date_to": day.isoformat()}])[0] for name in ("a", "b")}
+    in_leave = [["id", "in", list(leave.values())]]
+    check(ids(a, "hr.leave", in_leave) == [leave["a"]] and ids(b, "hr.leave", in_leave) == [leave["b"]], "cuti: pengguna tanpa peran Time Off hanya melihat cutinya sendiri")
+    check(ids(every, "hr.leave", in_leave) == sorted(leave.values()) and denied(a, "hr.leave", "write", ids=[leave["b"]], vals={"name": "x"}), "cuti: Petugas Time Off melihat semua; mengubah cuti karyawan lain ditolak (403)")
+
+    expense = {name: api.call("hr.expense", "create", vals_list=[{"name": f"Biaya {name} {tag}", "employee_id": emp[name], "total_amount_currency": 100000.0, "payment_mode": "own_account"}])[0] for name in ("a", "b")}
+    in_expense = [["id", "in", list(expense.values())]]
+    check(ids(a, "hr.expense", in_expense) == [expense["a"]] and ids(b, "hr.expense", in_expense) == [expense["b"]], "biaya: pengguna tanpa peran Expenses hanya melihat biayanya sendiri")
+    check(ids(every, "hr.expense", in_expense) == sorted(expense.values()) and denied(a, "hr.expense", "read", ids=[expense["b"]], fields=["name"]), "biaya: Petugas Expenses melihat semua; membuka biaya karyawan lain ditolak (403)")
 
 
 def bill_total(api, bill_id):

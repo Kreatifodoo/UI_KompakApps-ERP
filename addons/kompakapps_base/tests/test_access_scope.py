@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from odoo import Command, fields
 from odoo.addons.account.tests.common import AccountTestInvoicingCommon
 from odoo.exceptions import AccessError
@@ -423,3 +425,422 @@ class TestAccessScopePurchase(AccountTestInvoicingCommon):
         self.assertEqual(self._visible(user, self.orders), self.orders)
         apply("user", "own", admin=True)
         self.assertNotIn(self.env.ref(PURCHASE_OWN), user.all_group_ids, "Administrator otomatis Semua")
+
+
+STOCK_MANAGER = "stock.group_stock_manager"
+
+
+@tagged("post_install", "-at_install", "kompakapps")
+class TestAccessScopeInventory(AccountTestInvoicingCommon):
+    """Cakupan data Inventory per gudang (D87, Q9 irisan 3): pengguna dengan gudang terpilih hanya melihat dan memproses dokumen gudangnya."""
+
+    @classmethod
+    @AccountTestInvoicingCommon.setup_country("id")
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.env.user.write({"group_ids": [Command.link(cls.env.ref(x).id) for x in (STOCK_MANAGER, PURCHASE_MANAGER)]})
+        cls.wh_a = cls.env["stock.warehouse"].search([("company_id", "=", cls.env.company.id)], limit=1)
+        cls.wh_b = cls.env["stock.warehouse"].create({"name": "Gudang Cakupan B", "code": "GCB", "company_id": cls.env.company.id})
+        cls.vendor_loc = cls.env.ref("stock.stock_location_suppliers")
+        cls.customer_loc = cls.env.ref("stock.stock_location_customers")
+        cls.user_a = cls._scope_user("scope_wh_a", [STOCK_USER], cls.wh_a)
+        cls.user_b = cls._scope_user("scope_wh_b", [STOCK_USER], cls.wh_b)
+        cls.user_ab = cls._scope_user("scope_wh_ab", [STOCK_USER], cls.wh_a | cls.wh_b)
+        cls.user_all = cls._scope_user("scope_wh_all", [STOCK_USER], cls.env["stock.warehouse"])  # tanpa gudang terpilih = semua
+        cls.manager = cls._scope_user("scope_wh_mgr", [STOCK_MANAGER], cls.wh_a)  # kepala gudang A: Manajer Inventory dengan gudang terpilih tetap dibatasi
+        cls.manager_all = cls._scope_user("scope_wh_mgr_all", [STOCK_MANAGER], cls.env["stock.warehouse"])
+        cls.sysadmin = cls._scope_user("scope_wh_admin", ["base.group_system", STOCK_USER], cls.wh_a)  # Administrator selalu melihat semua
+        cls.plain = cls._scope_user("scope_wh_plain", [], cls.env["stock.warehouse"])
+        cls.product = cls._create_product(name="Barang Per Gudang", type="consu", is_storable=True, standard_price=100000.0)
+        cls._count(cls.wh_a.lot_stock_id, 10.0)
+        cls._count(cls.wh_b.lot_stock_id, 6.0)
+        cls.receipt_a = cls._picking(cls.wh_a.in_type_id, cls.vendor_loc, cls.wh_a.lot_stock_id, 5.0)
+        cls.receipt_b = cls._picking(cls.wh_b.in_type_id, cls.vendor_loc, cls.wh_b.lot_stock_id, 5.0)
+        cls.delivery_a = cls._picking(cls.wh_a.out_type_id, cls.wh_a.lot_stock_id, cls.customer_loc, 3.0)
+        cls.delivery_b = cls._picking(cls.wh_b.out_type_id, cls.wh_b.lot_stock_id, cls.customer_loc, 2.0)
+        # transfer manual dari gudang A ke gudang B: terkait kedua gudang
+        cls.cross = cls._picking(cls.wh_a.int_type_id, cls.wh_a.lot_stock_id, cls.wh_b.lot_stock_id, 1.0)
+        # transfer yang sama sekali tidak menyentuh gudang (mis. dropship): terlihat semua
+        no_wh_type = cls.env["stock.picking.type"].create(
+            {
+                "name": "Dropship Uji",
+                "code": "incoming",
+                "sequence_code": "DSU",
+                "warehouse_id": False,
+                "company_id": cls.env.company.id,
+                "default_location_src_id": cls.vendor_loc.id,
+                "default_location_dest_id": cls.customer_loc.id,
+            }
+        )
+        cls.no_wh = cls._picking(no_wh_type, cls.vendor_loc, cls.customer_loc, 1.0)
+        cls.pickings = cls.receipt_a | cls.receipt_b | cls.delivery_a | cls.delivery_b | cls.cross | cls.no_wh
+
+    @classmethod
+    def _scope_user(cls, login, xmlids, warehouses):
+        user = make_scope_user(cls.env, login, xmlids)
+        if warehouses:
+            user.write({"kompakapps_warehouse_ids": [Command.set(warehouses.ids)]})
+        return user
+
+    @classmethod
+    def _count(cls, location, quantity):
+        quant = cls.env["stock.quant"].with_context(inventory_mode=True).create({"product_id": cls.product.id, "location_id": location.id, "inventory_quantity": quantity})
+        quant.action_apply_inventory()
+
+    @classmethod
+    def _picking(cls, picking_type, source, dest, quantity):
+        picking = cls.env["stock.picking"].create(
+            {
+                "picking_type_id": picking_type.id,
+                "location_id": source.id,
+                "location_dest_id": dest.id,
+                "move_ids": [
+                    Command.create({"product_id": cls.product.id, "product_uom_qty": quantity, "location_id": source.id, "location_dest_id": dest.id})
+                ],
+            }
+        )
+        picking.action_confirm()
+        picking.move_ids.quantity = quantity  # membuat detail gerakan (move line)
+        return picking
+
+    def _visible(self, user, records):
+        return records.with_user(user).search([("id", "in", records.ids)])
+
+    def _on_hand(self, user):
+        self.env.invalidate_all()  # cache field hitung tidak dipisah per pengguna dalam satu transaksi uji
+        return self.product.with_user(user).qty_available
+
+    # ---------- Transfer, gerakan, detail gerakan ----------
+    def test_restricted_user_sees_only_pickings_moves_and_lines_related_to_the_allowed_warehouse(self):
+        # A: penerimaan/pengiriman A, transfer A ke B (kedua gudang), dan transfer tanpa gudang
+        self.assertEqual(self._visible(self.user_a, self.pickings), self.receipt_a | self.delivery_a | self.cross | self.no_wh)
+        self.assertEqual(self._visible(self.user_b, self.pickings), self.receipt_b | self.delivery_b | self.cross | self.no_wh)
+        self.assertEqual(self._visible(self.user_ab, self.pickings), self.pickings)
+        pickings = self.env["stock.picking"].with_user(self.user_a)
+        domain = [("id", "in", self.pickings.ids)]
+        self.assertEqual(pickings.search_count(domain), 4)
+        groups = pickings.formatted_read_group(domain, ["picking_type_id"], ["__count"])
+        self.assertEqual(sum(g["__count"] for g in groups), 4)
+        moves = self.pickings.move_ids
+        self.assertEqual(self._visible(self.user_a, moves).picking_id, self.receipt_a | self.delivery_a | self.cross | self.no_wh)
+        self.assertEqual(self._visible(self.user_b, moves).picking_id, self.receipt_b | self.delivery_b | self.cross | self.no_wh)
+        lines = moves.move_line_ids
+        self.assertTrue(lines)
+        self.assertEqual(self._visible(self.user_a, lines).move_id.picking_id, self.receipt_a | self.delivery_a | self.cross | self.no_wh)
+        self.assertEqual(self._visible(self.user_b, lines).move_id.picking_id, self.receipt_b | self.delivery_b | self.cross | self.no_wh)
+
+    def test_restricted_user_cannot_read_write_or_delete_other_warehouse_documents(self):
+        other = self.receipt_b.with_user(self.user_a)
+        with self.assertRaises(AccessError):
+            other.read(["name"])
+        with self.assertRaises(AccessError):
+            other.write({"origin": "diubah"})
+        with self.assertRaises(AccessError):
+            other.action_cancel()
+        with self.assertRaises(AccessError):
+            self.delivery_b.move_ids.with_user(self.user_a).write({"description_picking": "diubah"})
+        with self.assertRaises(AccessError):
+            self.delivery_b.move_ids.move_line_ids.with_user(self.user_a).read(["quantity"])
+        self.assertFalse(self.receipt_b.origin)
+        own = self.receipt_a.with_user(self.user_a)
+        own.write({"origin": "oleh pengguna gudang A"})
+        self.assertEqual(self.receipt_a.origin, "oleh pengguna gudang A")
+
+    def test_restricted_user_cannot_create_documents_in_another_warehouse(self):
+        vals = {"picking_type_id": self.wh_b.in_type_id.id, "location_id": self.vendor_loc.id, "location_dest_id": self.wh_b.lot_stock_id.id}
+        with self.assertRaises(AccessError):
+            self.env["stock.picking"].with_user(self.user_a).create(vals)
+        created = self.env["stock.picking"].with_user(self.user_b).create(vals)
+        self.assertEqual(created.picking_type_id, self.wh_b.in_type_id)
+        types = self.env["stock.picking.type"].with_user(self.user_a).search([("id", "in", (self.wh_a | self.wh_b).mapped("in_type_id").ids)])
+        self.assertEqual(types, self.wh_a.in_type_id, "Tipe operasi gudang lain tidak tampil sehingga tidak bisa dipilih")
+
+    def test_other_warehouses_and_their_locations_are_hidden_from_pickers(self):
+        both_wh, both_loc = self.wh_a | self.wh_b, self.wh_a.lot_stock_id | self.wh_b.lot_stock_id
+        self.assertEqual(self.env["stock.warehouse"].with_user(self.user_a).search([("id", "in", both_wh.ids)]), self.wh_a)
+        self.assertEqual(self.env["stock.location"].with_user(self.user_a).search([("id", "in", both_loc.ids)]), self.wh_a.lot_stock_id)
+        self.assertEqual(self.env["stock.warehouse"].with_user(self.user_ab).search([("id", "in", both_wh.ids)]), both_wh)
+        for user in (self.user_all, self.sysadmin):
+            self.assertEqual(self.env["stock.warehouse"].with_user(user).search([("id", "in", both_wh.ids)]), both_wh, user.login)
+            self.assertEqual(self.env["stock.location"].with_user(user).search([("id", "in", both_loc.ids)]), both_loc, user.login)
+        # lokasi tujuan di gudang lain tidak tampil, tetapi transfer antar gudang yang terlihat tetap bisa dibaca
+        row = self.cross.with_user(self.user_a).read(["location_dest_id", "picking_type_id"])[0]
+        self.assertEqual(row["location_dest_id"][0], self.wh_b.lot_stock_id.id)
+
+    def test_restricted_user_runs_receipt_and_delivery_in_the_allowed_warehouse(self):
+        self.receipt_a.move_ids.picked = True
+        self.receipt_a.with_user(self.user_a).button_validate()
+        self.assertEqual(self.receipt_a.state, "done")
+        self.delivery_a.move_ids.picked = True
+        self.delivery_a.with_user(self.user_a).button_validate()
+        self.assertEqual(self.delivery_a.state, "done")
+        self.cross.move_ids.picked = True
+        self.cross.with_user(self.user_a).button_validate()  # transfer antar gudang dari gudang A ke B dijalankan oleh pengguna gudang A
+        self.assertEqual(self.cross.state, "done")
+        with self.assertRaises(AccessError):
+            self.receipt_b.with_user(self.user_a).button_validate()
+        self.assertNotEqual(self.receipt_b.state, "done")
+
+    # ---------- Stok on-hand dan penyesuaian ----------
+    def test_on_hand_stock_and_quants_follow_the_allowed_warehouse(self):
+        domain = [("product_id", "=", self.product.id), ("location_id.usage", "=", "internal")]
+        quants = self.env["stock.quant"]
+        self.assertEqual(quants.with_user(self.user_a).search(domain).location_id, self.wh_a.lot_stock_id)
+        self.assertEqual(quants.with_user(self.user_b).search(domain).location_id, self.wh_b.lot_stock_id)
+        self.assertEqual(quants.with_user(self.user_ab).search(domain).location_id, self.wh_a.lot_stock_id | self.wh_b.lot_stock_id)
+        self.assertEqual(quants.with_user(self.user_a).search_count(domain), 1)
+        grouped = quants.with_user(self.user_a).formatted_read_group(domain, ["location_id"], ["quantity:sum"])
+        self.assertEqual({g["location_id"][0]: g["quantity:sum"] for g in grouped}, {self.wh_a.lot_stock_id.id: 10.0})
+        self.assertEqual(self._on_hand(self.user_a), 10.0, "Hitungan stok produk hanya gudang yang diizinkan")
+        self.assertEqual(self._on_hand(self.user_b), 6.0)
+        self.assertEqual(self._on_hand(self.user_ab), 16.0)
+        for user in (self.user_all, self.manager_all, self.sysadmin):
+            self.assertEqual(self._on_hand(user), 16.0, user.login)
+        self.assertEqual(self._on_hand(self.manager), 10.0, "Manajer Inventory dengan gudang terpilih hanya melihat gudangnya")
+
+    def test_stock_adjustments_are_limited_to_the_allowed_warehouse(self):
+        Quant = self.env["stock.quant"]
+        quant_b = Quant.search([("product_id", "=", self.product.id), ("location_id", "=", self.wh_b.lot_stock_id.id)])
+        with self.assertRaises(AccessError):
+            quant_b.with_user(self.user_a).with_context(inventory_mode=True).write({"inventory_quantity": 99.0})
+        # mode inventaris membuat quant sebagai superuser; hasilnya diperiksa ulang dengan hak pengguna (models/stock_quant.py)
+        for field in ("inventory_quantity", "inventory_quantity_auto_apply"):
+            with self.assertRaises(AccessError, msg=field):
+                Quant.with_user(self.user_a).with_context(inventory_mode=True).create(
+                    {"product_id": self.product.id, "location_id": self.wh_b.lot_stock_id.id, field: 1.0}
+                )
+        self.assertEqual(self._on_hand(self.user_b), 6.0, "Gudang lain tidak berubah")
+        quant_a = Quant.search([("product_id", "=", self.product.id), ("location_id", "=", self.wh_a.lot_stock_id.id)])
+        quant_a.with_user(self.user_a).with_context(inventory_mode=True).write({"inventory_quantity": 8.0})
+        quant_a.with_user(self.user_a).with_context(inventory_mode=True).action_apply_inventory()
+        self.assertEqual(self._on_hand(self.user_a), 8.0)
+        self.assertEqual(self._on_hand(self.user_b), 6.0, "Gudang lain tidak berubah")
+        new_product = self._create_product(name="Barang Baru Gudang A", type="consu", is_storable=True)
+        counted = Quant.with_user(self.user_a).with_context(inventory_mode=True).create(
+            {"product_id": new_product.id, "location_id": self.wh_a.lot_stock_id.id, "inventory_quantity_auto_apply": 3.0}
+        )
+        self.assertEqual(counted.quantity, 3.0, "Penyesuaian langsung di gudang yang diizinkan berjalan")
+
+    def test_scrap_in_another_warehouse_is_rejected(self):
+        scrap_vals = {"product_id": self.product.id, "scrap_qty": 1.0, "location_id": self.wh_b.lot_stock_id.id}
+        with self.assertRaises(AccessError):
+            scrap = self.env["stock.scrap"].with_user(self.user_a).create(scrap_vals)
+            scrap.action_validate()
+        self.assertEqual(self._on_hand(self.user_b), 6.0)
+        scrap = self.env["stock.scrap"].with_user(self.user_b).create(scrap_vals)
+        scrap.action_validate()
+        self.assertEqual(self._on_hand(self.user_b), 5.0)
+        self.assertFalse(self.env["stock.scrap"].with_user(self.user_a).search([("id", "=", scrap.id)]), "Scrap gudang lain tidak tampil")
+        self.assertEqual(self.env["stock.scrap"].with_user(self.user_b).search([("id", "=", scrap.id)]), scrap)
+
+    # ---------- Tanpa pembatasan, peran lain, cache ----------
+    def test_users_without_selection_and_administrators_see_everything_while_a_warehouse_manager_stays_limited(self):
+        quants = [("product_id", "=", self.product.id), ("location_id.usage", "=", "internal")]
+        for user in (self.user_all, self.manager_all, self.sysadmin):
+            self.assertEqual(self._visible(user, self.pickings), self.pickings, user.login)
+            self.assertEqual(self._visible(user, self.pickings.move_ids), self.pickings.move_ids, user.login)
+            self.assertEqual(len(self.env["stock.quant"].with_user(user).search(quants)), 2, user.login)
+        self.receipt_b.with_user(self.manager_all).write({"origin": "oleh manajer"})
+        self.assertEqual(self.receipt_b.origin, "oleh manajer")
+        self.receipt_b.with_user(self.sysadmin).write({"origin": "oleh administrator"})
+        # kepala gudang A: Manajer Inventory dengan gudang terpilih tidak melihat dan tidak mengubah gudang B
+        self.assertEqual(self._visible(self.manager, self.pickings), self.receipt_a | self.delivery_a | self.cross | self.no_wh)
+        with self.assertRaises(AccessError):
+            self.receipt_b.with_user(self.manager).write({"origin": "diubah"})
+
+    def test_user_without_inventory_role_has_no_stock_access(self):
+        with self.assertRaises(AccessError):
+            self.env["stock.picking"].with_user(self.plain).search_count([])
+
+    def test_changing_the_warehouse_selection_takes_effect_immediately(self):
+        user = self._scope_user("scope_wh_switch", [STOCK_USER], self.env["stock.warehouse"])
+        self.assertEqual(self._visible(user, self.pickings), self.pickings, "Tanpa gudang terpilih = semua")
+        user.write({"kompakapps_warehouse_ids": [Command.set(self.wh_a.ids)]})
+        self.assertEqual(self._visible(user, self.pickings), self.receipt_a | self.delivery_a | self.cross | self.no_wh)
+        user.write({"kompakapps_warehouse_ids": [Command.set(self.wh_b.ids)]})
+        self.assertEqual(self._visible(user, self.pickings), self.receipt_b | self.delivery_b | self.cross | self.no_wh)
+        user.write({"kompakapps_warehouse_ids": [Command.clear()]})
+        self.assertEqual(self._visible(user, self.pickings), self.pickings, "Mengosongkan pilihan = semua gudang lagi")
+
+    def test_user_can_read_own_warehouse_selection_for_the_scope_note(self):
+        row = self.user_a.with_user(self.user_a).read(["kompakapps_warehouse_ids"])[0]
+        self.assertEqual(row["kompakapps_warehouse_ids"], self.wh_a.ids)
+        with self.assertRaises(AccessError):
+            self.user_a.with_user(self.user_a).write({"kompakapps_warehouse_ids": [Command.clear()]})  # hanya administrator yang mengubah
+
+    # ---------- Kombinasi dengan Cakupan data Purchase (irisan 2) ----------
+    def test_warehouse_scope_does_not_loosen_the_purchase_own_rules_and_vice_versa(self):
+        vendor = self.env["res.partner"].create({"name": "PT Pemasok Gudang"})
+        buyer = self._scope_user("scope_wh_buyer", [PURCHASE_USER, STOCK_USER, PURCHASE_OWN], self.wh_a)
+        other_buyer = self._scope_user("scope_wh_buyer2", [PURCHASE_USER, STOCK_USER, PURCHASE_OWN], self.env["stock.warehouse"])
+        pm = self._scope_user("scope_wh_pm", [PURCHASE_MANAGER, STOCK_USER], self.wh_a)  # aturan "semua" Purchase tidak boleh melonggarkan gudang
+
+        def order(user, warehouse):
+            po = self.env["purchase.order"].create(
+                {
+                    "partner_id": vendor.id,
+                    "user_id": user.id,
+                    "picking_type_id": warehouse.in_type_id.id,
+                    "order_line": [Command.create({"product_id": self.product.id, "product_qty": 2.0, "price_unit": 100000.0})],
+                }
+            )
+            po.button_confirm()
+            return po.picking_ids
+
+        own_a, own_b, other_a, other_b = order(buyer, self.wh_a), order(buyer, self.wh_b), order(other_buyer, self.wh_a), order(other_buyer, self.wh_b)
+        every = own_a | own_b | other_a | other_b
+        self.assertEqual(self._visible(buyer, every), own_a, "PO sendiri di gudang yang diizinkan saja: kedua aturan berlaku bersamaan")
+        self.assertEqual(self._visible(pm, every), own_a | other_a, "Manajer Purchase tetap dibatasi gudang")
+        self.assertEqual(self._visible(other_buyer, every), other_a | other_b, "Pembeli tanpa gudang terpilih hanya dibatasi PO sendiri")
+
+    # ---------- Perintah yang dipakai Users & Access ----------
+    def test_users_and_access_commands_switch_warehouse_scope(self):
+        stock_user, stock_manager = self.env.ref(STOCK_USER).id, self.env.ref(STOCK_MANAGER).id  # bertingkat: manajer membawa pengguna
+        user = self._scope_user("scope_wh_ui", [], self.env["stock.warehouse"])
+
+        def apply(role, warehouses, admin=False):
+            """Meniru afterSave di ui/live/pages/users.js untuk Inventory: pilihan gudang berlaku bagi peran Pengguna dan Manajer, tidak bagi Administrator atau tanpa peran."""
+            desired = {"": -1, "user": 0, "manager": 1}[role]
+            commands = []
+            for index, gid in enumerate((stock_user, stock_manager)):
+                if index == desired:
+                    commands.append(Command.link(gid))
+                elif index > desired:
+                    commands.append(Command.unlink(gid))
+            vals = {"group_ids": commands}
+            if role == "" or admin:
+                vals["kompakapps_warehouse_ids"] = [Command.clear()]
+            else:
+                vals["kompakapps_warehouse_ids"] = [Command.set(warehouses.ids)]
+            user.write(vals)
+
+        apply("user", self.wh_a)
+        self.assertEqual(self._visible(user, self.pickings), self.receipt_a | self.delivery_a | self.cross | self.no_wh)
+        apply("user", self.wh_a | self.wh_b)
+        self.assertEqual(self._visible(user, self.pickings), self.pickings)
+        apply("user", self.wh_b)
+        self.assertEqual(self._visible(user, self.pickings), self.receipt_b | self.delivery_b | self.cross | self.no_wh)
+        apply("manager", self.wh_b)
+        self.assertEqual(user.kompakapps_warehouse_ids, self.wh_b, "Manajer Inventory (kepala gudang) tetap bisa dibatasi ke gudangnya")
+        self.assertEqual(self._visible(user, self.pickings), self.receipt_b | self.delivery_b | self.cross | self.no_wh)
+        apply("manager", self.env["stock.warehouse"])
+        self.assertEqual(self._visible(user, self.pickings), self.pickings, "Manajer tanpa gudang terpilih melihat semua")
+        apply("user", self.wh_a, admin=True)
+        self.assertFalse(user.kompakapps_warehouse_ids, "Administrator otomatis semua gudang")
+        apply("", self.wh_a)
+        self.assertFalse(user.kompakapps_warehouse_ids)
+
+
+ATT_OFFICER = "hr_attendance.group_hr_attendance_officer"
+ATT_MANAGER = "hr_attendance.group_hr_attendance_manager"
+LEAVE_RESPONSIBLE = "hr_holidays.group_hr_holidays_responsible"
+LEAVE_OFFICER = "hr_holidays.group_hr_holidays_user"
+EXPENSE_TEAM = "hr_expense.group_hr_expense_team_approver"
+EXPENSE_ALL = "hr_expense.group_hr_expense_user"
+ACCOUNT_INVOICE = "account.group_account_invoice"
+ACCOUNT_READONLY = "account.group_account_readonly"
+ACCOUNT_BOOKKEEPER = "account.group_account_user"
+
+
+@tagged("post_install", "-at_install", "kompakapps")
+class TestAccessScopeHR(AccountTestInvoicingCommon):
+    """Audit HR dan Accounting (D87, Q9 irisan 3): bukti bahwa cakupan Attendance, Time Off, dan Expenses yang dipetakan di Users & Access benar-benar berlaku."""
+
+    @classmethod
+    @AccountTestInvoicingCommon.setup_country("id")
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.env.user.write({"group_ids": [Command.link(cls.env.ref(x).id) for x in ("hr.group_hr_manager", ATT_MANAGER, "hr_holidays.group_hr_holidays_manager", "hr_expense.group_hr_expense_manager")]})
+        Users = {}
+        for key, xmlids in {
+            "own1": [], "own2": [], "own3": [],
+            "att_officer": [ATT_OFFICER], "att_manager": [ATT_MANAGER],
+            "leave_resp": [LEAVE_RESPONSIBLE], "leave_officer": [LEAVE_OFFICER],
+            "exp_team": [EXPENSE_TEAM], "exp_all": [EXPENSE_ALL], "bookkeeper": [ACCOUNT_BOOKKEEPER],
+            "acct_invoice": [ACCOUNT_INVOICE], "acct_readonly": [ACCOUNT_READONLY],
+        }.items():
+            Users[key] = make_scope_user(cls.env, f"scope_hr_{key}", xmlids)
+        cls.users = Users
+        cls.emp = {key: cls.env["hr.employee"].create({"name": f"Karyawan {key}", "user_id": user.id, "company_id": cls.env.company.id}) for key, user in Users.items()}
+        # keterkaitan tim: pengelola kehadiran, penyetuju cuti, dan penyetuju biaya untuk karyawan own2
+        cls.emp["own2"].write(
+            {
+                "attendance_manager_id": Users["att_officer"].id,
+                "leave_manager_id": Users["leave_resp"].id,
+                "expense_manager_id": Users["exp_team"].id,
+            }
+        )
+        now = fields.Datetime.now()
+        cls.attendance = {k: cls.env["hr.attendance"].create({"employee_id": cls.emp[k].id, "check_in": now - timedelta(hours=9), "check_out": now - timedelta(hours=1)}) for k in ("own1", "own2", "own3")}
+        leave_type = cls.env["hr.leave.type"].create({"name": "Cuti Uji Cakupan", "requires_allocation": False, "leave_validation_type": "no_validation"})
+        day = fields.Date.today() + timedelta(days=(7 - fields.Date.today().weekday()) % 7 + 14)  # Senin dua minggu ke depan
+        cls.leave = {
+            k: cls.env["hr.leave"].create({"employee_id": cls.emp[k].id, "holiday_status_id": leave_type.id, "request_date_from": day, "request_date_to": day})
+            for k in ("own1", "own2", "own3")
+        }
+        cls.expense = {
+            k: cls.env["hr.expense"].create({"name": f"Biaya {k}", "employee_id": cls.emp[k].id, "total_amount_currency": 100000.0, "payment_mode": "own_account"})
+            for k in ("own1", "own2", "own3")
+        }
+
+    def _seen(self, user_key, records):
+        return records.with_user(self.users[user_key]).search([("id", "in", records.ids)])
+
+    def _all(self, mapping):
+        return sum(mapping.values(), self.env[next(iter(mapping.values()))._name])
+
+    # ---------- Attendance ----------
+    def test_attendance_scopes_own_managed_employees_and_all(self):
+        attendances = self._all(self.attendance)
+        a = self.attendance
+        self.assertEqual(self._seen("own1", attendances), a["own1"], "Pengguna internal tanpa peran Attendance hanya membaca kehadirannya sendiri")
+        self.assertEqual(self._seen("own2", attendances), a["own2"])
+        self.assertEqual(self._seen("att_officer", attendances), a["own2"], "Petugas hanya melihat karyawan yang ia kelola (pengelola kehadiran), bukan semua")
+        self.assertEqual(self._seen("att_manager", attendances), attendances, "Administrator Attendance melihat semua")
+        with self.assertRaises(AccessError):
+            a["own2"].with_user(self.users["own1"]).read(["check_in"])
+        with self.assertRaises(AccessError):
+            a["own1"].with_user(self.users["own2"]).write({"check_out": fields.Datetime.now()})
+        self.assertEqual(self.env["hr.attendance"].with_user(self.users["own1"]).search_count([("id", "in", attendances.ids)]), 1)
+
+    # ---------- Time Off ----------
+    def test_time_off_scopes_own_responsible_team_and_all(self):
+        leaves = self._all(self.leave)
+        lv = self.leave
+        self.assertEqual(self._seen("own1", leaves), lv["own1"], "Pengguna internal hanya melihat cutinya sendiri")
+        self.assertEqual(self._seen("own3", leaves), lv["own3"])
+        self.assertEqual(self._seen("leave_resp", leaves), lv["own2"], "Penyetuju tim melihat cuti karyawan yang ia setujui")
+        self.assertEqual(self._seen("leave_officer", leaves), leaves, "Petugas Time Off melihat semua cuti")
+        with self.assertRaises(AccessError):
+            lv["own2"].with_user(self.users["own1"]).read(["name"])
+        with self.assertRaises(AccessError):
+            lv["own2"].with_user(self.users["own1"]).write({"name": "diubah"})
+        self.assertIn(self.env.ref("hr.group_hr_user"), self.users["leave_officer"].all_group_ids, "Temuan: peran Petugas Time Off membawa Petugas HR (data karyawan) secara tersirat")
+
+    # ---------- Expenses ----------
+    def test_expense_scopes_own_team_and_all(self):
+        expenses = self._all(self.expense)
+        ex = self.expense
+        self.assertEqual(self._seen("own1", expenses), ex["own1"], "Pengguna internal hanya melihat biaya miliknya sendiri")
+        self.assertEqual(self._seen("exp_team", expenses), ex["own2"], "Penyetuju tim melihat biaya karyawan yang ia setujui")
+        for key in ("exp_all", "bookkeeper"):
+            self.assertEqual(self._seen(key, expenses), expenses, f"{key} melihat semua biaya")
+        with self.assertRaises(AccessError):
+            ex["own2"].with_user(self.users["own1"]).read(["name"])
+        with self.assertRaises(AccessError):
+            ex["own2"].with_user(self.users["own1"]).unlink()
+
+    # ---------- Accounting: dokumentasi hak, tidak diperketat ----------
+    def test_accounting_roles_see_all_journals_and_plain_users_have_no_access(self):
+        invoice = self.init_invoice("out_invoice", products=self.product_a, post=True)
+        bill = self.init_invoice("in_invoice", products=self.product_b, post=True)
+        moves = invoice | bill
+        for key in ("acct_invoice", "acct_readonly", "bookkeeper"):
+            self.assertEqual(self._seen(key, moves), moves, f"{key} melihat semua jurnal, faktur, dan tagihan")
+        with self.assertRaises(AccessError):
+            moves.with_user(self.users["acct_readonly"]).write({"ref": "diubah"})
+        for key in ("own1", "exp_team"):
+            with self.assertRaises(AccessError, msg=key):
+                moves.with_user(self.users[key]).read(["name"])
+        lines = self.env["account.move.line"].with_user(self.users["acct_readonly"]).search([("move_id", "in", moves.ids)])
+        self.assertTrue(lines, "Accounting Hanya baca membaca item jurnal")

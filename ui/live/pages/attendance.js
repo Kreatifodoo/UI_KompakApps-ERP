@@ -1,6 +1,6 @@
 // Attendance (hr.attendance): daftar kehadiran, check in/out untuk pengguna yang tertaut ke karyawan, entri manual, jam kerja,
 // dan lembur (persetujuan lembur). Check in membuat catatan baru, check out mengisi waktu keluar pada catatan yang masih terbuka (D83).
-import { badge, button, call, ctx, dateTimeText, dayBoundary, guarded, searchRead, toast, today } from "../common.js";
+import { badge, button, call, ctx, dateTimeText, dayBoundary, guarded, scopeNote, searchRead, toast, today } from "../common.js";
 import { hrRefs } from "./employee.js";
 import { createMasterPage } from "./masters.js";
 
@@ -52,6 +52,7 @@ const page = createMasterPage({
       ? button("att-out", `Check Out (${me.name})`, "danger", { id: me.id })
       : button("att-in", `Check In (${me.name})`, "success", { id: me.id });
   },
+  listTop: () => scopeNote("attendance"),
   loadRefs: hrRefs,
   fields: [
     { key: "employee_id", label: "Karyawan", type: "m2o", required: true, optionsOf: (refs) => refs.employees },

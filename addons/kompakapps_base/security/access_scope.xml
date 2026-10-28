@@ -102,6 +102,54 @@
         <field name="groups" eval="[(4, ref('purchase.group_purchase_manager')), (4, ref('base.group_system'))]" />
     </record>
 
+    <!-- ===== Inventory per gudang (D87, Q9 irisan 3) ===== -->
+    <!-- Cakupan data Inventory: res.users.kompakapps_warehouse_ids (kosong = semua gudang). Aturan GLOBAL (tanpa grup) yang hanya menyempitkan:
+         domainnya kosong (tidak membatasi) bila pengguna tidak punya gudang terpilih atau Administrator (base.group_system); selain itu pengguna
+         (termasuk Manajer Inventory, satu-satunya peran yang boleh membaca nilai stok) hanya melihat dokumen yang terkait gudangnya. Terkait gudang =
+         lewat tipe operasi, lokasi asal, atau lokasi tujuan; dokumen yang sama sekali tidak menyentuh gudang (mis. dropship) tetap terlihat.
+         Aturan global digabung AND dengan aturan grup, jadi aturan "hanya PO sendiri" milik group_purchase_own di atas tidak dilonggarkan.
+         user.sudo() menghindari galat hak baca saat membaca daftar gudang pengguna. -->
+    <record id="kompakapps_picking_rule_warehouse" model="ir.rule">
+        <field name="name">Transfer: hanya gudang yang diizinkan pengguna</field>
+        <field name="model_id" ref="stock.model_stock_picking" />
+        <field name="domain_force">[] if (not user.sudo().kompakapps_warehouse_ids) or user.has_group('base.group_system') else ['|', '|', '|', ('picking_type_id.warehouse_id', 'in', user.sudo().kompakapps_warehouse_ids.ids), ('location_id.warehouse_id', 'in', user.sudo().kompakapps_warehouse_ids.ids), ('location_dest_id.warehouse_id', 'in', user.sudo().kompakapps_warehouse_ids.ids), '&amp;', '&amp;', ('picking_type_id.warehouse_id', '=', False), ('location_id.warehouse_id', '=', False), ('location_dest_id.warehouse_id', '=', False)]</field>
+    </record>
+    <record id="kompakapps_stock_move_rule_warehouse" model="ir.rule">
+        <field name="name">Gerakan stok: hanya gudang yang diizinkan pengguna</field>
+        <field name="model_id" ref="stock.model_stock_move" />
+        <field name="domain_force">[] if (not user.sudo().kompakapps_warehouse_ids) or user.has_group('base.group_system') else ['|', '|', '|', ('picking_type_id.warehouse_id', 'in', user.sudo().kompakapps_warehouse_ids.ids), ('location_id.warehouse_id', 'in', user.sudo().kompakapps_warehouse_ids.ids), ('location_dest_id.warehouse_id', 'in', user.sudo().kompakapps_warehouse_ids.ids), '&amp;', '&amp;', '|', ('picking_type_id', '=', False), ('picking_type_id.warehouse_id', '=', False), ('location_id.warehouse_id', '=', False), ('location_dest_id.warehouse_id', '=', False)]</field>
+    </record>
+    <record id="kompakapps_stock_move_line_rule_warehouse" model="ir.rule">
+        <field name="name">Detail gerakan stok: hanya gudang yang diizinkan pengguna</field>
+        <field name="model_id" ref="stock.model_stock_move_line" />
+        <field name="domain_force">[] if (not user.sudo().kompakapps_warehouse_ids) or user.has_group('base.group_system') else ['|', '|', '|', ('picking_id.picking_type_id.warehouse_id', 'in', user.sudo().kompakapps_warehouse_ids.ids), ('location_id.warehouse_id', 'in', user.sudo().kompakapps_warehouse_ids.ids), ('location_dest_id.warehouse_id', 'in', user.sudo().kompakapps_warehouse_ids.ids), '&amp;', '&amp;', '|', ('picking_id', '=', False), ('picking_id.picking_type_id.warehouse_id', '=', False), ('location_id.warehouse_id', '=', False), ('location_dest_id.warehouse_id', '=', False)]</field>
+    </record>
+    <record id="kompakapps_stock_quant_rule_warehouse" model="ir.rule">
+        <field name="name">Stok on-hand dan penyesuaian: hanya gudang yang diizinkan pengguna</field>
+        <field name="model_id" ref="stock.model_stock_quant" />
+        <field name="domain_force">[] if (not user.sudo().kompakapps_warehouse_ids) or user.has_group('base.group_system') else ['|', ('location_id.warehouse_id', '=', False), ('location_id.warehouse_id', 'in', user.sudo().kompakapps_warehouse_ids.ids)]</field>
+    </record>
+    <record id="kompakapps_stock_scrap_rule_warehouse" model="ir.rule">
+        <field name="name">Scrap: hanya gudang yang diizinkan pengguna</field>
+        <field name="model_id" ref="stock.model_stock_scrap" />
+        <field name="domain_force">[] if (not user.sudo().kompakapps_warehouse_ids) or user.has_group('base.group_system') else ['|', ('location_id.warehouse_id', '=', False), ('location_id.warehouse_id', 'in', user.sudo().kompakapps_warehouse_ids.ids)]</field>
+    </record>
+    <record id="kompakapps_stock_location_rule_warehouse" model="ir.rule">
+        <field name="name">Lokasi: sembunyikan lokasi gudang yang tidak diizinkan pengguna</field>
+        <field name="model_id" ref="stock.model_stock_location" />
+        <field name="domain_force">[] if (not user.sudo().kompakapps_warehouse_ids) or user.has_group('base.group_system') else ['|', ('warehouse_id', '=', False), ('warehouse_id', 'in', user.sudo().kompakapps_warehouse_ids.ids)]</field>
+    </record>
+    <record id="kompakapps_stock_warehouse_rule_warehouse" model="ir.rule">
+        <field name="name">Gudang: hanya gudang yang diizinkan pengguna</field>
+        <field name="model_id" ref="stock.model_stock_warehouse" />
+        <field name="domain_force">[] if (not user.sudo().kompakapps_warehouse_ids) or user.has_group('base.group_system') else [('id', 'in', user.sudo().kompakapps_warehouse_ids.ids)]</field>
+    </record>
+    <record id="kompakapps_picking_type_rule_warehouse" model="ir.rule">
+        <field name="name">Tipe operasi: hanya gudang yang diizinkan pengguna</field>
+        <field name="model_id" ref="stock.model_stock_picking_type" />
+        <field name="domain_force">[] if (not user.sudo().kompakapps_warehouse_ids) or user.has_group('base.group_system') else ['|', ('warehouse_id', '=', False), ('warehouse_id', 'in', user.sudo().kompakapps_warehouse_ids.ids)]</field>
+    </record>
+
     <!-- ===== Tagihan vendor ===== -->
     <!-- Aturan bawaan Purchase / User memberi semua tagihan vendor. Grup beraturan digabung OR, jadi aturan tambahan tidak bisa membatasinya;
          domain bawaan diperketat hanya untuk pemegang grup penanda yang bukan manajer Purchase atau administrator (tagihan dari PO miliknya

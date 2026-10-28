@@ -4,7 +4,7 @@
 // kurang dari permintaan.
 import {
   actionBar, app, badge, call, cell, chatterHtml, closeModal, dateText, dateTimeText, esc, fieldBlock, filterSelect, fromInputDateTime, guarded, loadMessages,
-  openModal, money, pageHeader, readOne, readonlyValue, rowLink, searchRead, statTiles, statusbar, table, toast, toInputDateTime, INPUT,
+  openModal, money, pageHeader, readOne, readonlyValue, rowLink, scopeNote, searchRead, statTiles, statusbar, table, toast, toInputDateTime, INPUT,
 } from "../common.js";
 import { deliveryJournals, receiptJournals } from "../stockjournal.js";
 import { printButton } from "../print.js";
@@ -115,6 +115,7 @@ export function createPickingPage(config) {
          <button data-action="refresh" class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50" aria-label="Muat ulang"><i class="fas fa-rotate"></i></button>
          ${config.newHref ? `<a href="${config.newHref}" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>${config.newLabel}</a>` : ""}`,
       ) +
+      (await scopeNote("warehouse")) +
       (transit ? '<p class="text-sm text-gray-600 mb-3">Dokumen yang keluar dari atau masuk ke lokasi transit antar gudang: pengiriman keluar dari gudang pemasok, lalu penerimaan di gudang tujuan (dari rute suplai di Reorder Level).</p>' : "") +
       table(
         [{ label: "Referensi" }, { label: config.partner }, ...(wide ? [{ label: "Tipe Operasi" }, { label: "Dari" }, { label: "Ke" }] : []), { label: "Tanggal Terjadwal" }, { label: "Dokumen Sumber" }, { label: "Status" }],

@@ -290,16 +290,69 @@ const SCOPE_NOTES = {
     text: "Cakupan data Anda: hanya tagihan vendor dari PO milik Anda atau yang Anda buat sendiri. Tagihan dari PO pembeli lain tidak tampil.",
   },
 };
+/**
+ * Cakupan data HR (Q9 irisan 3): Odoo membatasi kehadiran, cuti, dan biaya karyawan lewat peran. `all` = grup yang melihat semua (salah satunya
+ * cukup), `team` = grup yang menambah karyawan yang ia kelola atau setujui; tanpa keduanya pengguna hanya melihat data miliknya.
+ */
+const HR_SCOPES = {
+  attendance: {
+    what: "kehadiran", all: ["hr_attendance.group_hr_attendance_manager"], team: ["hr_attendance.group_hr_attendance_officer"],
+    teamText: "karyawan yang Anda kelola sebagai pengelola kehadiran",
+  },
+  leave: { what: "pengajuan cuti", all: ["hr_holidays.group_hr_holidays_user"], team: ["hr_holidays.group_hr_holidays_responsible"], teamText: "karyawan yang Anda setujui cutinya" },
+  expense: {
+    what: "biaya", all: ["hr_expense.group_hr_expense_user", "account.group_account_user"], team: ["hr_expense.group_hr_expense_team_approver"],
+    teamText: "karyawan tim Anda (bawahan, atau yang Anda tetapkan sebagai penyetuju biayanya)",
+  },
+};
+const scopeNoteHtml = (kind, text) =>
+  `<div class="mb-4 text-xs text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-2" data-scope-note="${esc(kind)}"><i class="fas fa-user-lock mr-2"></i>${esc(text)} Minta administrator mengubah Cakupan data Anda di General Setting &gt; Users &amp; Access bila perlu.</div>`;
 export async function scopeNote(kind) {
+  if (!ctx.user) return "";
+  if (kind === "warehouse") {
+    const scope = await warehouseScope();
+    return scope ? scopeNoteHtml(kind, `Cakupan data Anda: hanya gudang ${scope.names.join(", ")}. Transfer, gerakan stok, dan stok di gudang lain tidak tampil.`) : "";
+  }
+  if (HR_SCOPES[kind]) {
+    const spec = HR_SCOPES[kind];
+    const [all, team] = await Promise.all([Promise.all(spec.all.map((g) => hasGroup(g))), Promise.all(spec.team.map((g) => hasGroup(g)))]);
+    if (all.some(Boolean)) return "";
+    return scopeNoteHtml(kind, `Cakupan data Anda: hanya ${spec.what} milik Anda${team.some(Boolean) ? ` dan ${spec.teamText}` : ""}. Milik karyawan lain tidak tampil.`);
+  }
   const spec = SCOPE_NOTES[kind];
-  if (!spec || !ctx.user) return "";
+  if (!spec) return "";
   const [limited, ...lifted] = await Promise.all([spec.own, ...spec.lift].map((group) => hasGroup(group)));
   if (!limited || lifted.some(Boolean)) return "";
-  return `<div class="mb-4 text-xs text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-2" data-scope-note="${esc(kind)}"><i class="fas fa-user-lock mr-2"></i>${esc(spec.text)} Minta administrator mengubah Cakupan data Anda di General Setting &gt; Users &amp; Access bila perlu.</div>`;
+  return scopeNoteHtml(kind, spec.text);
 }
+/**
+ * Cakupan data Inventory (Q9, D87): gudang yang diizinkan bagi pengguna saat ini, `{ ids, names }`; null bila tidak dibatasi (tanpa pilihan gudang
+ * berarti semua atau Administrator; Manajer Inventory dengan gudang terpilih tetap dibatasi). Aturan record Odoo yang menegakkannya; ini hanya untuk catatan dan pilihan gudang di UI.
+ */
+export const warehouseScope = () =>
+  reference("warehouse-scope", async () => {
+    if (!ctx.user) return null;
+    try {
+      const [row, admin] = await Promise.all([readOne("res.users", ctx.user.id, ["kompakapps_warehouse_ids"]), hasGroup("base.group_system")]);
+      const ids = row?.kompakapps_warehouse_ids ?? [];
+      if (!ids.length || admin) return null;
+      const warehouses = await searchRead("stock.warehouse", [["id", "in", ids]], ["display_name"], { order: "name", context: { active_test: false } });
+      return { ids, names: warehouses.map((w) => w.display_name) };
+    } catch {
+      return null; // modul belum di-upgrade (field belum ada) atau tidak terbaca: anggap tidak dibatasi
+    }
+  });
 /** Gudang aktif beserta tipe operasi penerimaan, pengiriman, dan produksinya; pemilih gudang di dokumen hanya muncul bila ada lebih dari satu (D42). */
 export const referenceWarehouses = () =>
-  reference("warehouses", () => searchRead("stock.warehouse", [], ["display_name", "code", "lot_stock_id", "in_type_id", "out_type_id", "manu_type_id", "sequence"], { order: "name" }));
+  reference("warehouses", async () => {
+    const [list, scope] = await Promise.all([
+      searchRead("stock.warehouse", [], ["display_name", "code", "lot_stock_id", "in_type_id", "out_type_id", "manu_type_id", "sequence"], { order: "name" }),
+      warehouseScope(),
+    ]);
+    // pengguna yang dibatasi per gudang (Q9) hanya memilih gudangnya; bila tak satu pun cocok (mis. perusahaan lain), biarkan aturan Odoo yang menyaring
+    const allowed = scope ? list.filter((w) => scope.ids.includes(w.id)) : list;
+    return allowed.length ? allowed : list;
+  });
 /** Strategi pengeluaran stok (product.removal) dan penjelasan singkatnya (D43). */
 export const referenceRemovals = () => reference("removals", () => searchRead("product.removal", [], ["name", "method"], { order: "id" }));
 export const REMOVAL_HELP = {

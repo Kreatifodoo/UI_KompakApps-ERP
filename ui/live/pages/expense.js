@@ -1,7 +1,7 @@
 // Expenses (hr.expense): biaya karyawan. Alur Odoo 19 tanpa laporan biaya: Draft, Diajukan, Disetujui, Diposting, Dibayar (atau Ditolak).
 // Biaya dibayar karyawan menjadi tanda terima (Dr akun biaya, Cr Hutang Usaha ke karyawan) lewat jurnal Purchases; biaya dibayar perusahaan
 // langsung membuat pembayaran keluar. Akun biaya dan pajak pembelian dipilih dari COA Indonesia; lampiran struk lewat bagian Lampiran umum (D84).
-import { badge, button, call, ctx, dateText, esc, guarded, journalHtml, loadJournalItems, money, searchRead, toast, today } from "../common.js";
+import { badge, button, call, ctx, dateText, esc, guarded, journalHtml, loadJournalItems, money, scopeNote, searchRead, toast, today } from "../common.js";
 import { hrRefs } from "./employee.js";
 import { createMasterPage } from "./masters.js";
 
@@ -25,6 +25,7 @@ const page = createMasterPage({
     { label: "Status", value: (r) => badge(EXPENSE_STATES, r.state), raw: true },
   ],
   search: ["name", "employee_id.name"],
+  listTop: () => scopeNote("expense"),
   filters: [
     { key: "status", label: "Semua status", options: Object.entries(EXPENSE_STATES).map(([k, v]) => [k, v[0]]), domain: (v) => [["state", "=", v]] },
     { key: "employee", hidden: true, label: "Karyawan", options: [], domain: (v) => [["employee_id", "=", Number(v)]] },
