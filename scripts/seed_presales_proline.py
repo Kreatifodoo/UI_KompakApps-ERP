@@ -352,9 +352,17 @@ ship(move_cold, at(60))
 for product_rec, low, high in ((ureum, 40, 100), (kolesterol, 100, 200), (fobt, 120, 200), (hivsyp, 80, 160), (hb_strip, 20, 60)):
     env["stock.warehouse.orderpoint"].create({"product_id": product_rec.id, "location_id": stock_loc.id, "warehouse_id": wh.id, "product_min_qty": low, "product_max_qty": high, "trigger": "manual"})
 
-# ---------- 3. Manufacturing: kit reagen kolesterol dari reagen curah ----------
+# ---------- 3. Manufacturing: kit reagen kolesterol dari reagen curah, dengan work center dan FOH (Q63, D91) ----------
+# Work center membawa tarif FOH per jam dan akun FOH Dibebankan (bawaan dari setup); operasi BoM berdasar jam standar, jadi FOH dibebankan sebesar
+# jam standar x tarif saat work order selesai dan masuk ke nilai barang jadi (Inventory COGM).
+env["res.config.settings"].create({"group_mrp_routings": True}).execute()
+wc_fill = env["mrp.workcenter"].create({"name": "Filling dan Pencampuran Reagen", "code": "FILL", "costs_hour": 150_000, "oee_target": 85, "time_start": 15, "time_stop": 10})
+wc_pack = env["mrp.workcenter"].create({"name": "Pengemasan Kit", "code": "PACK", "costs_hour": 75_000, "oee_target": 90})
 bom_kol = env["mrp.bom"].create({"product_tmpl_id": kolesterol.product_tmpl_id.id, "product_qty": 1, "type": "normal", "bom_line_ids": [
-    Command.create({"product_id": kol_bulk.id, "product_qty": 0.2}), Command.create({"product_id": c_vial.id, "product_qty": 4}), Command.create({"product_id": c_dus_kit.id, "product_qty": 1})]})
+    Command.create({"product_id": kol_bulk.id, "product_qty": 0.2}), Command.create({"product_id": c_vial.id, "product_qty": 4}), Command.create({"product_id": c_dus_kit.id, "product_qty": 1})],
+    "operation_ids": [
+        Command.create({"name": "Filling reagen", "workcenter_id": wc_fill.id, "time_mode": "manual", "time_cycle_manual": 2, "cost_mode": "estimated"}),
+        Command.create({"name": "Pengemasan kit", "workcenter_id": wc_pack.id, "time_mode": "manual", "time_cycle_manual": 1, "cost_mode": "estimated"})]})
 mo_done = env["mrp.production"].create({"product_id": kolesterol.id, "product_qty": 80, "bom_id": bom_kol.id, "date_start": at(55)})
 if "analytic_distribution" in mo_done._fields:
     mo_done.analytic_distribution = dist("production", kolesterol)
@@ -364,6 +372,9 @@ mo_done.lot_producing_ids = [Command.set(lot_kol.ids)]
 mo_done.qty_producing = 80
 for move in mo_done.move_raw_ids:
     move.write({"quantity": move.product_uom_qty, "picked": True})
+for workorder in mo_done.workorder_ids.sorted("id"):
+    workorder.button_start()
+    workorder.button_finish()
 mo_done.button_mark_done()
 mo_open = env["mrp.production"].create({"product_id": kolesterol.id, "product_qty": 120, "bom_id": bom_kol.id, "date_start": at(0)})
 if "analytic_distribution" in mo_open._fields:

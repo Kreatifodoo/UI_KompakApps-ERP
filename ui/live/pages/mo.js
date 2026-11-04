@@ -276,7 +276,7 @@ async function renderForm(id, query) {
       ? searchRead("stock.move", [["id", "in", mo.move_finished_ids]], ["product_id", "product_uom_qty", "quantity", "product_uom", "state", "value", "account_move_id", "cost_share", "byproduct_id"], { order: "id" })
       : [],
     mo.workorder_ids.length
-      ? searchRead("mrp.workorder", [["id", "in", mo.workorder_ids]], ["name", "workcenter_id", "state", "duration_expected", "duration", "is_user_working"], { order: "sequence, id" })
+      ? searchRead("mrp.workorder", [["id", "in", mo.workorder_ids]], ["name", "workcenter_id", "state", "duration_expected", "duration", "is_user_working", "costs_hour", "cost_mode"], { order: "sequence, id" })
       : [],
     referenceUsers(),
     referenceWarehouses(),
@@ -342,6 +342,10 @@ async function renderForm(id, query) {
       <td class="py-2 px-4 text-sm">${esc(m.product_uom[1])}</td>
       ${mo.state === "done" ? `<td class="py-2 px-4 text-sm text-right tabular-nums">${money(Math.abs(m.value))}</td>` : ""}</tr>`)
     .join("");
+  // FOH per work order: jam kerja (standar atau aktual menurut dasar biaya operasi) dikali tarif work center; sebelum selesai ini angka rencana
+  const rates = new Map((orders.length ? await searchRead("mrp.workcenter", [["id", "in", orders.map((w) => w.workcenter_id[0])]], ["costs_hour"]) : []).map((r) => [r.id, r.costs_hour]));
+  const fohOf = (w) => (((w.cost_mode === "actual" && w.duration) ? w.duration : w.duration_expected) / 60) * (w.costs_hour || rates.get(w.workcenter_id[0]) || 0);
+  const fohTotal = orders.reduce((sum, w) => sum + fohOf(w), 0);
   const head = (labels, right = []) => `<thead class="bg-gray-50"><tr>${labels.map((h, i) => `<th class="py-2 px-4 text-xs font-semibold text-gray-600 uppercase ${right.includes(i) ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>`;
   const woRows = orders
     .map((w) => {
@@ -353,6 +357,7 @@ async function renderForm(id, query) {
       }
       return `<tr><td class="py-2 px-4 text-sm">${esc(w.name)}</td><td class="py-2 px-4 text-sm">${esc(w.workcenter_id[1])}</td>
         <td class="py-2 px-4 text-sm text-right tabular-nums">${esc(nf.format(w.duration_expected))}</td><td class="py-2 px-4 text-sm text-right tabular-nums">${esc(nf.format(w.duration))}</td>
+        <td class="py-2 px-4 text-sm text-right tabular-nums">${fohOf(w) ? money(fohOf(w)) : ""}</td>
         <td class="py-2 px-4">${badge(WO_STATES, w.state)}</td>
         <td class="py-2 px-4 text-right whitespace-nowrap">${buttons.map(([a, l, k]) => `<button type="button" data-action="${a}" data-id="${w.id}" class="px-3 py-1 rounded-lg text-sm ${k === "primary" ? "bg-indigo-600 text-white hover:bg-indigo-700" : "bg-white border border-gray-300 hover:bg-gray-50"} ml-1">${l}</button>`).join("")}</td></tr>`;
     })
@@ -402,7 +407,8 @@ async function renderForm(id, query) {
     </section>
     ${orders.length
       ? `<section id="section-wo" class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 overflow-x-auto"><div class="px-4 py-3 border-b border-gray-200 text-sm font-semibold">Work Order</div>
-         <table class="w-full text-left">${head(["Operasi", "Work Center", "Rencana (menit)", "Aktual (menit)", "Status", ""], [2, 3])}<tbody class="divide-y divide-gray-100">${woRows}</tbody></table></section>`
+         <table class="w-full text-left">${head(["Operasi", "Work Center", "Rencana (menit)", "Aktual (menit)", mo.state === "done" ? "FOH Dibebankan" : "FOH (rencana)", "Status", ""], [2, 3, 4])}<tbody class="divide-y divide-gray-100">${woRows}</tbody></table>
+         ${fohTotal ? `<p class="mt-2 text-xs text-gray-500">${mo.state === "done" ? "FOH dibebankan" : "FOH direncanakan"} ${esc(money(fohTotal))}: ${mo.state === "done" ? "sudah masuk" : "akan masuk"} ke nilai barang jadi (Inventory COGM).</p>` : ""}</section>`
       : ""}
     ${open
       ? `<section class="bg-white rounded-xl shadow-sm border border-indigo-200 mt-4 p-6">

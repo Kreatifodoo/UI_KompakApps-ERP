@@ -113,7 +113,7 @@ Prolog yang dibacakan: *"RSUD Kabupaten Karawang membutuhkan analyzer kimia klin
 
 **Kalimat kunci**: "Kekurangan vial terlihat sebelum MO dikonfirmasi, bukan setelah lini berhenti."
 
-**Jika ditanya**: perencanaan kapasitas dan jadwal mesin (Schedule Production tersedia; penjadwalan kapasitas tingkat lanjut adalah fitur Enterprise); biaya tenaga kerja dan overhead di MO (bisa lewat operasi work center; belum diatur di demo).
+**Jika ditanya**: perencanaan kapasitas dan jadwal mesin (Schedule Production tersedia; penjadwalan kapasitas tingkat lanjut adalah fitur Enterprise); biaya overhead pabrik (FOH) di MO: work center membawa tarif FOH per jam dan operasi BoM memakai jam standar; saat work order selesai FOH dibebankan (Dr Barang Dalam Proses, Cr FOH Dibebankan) dan masuk ke nilai barang jadi di Inventory COGM. Di demo: work center Filling dan Pengemasan Kit pada BoM kit kolesterol (D91).
 
 ### Bab 5. Purchase: dari permintaan sampai penerimaan ber-lot (4 menit)
 

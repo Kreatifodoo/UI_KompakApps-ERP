@@ -154,7 +154,8 @@ async function renderList(query) {
 }
 
 const emptyRow = (name) => (name === "byproducts" ? { id: null, product: null, text: "", qty: 1, uomId: null, share: 0 } : { id: null, product: null, text: "", qty: 1, uomId: null });
-const emptyOp = () => ({ id: null, name: "", wcId: null, minutes: 60 });
+const COST_MODES = { estimated: "Jam standar (FOH dibebankan)", actual: "Waktu aktual" };
+const emptyOp = () => ({ id: null, name: "", wcId: null, minutes: 60, costMode: "estimated" });
 
 function uomSelect(uoms, row, name, i) {
   return `<select data-section="${name}" data-row="${i}" data-field="uomId" class="${INPUT}" aria-label="Satuan">${selectOptions(uoms, row.uomId, "-")}</select>`;
@@ -187,10 +188,11 @@ function opsTable() {
         <td class="py-2 pr-2 min-w-40"><input data-section="ops" data-row="${i}" data-field="name" value="${esc(o.name)}" placeholder="mis. Panggang" class="${INPUT}" aria-label="Nama operasi"></td>
         <td class="py-2 px-2 min-w-48"><select data-section="ops" data-row="${i}" data-field="wcId" class="${INPUT}" aria-label="Work center">${selectOptions(centers, o.wcId, "Pilih work center...")}</select></td>
         <td class="py-2 px-2 w-32"><input type="number" min="0" step="any" data-section="ops" data-row="${i}" data-field="minutes" value="${esc(o.minutes)}" class="${INPUT} text-right" aria-label="Durasi (menit)"></td>
+        <td class="py-2 px-2 min-w-48"><select data-section="ops" data-row="${i}" data-field="costMode" class="${INPUT}" aria-label="Dasar biaya work center">${Object.entries(COST_MODES).map(([k, label]) => `<option value="${k}" ${k === o.costMode ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></td>
         <td class="py-2 pl-2 w-10 text-center"><button type="button" data-action="remove-row" data-section="ops" data-row="${i}" class="text-gray-400 hover:text-rose-600 mt-2" aria-label="Hapus operasi"><i class="fas fa-trash-alt"></i></button></td></tr>`,
     )
     .join("");
-  return `<table class="w-full text-left"><thead><tr>${["Operasi", "Work Center", "Durasi per Siklus (menit)", ""].map((h, i) => `<th class="pb-2 px-2 text-xs font-semibold text-gray-600 uppercase ${i === 2 ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
+  return `<table class="w-full text-left"><thead><tr>${["Operasi", "Work Center", "Durasi per Siklus (menit)", "Dasar Biaya (FOH)", ""].map((h, i) => `<th class="pb-2 px-2 text-xs font-semibold text-gray-600 uppercase ${i === 2 ? "text-right" : ""}">${h}</th>`).join("")}</tr></thead>
     <tbody>${rows}</tbody></table>
     <button type="button" data-action="add-row" data-section="ops" class="mt-1 text-sm text-indigo-600 font-medium hover:text-indigo-800"><i class="fas fa-plus mr-1"></i>Tambah operasi</button>`;
 }
@@ -242,7 +244,7 @@ async function renderForm(id, query) {
       const [lines, byproducts, ops, product, subcontractors] = await Promise.all([
         bom.bom_line_ids.length ? searchRead("mrp.bom.line", [["id", "in", bom.bom_line_ids]], ["product_id", "product_qty", "product_uom_id"], { order: "sequence, id" }) : [],
         bom.byproduct_ids.length ? searchRead("mrp.bom.byproduct", [["id", "in", bom.byproduct_ids]], ["product_id", "product_qty", "product_uom_id", "cost_share"], { order: "sequence, id" }) : [],
-        bom.operation_ids.length ? searchRead("mrp.routing.workcenter", [["id", "in", bom.operation_ids]], ["name", "workcenter_id", "time_cycle_manual", "time_mode"], { order: "sequence, id" }) : [],
+        bom.operation_ids.length ? searchRead("mrp.routing.workcenter", [["id", "in", bom.operation_ids]], ["name", "workcenter_id", "time_cycle_manual", "time_mode", "cost_mode"], { order: "sequence, id" }) : [],
         searchRead("product.template", [["id", "=", bom.product_tmpl_id[0]]], ["display_name", "uom_id"], { limit: 1 }),
         bom.subcontractor_ids.length ? searchRead("res.partner", [["id", "in", bom.subcontractor_ids]], ["display_name"], { order: "name" }) : [],
       ]);
@@ -252,9 +254,9 @@ async function renderForm(id, query) {
         id: bom.id, values, initial: { ...values }, product: product[0], subcontractors, initialSubcontractors: subcontractors.map((p) => p.id),
         lines: bom.bom_line_ids.length ? lines.map(rowOf) : [emptyRow("lines")],
         byproducts: byproducts.map((r) => ({ ...rowOf(r), share: r.cost_share })),
-        ops: ops.map((o) => ({ id: o.id, name: o.name, wcId: o.workcenter_id[0], minutes: o.time_cycle_manual })),
+        ops: ops.map((o) => ({ id: o.id, name: o.name, wcId: o.workcenter_id[0], minutes: o.time_cycle_manual, costMode: o.cost_mode || "actual" })),
         removed: { lines: [], byproducts: [], ops: [] },
-        initialRows: { lines: lines.map((r) => ({ id: r.id, p: r.product_id[0], q: r.product_qty, u: r.product_uom_id[0] })), byproducts: byproducts.map((r) => ({ id: r.id, p: r.product_id[0], q: r.product_qty, u: r.product_uom_id[0], s: r.cost_share })), ops: ops.map((o) => ({ id: o.id, n: o.name, w: o.workcenter_id[0], m: o.time_cycle_manual })) },
+        initialRows: { lines: lines.map((r) => ({ id: r.id, p: r.product_id[0], q: r.product_qty, u: r.product_uom_id[0] })), byproducts: byproducts.map((r) => ({ id: r.id, p: r.product_id[0], q: r.product_qty, u: r.product_uom_id[0], s: r.cost_share })), ops: ops.map((o) => ({ id: o.id, n: o.name, w: o.workcenter_id[0], m: o.time_cycle_manual, c: o.cost_mode || "actual" })) },
       };
     } else {
       const wanted = Number(query?.get("product")) || null;
@@ -317,7 +319,7 @@ function commands(name) {
       if (!r.name.trim()) throw new Error("Isi nama operasi.");
       if (!r.wcId) throw new Error(`Pilih work center untuk operasi ${r.name}.`);
       if (!(Number(r.minutes) >= 0)) throw new Error("Durasi operasi tidak boleh negatif.");
-      vals = { name: r.name.trim(), workcenter_id: r.wcId, time_mode: "manual", time_cycle_manual: Number(r.minutes) };
+      vals = { name: r.name.trim(), workcenter_id: r.wcId, time_mode: "manual", time_cycle_manual: Number(r.minutes), cost_mode: r.costMode || "estimated" };
     } else {
       vals = { product_id: r.product.id, product_qty: qty, product_uom_id: r.uomId, ...(name === "byproducts" ? { cost_share: Number(r.share) || 0 } : {}) };
     }
@@ -325,7 +327,7 @@ function commands(name) {
     else {
       const before = initial.get(r.id);
       const same = name === "ops"
-        ? before.n === vals.name && before.w === vals.workcenter_id && before.m === vals.time_cycle_manual
+        ? before.n === vals.name && before.w === vals.workcenter_id && before.m === vals.time_cycle_manual && before.c === vals.cost_mode
         : before.p === vals.product_id && before.q === vals.product_qty && before.u === vals.product_uom_id && (name !== "byproducts" || before.s === vals.cost_share);
       if (!same) out.push([1, r.id, vals]);
     }

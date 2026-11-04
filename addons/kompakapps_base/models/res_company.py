@@ -13,6 +13,8 @@ STOCK_JOURNAL_ACCOUNTS = [
     ("adjustment", "51000030", "Selisih Persediaan (Stock Opname)", "expense_direct_cost"),
     ("scrap", "51000040", "Beban Barang Rusak (Scrap)", "expense_direct_cost"),
 ]
+# Akun biaya overhead pabrik (FOH) yang dibebankan lewat work center (Q63, D91): lawan Barang Dalam Proses saat work order selesai. Pos Laporan: Perubahan Persediaan.
+FOH_ACCOUNT = ("51100002", "FOH Dibebankan ke Produksi", "expense_direct_cost")
 # Akun persediaan terpisah menurut jenis barang (Q61, D89): bahan baku dan barang jadi (dinilai sebesar harga pokok produksi, COGM).
 INVENTORY_SPLIT_ACCOUNTS = {
     "raw": ("11300181", "Inventory Bahan Baku"),
@@ -169,6 +171,26 @@ class ResCompany(models.Model):
                         "valuation_account_id": account["scrap"].id,
                     }
                 )
+        self.kompakapps_setup_foh()
+        return True
+
+    def kompakapps_setup_foh(self):
+        """Siapkan pencatatan FOH lewat work center (Q63, D91).
+
+        Membuat akun "FOH Dibebankan ke Produksi" (lawan Barang Dalam Proses saat work order selesai), menjadikannya akun bawaan work center baru, dan
+        mengisinya pada work center yang belum punya akun. Tarif per jam work center dikali jam kerja work order menjadi biaya yang didebit ke Barang Dalam
+        Proses lalu masuk ke nilai barang jadi (Inventory COGM). Aman dijalankan ulang.
+        """
+        Account = self.env["account.account"]
+        for company in self:
+            code, name, account_type = FOH_ACCOUNT
+            account = Account.with_company(company).search([("code", "=", code), ("company_ids", "in", company.id)], limit=1) or Account.with_company(company).create(
+                {"code": code, "name": name, "account_type": account_type, "company_ids": [Command.link(company.id)]}
+            )
+            self.env["ir.default"].sudo().set("mrp.workcenter", "expense_account_id", account.id, company_id=company.id)
+            self.env["mrp.workcenter"].sudo().with_company(company).search([("expense_account_id", "=", False), ("company_id", "in", [company.id, False])]).write(
+                {"expense_account_id": account.id}
+            )
         return True
 
     def kompakapps_split_inventory_accounts(self, raw_categories, finished_categories, trading_categories=None, repoint_entries=True):
