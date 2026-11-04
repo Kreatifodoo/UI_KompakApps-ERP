@@ -5,8 +5,10 @@ Persediaan pada perusahaan ini TIDAK dijurnal per transaksi (periodik): pembelia
 dan nilai persediaan baru disesuaikan lewat jurnal COGM setelah stock opname. Perusahaan terpisah dipakai supaya laporan perusahaan utama (yang memakai
 jurnal perpetual, skema 1) tidak tercampur. Isinya dua bulan terakhir:
 
-* bulan sebelum bulan lalu: kertas kerja COGM sudah dieksekusi (Hijau), dengan satu selisih opname yang dijelaskan;
-* bulan lalu: kertas kerja draft yang Control Balance-nya Merah karena salah ketik pada hasil opname (260 seharusnya 20). Perbaiki angkanya, simpan, lalu Execute.
+* bulan sebelum bulan lalu: kertas kerja COGM sudah dieksekusi (Terposting, Control Balance Hijau), dengan satu selisih opname yang dijelaskan;
+* bulan lalu, dua kertas kerja dari buku besar yang sama: satu **Hijau dan belum dieksekusi** (tombol Execute aktif) dan satu **Merah** karena salah ketik
+  pada hasil opname (260 seharusnya 20). Perbaiki angkanya pada yang Merah, simpan, lalu periksa: Hijau. Bila yang Hijau dieksekusi lebih dulu, yang lain
+  menjadi Merah karena periodenya sudah terposting.
 
 Dijalankan lewat `odoo shell` (variabel `env` disediakan shell); database harus sudah memasang kompakapps_base. Aman dijalankan ulang: bila perusahaannya sudah
 ada, tidak ada yang diubah.
@@ -75,7 +77,7 @@ RAW = [
     ("RM-ENZ-CHO", "Enzim Cholesterol Oxidase (vial)", "uom.product_uom_unit", 2400000, 6, (8, 6), (7, 6), (7, 7)),
     ("RM-BTL-50", "Botol Reagen 50 ml", "uom.product_uom_unit", 3500, 4000, (6000, 5000), (7500, 6000), (2480, 1470)),
     ("RM-LBL-KIT", "Label dan Kemasan Kit", "uom.product_uom_unit", 2200, 3500, (5000, 4500), (6800, 5800), (1700, 400)),
-    ("RM-BUF-FOS", "Buffer Fosfat (kg)", "uom.product_uom_kgm", 350000, 30, (40, 30), (44, 35), (25, 260)),
+    ("RM-BUF-FOS", "Buffer Fosfat (kg)", "uom.product_uom_kgm", 350000, 30, (40, 30), (44, 35), (25, 20)),
 ]
 products = {}
 for code, name, uom, cost, *_ in RAW:
@@ -188,12 +190,14 @@ def run_month(index, first, last, spec):
     journal(last, "Bahan penolong dan perlengkapan pabrik", [(supplies, spec["supplies"], 0.0), (payable_other, 0.0, spec["supplies"])])
 
 
-def worksheet(first, last, index, wip_lines, note):
+def worksheet(first, last, index, wip_lines, note, counts=None):
+    """Kertas kerja dengan hasil opname dari RAW; `counts` menimpa jumlah fisik per kode (mis. salah ketik)."""
     sheet = env["kompakapps.cogm.worksheet"].create({"company_id": company.id, "date_from": first, "date_to": last, "note": note})
     explanation = {"RM-BUF-FOS": "Tumpah saat penimbangan, sudah dibuang dan dicatat gudang"} if index == 0 else {}
+    counts = counts or {}
     sheet.write(
         {
-            "opname_ids": [Command.create({"product_id": products[r[0]].id, "qty": float(r[7][index]), "explanation": explanation.get(r[0], False)}) for r in RAW],
+            "opname_ids": [Command.create({"product_id": products[r[0]].id, "qty": float(counts.get(r[0], r[7][index])), "explanation": explanation.get(r[0], False)}) for r in RAW],
             "wip_ids": [Command.create(line) for line in wip_lines],
         }
     )
@@ -217,18 +221,23 @@ sheet1.action_post()
 for row in RAW:  # stok sistem disamakan dengan hasil hitung fisik setelah opname
     adjust_stock(products[row[0]], float(row[7][0]), at(m2_from, hour=1))
 
-# ---- bulan kedua: draft Merah karena salah ketik ----
+# ---- bulan kedua: satu kertas kerja Hijau (siap Execute) dan satu Merah (salah ketik), dari buku besar yang sama ----
 run_month(1, m2_from, m2_to, {"freight": 1_600_000.0, "returns": 0.0, "labor": 41_200_000.0, "indirect": 9_600_000.0, "power": 15_300_000.0, "depreciation": 6_750_000.0, "maintenance": 4_900_000.0, "supplies": 2_700_000.0})
-sheet2 = worksheet(
-    m2_from, m2_to, 1,
-    [
-        {"name": "Batch Kit Kolesterol", "qty": 180.0, "material_cost": 18000.0, "material_pct": 100.0, "conversion_cost": 9000.0, "completion_pct": 50.0},
-        {"name": "Batch Kit Glukosa", "qty": 120.0, "material_cost": 15000.0, "material_pct": 100.0, "conversion_cost": 8000.0, "completion_pct": 70.0},
-    ],
-    "Contoh draft: Buffer Fosfat tertulis 260 kg padahal stok sistem 20 kg (salah ketik). Control Balance Merah sampai angkanya diperbaiki menjadi 20, disimpan, lalu Execute.",
+wip2 = [
+    {"name": "Batch Kit Kolesterol", "qty": 180.0, "material_cost": 18000.0, "material_pct": 100.0, "conversion_cost": 9000.0, "completion_pct": 50.0},
+    {"name": "Batch Kit Glukosa", "qty": 120.0, "material_cost": 15000.0, "material_pct": 100.0, "conversion_cost": 8000.0, "completion_pct": 70.0},
+]
+sheet2 = worksheet(m2_from, m2_to, 1, wip2, "Contoh HIJAU: semua pemeriksaan lolos, tombol Execute Jurnal COGM aktif. Setelah dieksekusi, kertas kerja Merah di periode yang sama ikut Merah karena periodenya sudah terposting.")
+sheet3 = worksheet(
+    m2_from, m2_to, 1, wip2,
+    "Contoh MERAH: Buffer Fosfat tertulis 260 kg padahal stok sistem 20 kg (salah ketik). Control Balance Merah dan Execute terkunci sampai angkanya diperbaiki menjadi 20, disimpan, lalu diperiksa ulang.",
+    counts={"RM-BUF-FOS": 260.0},
 )
-check = sheet2.action_check()
+green, red = sheet2.action_check(), sheet3.action_check()
+assert green["state"] == "green", [c for c in green["checks"] if c["status"] == "error"]
+assert [c["key"] for c in red["checks"] if c["status"] == "error"] == ["variance"], red
 env.cr.commit()
 print(f"{NAME}: perusahaan id {company.id}")
-print(f"  {sheet1.name} {m1_from}..{m1_to}: COGM {sheet1.cogm:,.0f} (dieksekusi, jurnal {sheet1.move_id.name})")
-print(f"  {sheet2.name} {m2_from}..{m2_to}: COGM {sheet2.cogm:,.0f} (draft, Control Balance {check['state']}: {[c['key'] for c in check['checks'] if c['status'] == 'error']})")
+print(f"  {sheet1.name} {m1_from}..{m1_to}: COGM {sheet1.cogm:,.0f} (Terposting, jurnal {sheet1.move_id.name})")
+print(f"  {sheet2.name} {m2_from}..{m2_to}: COGM {sheet2.cogm:,.0f} (draft, Control Balance {green['state']})")
+print(f"  {sheet3.name} {m2_from}..{m2_to}: COGM {sheet3.cogm:,.0f} (draft, Control Balance {red['state']}: {[c['key'] for c in red['checks'] if c['status'] == 'error']})")
