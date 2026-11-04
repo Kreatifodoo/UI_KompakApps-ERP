@@ -702,4 +702,3 @@ Format: satu entri per keputusan. Status: **Diputuskan**, **Terbuka**, atau **Pe
 - **Demo PROLINE**: `scripts/seed_presales_proline.py` memanggil metode yang sama di akhir (komponen PRL-C-* masuk kategori Raw Material), jadi demo baru sudah terpisah sejak awal.
 - **Pengujian**: `TestInventorySplit` (akun terbentuk, saldo tiap akun sama dengan nilai stok produknya, debit dan kredit tiap jurnal tidak berubah, jurnal manual tetap, tagihan draf ikut pindah, transaksi berikutnya langsung ke akun baru, jalan ulang tidak memindahkan apa pun) dan rangkaian seed PROLINE pada database baru (akun lama nol baris).
 - **Catatan**: selisih antara saldo buku besar dan nilai stok per akun pada database pemilik berasal dari stok awal dan penyesuaian sebelum jurnal per transaksi aktif (D69) serta jurnal manual; laporan Inventory Valuation per akun menampilkannya.
-
