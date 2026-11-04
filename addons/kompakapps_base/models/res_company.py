@@ -171,8 +171,9 @@ class ResCompany(models.Model):
                 )
         return True
 
-    def kompakapps_split_inventory_accounts(self, raw_categories, finished_categories, repoint_entries=True):
-        """Pisahkan akun persediaan menurut kategori produk (Q61, D89): bahan baku ke "Inventory Bahan Baku", barang jadi ke "Inventory COGM".
+    def kompakapps_split_inventory_accounts(self, raw_categories, finished_categories, trading_categories=None, repoint_entries=True):
+        """Pisahkan akun persediaan menurut kategori produk (Q61, D89, Q62, D90): bahan baku ke "Inventory Bahan Baku", barang jadi hasil produksi ke
+        "Inventory COGM", dan (bila diberikan) barang yang dibeli jadi ke akun persediaan bawaan perusahaan ("Inventory").
 
         Membuat kedua akun bila belum ada, lalu mengisi Akun Persediaan (valuasi stok) pada kategori yang diberikan; transaksi berikutnya otomatis
         memakainya. Dengan `repoint_entries`, jurnal yang sudah ada (terposting maupun draf) yang memuat produk pada kategori itu dan memakai akun persediaan
@@ -190,7 +191,12 @@ class ResCompany(models.Model):
                     {"code": code, "name": name, "account_type": "asset_current", "company_ids": [Command.link(company.id)]}
                 )
             moved = {"raw": 0, "finished": 0}
-            for key, categories in (("raw", raw_categories), ("finished", finished_categories)):
+            groups = [("raw", raw_categories), ("finished", finished_categories)]
+            if trading_categories is not None and company.account_stock_valuation_id:
+                accounts["trading"] = company.account_stock_valuation_id
+                moved["trading"] = 0
+                groups.append(("trading", trading_categories))
+            for key, categories in groups:
                 categories = categories.with_company(company)
                 old_accounts = categories.mapped("property_stock_valuation_account_id") - accounts[key]
                 categories.write({"property_stock_valuation_account_id": accounts[key].id})
