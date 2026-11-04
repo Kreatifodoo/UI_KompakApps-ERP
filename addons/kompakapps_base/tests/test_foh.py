@@ -1,4 +1,4 @@
-from odoo import Command, fields
+from odoo import Command
 from odoo.addons.account.tests.common import AccountTestInvoicingCommon
 from odoo.tests import tagged
 
