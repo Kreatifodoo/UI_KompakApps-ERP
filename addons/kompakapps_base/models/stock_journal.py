@@ -391,6 +391,17 @@ class AccountMoveLine(models.Model):
 class MrpProduction(models.Model):
     _inherit = "mrp.production"
 
+    def _post_labour(self):
+        """Jurnal biaya work center (FOH): Odoo menamainya "Labour"; di sini diberi nama yang sesuai isinya agar mudah dikenali di Jurnal Entry."""
+        before = set(self.env["account.move"].search([("ref", "=like", "% - Labour")]).ids)
+        super()._post_labour()
+        created = self.env["account.move"].search([("ref", "=like", "% - Labour"), ("id", "not in", list(before))])
+        for move in created:
+            name = move.ref.removesuffix(" - Labour")
+            label = f"{name} - Biaya produksi (FOH)"
+            move.write({"ref": label})
+            move.line_ids.write({"name": label})
+
     def kompakapps_post_missing_stock_journals(self):
         """Jurnalkan MO selesai yang belum punya jurnal stok, misalnya karena selesai sebelum jurnal per transaksi aktif (Q62, D90).
 

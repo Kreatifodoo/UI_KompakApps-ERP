@@ -79,6 +79,8 @@ export async function productionJournals(mo, raw, finished) {
   const out = finished.reduce((s, m) => s + Math.abs(m.value || 0), 0);
   const done = mo.state === "done";
   const entries = done ? await stockEntries([...raw, ...finished]) : [];
+  // jurnal biaya work center (FOH): ref "<nomor MO> - Biaya produksi (FOH)", tidak tertaut ke pergerakan stok
+  const foh = done && entries.length ? await searchRead("account.move", [["ref", "=like", `${mo.name} - %`], ["state", "!=", "cancel"]], ["name", "state", "ref"], { order: "id" }) : [];
   const rows = (list, label) => list.map((m) => `<tr><td class="py-1 pr-4 text-sm">${label} ${esc(m.product_id?.[1] ?? "")}</td><td class="py-1 px-3 text-sm text-right tabular-nums">${m.value ? nf.format(Math.abs(m.value)) : ""}</td></tr>`).join("");
   const table = done
     ? `<table class="mt-3 w-full max-w-2xl"><thead><tr><th class="text-left text-xs font-semibold text-gray-500 uppercase">Pergerakan stok</th><th class="text-right text-xs font-semibold text-gray-500 uppercase px-3">Nilai</th></tr></thead>
@@ -88,8 +90,8 @@ export async function productionJournals(mo, raw, finished) {
   if (entries.length) {
     return panel(
       "Nilai persediaan dan jurnal",
-      `Produksi dijurnal lewat akun Barang Dalam Proses pada lokasi Production: komponen yang keluar (${money(cost)}) didebit ke Barang Dalam Proses, lalu barang jadi yang masuk (${money(out)}, termasuk biaya operasi) dikreditkan darinya.`,
-      (await block("Jurnal produksi", entries)) + table,
+      `Produksi dijurnal lewat akun Barang Dalam Proses pada lokasi Production: komponen yang keluar (${money(cost)}) didebit ke Barang Dalam Proses, biaya work center (FOH) dibebankan ke Barang Dalam Proses dengan lawan akun FOH Dibebankan, lalu barang jadi yang masuk (${money(out)}, komponen ditambah FOH) dikreditkan dari Barang Dalam Proses.`,
+      (await block("Jurnal produksi", entries)) + (await block("Biaya produksi (FOH work center)", foh)) + table,
     );
   }
   return panel(

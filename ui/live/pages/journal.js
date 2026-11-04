@@ -100,6 +100,12 @@ async function sourceLinks(move) {
     else if (mo) add(`m${mo[0]}`, { label: `Manufacturing Order ${mo[1]}`, href: `#/mo/${mo[0]}`, icon: "fa-industry" });
     else add("adjust", { label: "Penyesuaian stok (pergerakan stok)", href: "#/moves", icon: "fa-boxes" });
   }
+  // biaya produksi (FOH) work center: ref "<nomor MO> - Biaya produksi (FOH)" (atau "Labour" dari Odoo), tertaut ke MO lewat nomornya (Q63)
+  const labour = move.move_type === "entry" && !links.length && /^(.+) - (?:Biaya produksi \(FOH\)|Labour)$/.exec(move.ref ?? "");
+  if (labour) {
+    const [production] = await searchRead("mrp.production", [["name", "=", labour[1]]], ["name"], { limit: 1 });
+    links.push(production ? { label: `Biaya produksi (FOH) ${production.name}`, href: `#/mo/${production.id}`, icon: "fa-industry" } : { label: "Biaya produksi (FOH)", href: "#/mo", icon: "fa-industry" });
+  }
   // koreksi selisih harga tagihan terhadap harga PO (Q49): ref "Koreksi nilai <nomor penerimaan>", tidak tertaut langsung ke pergerakan stok
   const fix = move.move_type === "entry" && /^Koreksi nilai (.+)$/.exec(move.ref ?? "");
   if (fix && !links.length) {

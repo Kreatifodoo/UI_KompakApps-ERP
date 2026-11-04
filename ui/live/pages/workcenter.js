@@ -1,6 +1,9 @@
-// WorkCenter (mrp.workcenter): mesin atau stasiun kerja untuk operasi BoM dan work order. Halaman ini juga memuat
-// sakelar fitur manufaktur (Work Orders dan By-Products) yang diaktifkan lewat pengaturan Odoo (res.config.settings).
+// WorkCenter (mrp.workcenter): mesin atau stasiun kerja untuk operasi BoM dan work order, sekaligus master tarif FOH (biaya overhead pabrik).
+// Tarif per jam dikali jam kerja work order dibebankan saat MO selesai: Dr Barang Dalam Proses, Cr Akun FOH Dibebankan, dan nilainya masuk ke biaya
+// barang jadi (Inventory COGM) (Q63, D91). Halaman ini juga memuat sakelar fitur manufaktur (Work Orders dan By-Products) yang diaktifkan lewat
+// pengaturan Odoo (res.config.settings).
 import {
+  ACCOUNT_TYPE_LABELS, closeLookup, registerLookup, runLookup, searchAccounts,
   INPUT, app, badge, call, cell, changedValues, esc, fieldBlock, fieldValue, filterSelect, guarded, hasGroup, pageHeader, plain, readOne,
   readonlyValue, resetReferences, rowLink, searchBox, searchRead, selectOptions, statTiles, table, toast, button, attachmentsPendingHtml, chatterHtml, loadMessages,
 } from "../common.js";
@@ -12,6 +15,8 @@ const FEATURES = [
 const WORKING = { normal: ["Tersedia", "success"], blocked: ["Terhenti", "danger"], done: ["Selesai", "info"] };
 const FILTERS = [["active", "Aktif"], ["archived", "Diarsipkan"]];
 const nf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 });
+const FOH_ACCOUNT_TYPES = ["expense", "expense_direct_cost", "expense_other", "income_other"];
+const asRef = (value) => (Array.isArray(value) ? { id: value[0], display_name: value[1] } : null);
 
 let form = null; // { id, values, initial }
 let features = null;
@@ -41,7 +46,7 @@ async function renderList(query) {
   const domain = filter === "archived" ? [["active", "=", false]] : [];
   if (text) domain.push("|", ["name", "ilike", text], ["code", "ilike", text]);
   const [rows] = await Promise.all([
-    searchRead("mrp.workcenter", domain, ["name", "code", "costs_hour", "time_efficiency", "working_state", "workorder_count", "workorder_progress_count", "active"], {
+    searchRead("mrp.workcenter", domain, ["name", "code", "costs_hour", "expense_account_id", "time_efficiency", "working_state", "workorder_count", "workorder_progress_count", "active"], {
       order: "sequence, name", limit: 100, context: { active_test: filter === "active" },
     }),
     features ? null : loadFeatures(),
@@ -52,6 +57,7 @@ async function renderList(query) {
         cell(r.name, { strong: true }),
         cell(r.code || "-"),
         cell(`${nf.format(r.costs_hour)} / jam`, { right: true }),
+        cell(r.expense_account_id?.[1] ?? "-"),
         cell(`${nf.format(r.time_efficiency)}%`, { right: true }),
         cell(String(r.workorder_count), { right: true }),
         cell(badge(WORKING, r.working_state), { raw: true }),
@@ -72,19 +78,42 @@ async function renderList(query) {
        <div class="grid md:grid-cols-2 gap-4">${toggles}</div>
        <div class="mt-4"><button data-action="apply-features" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Terapkan Fitur</button></div></section>` +
     table(
-      [{ label: "WorkCenter" }, { label: "Kode" }, { label: "Biaya", right: true }, { label: "Efisiensi", right: true }, { label: "Work Order", right: true }, { label: "Status" }],
+      [{ label: "WorkCenter" }, { label: "Kode" }, { label: "Tarif FOH", right: true }, { label: "Akun FOH Dibebankan" }, { label: "Efisiensi", right: true }, { label: "Work Order", right: true }, { label: "Status" }],
       body,
       "Belum ada work center. Buat dengan tombol WorkCenter Baru; work center dipakai pada operasi BoM.",
     );
 }
 
-const FIELDS = ["name", "code", "costs_hour", "time_efficiency", "oee_target", "time_start", "time_stop", "resource_calendar_id", "note"];
+const FIELDS = ["name", "code", "costs_hour", "expense_account_id", "time_efficiency", "oee_target", "time_start", "time_stop", "resource_calendar_id", "note"];
 const normalize = (r) => ({
-  name: r.name || "", code: r.code || "", costs_hour: r.costs_hour ?? 0, time_efficiency: r.time_efficiency ?? 100, oee_target: r.oee_target ?? 90,
+  name: r.name || "", code: r.code || "", costs_hour: r.costs_hour ?? 0, account: asRef(r.expense_account_id), time_efficiency: r.time_efficiency ?? 100, oee_target: r.oee_target ?? 90,
   time_start: r.time_start ?? 0, time_stop: r.time_stop ?? 0, calendar: r.resource_calendar_id?.[0] ?? null, note: plain(r.note),
 });
 
+registerLookup("wc-account", {
+  search: (q) => searchAccounts(q, FOH_ACCOUNT_TYPES),
+  sub: (r) => ACCOUNT_TYPE_LABELS[r.account_type] ?? "",
+  isChosen: (input) => form?.values.account?.display_name === input.value,
+  choose: (input, item) => {
+    form.values.account = item;
+    form.pendingAccount = false;
+    input.value = item.display_name;
+  },
+});
+
+/** Akun FOH bawaan untuk work center baru (diatur server lewat setup FOH); kosong bila belum ada. */
+async function defaultAccount() {
+  try {
+    const defaults = await call("mrp.workcenter", "default_get", { fields: ["expense_account_id"] });
+    const id = defaults?.expense_account_id;
+    return id ? asRef([id, (await readOne("account.account", id, ["display_name"]))?.display_name ?? ""]) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function renderForm(id) {
+  closeLookup();
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
   calendars ??= await searchRead("resource.calendar", [], ["display_name"], { order: "name" });
   let wc = null;
@@ -96,8 +125,8 @@ async function renderForm(id) {
     }
   }
   if (!form || form.id !== (wc?.id ?? null)) {
-    const values = wc ? normalize(wc) : { name: "", code: "", costs_hour: 0, time_efficiency: 100, oee_target: 90, time_start: 0, time_stop: 0, calendar: calendars[0]?.id ?? null, note: "" };
-    form = { id: wc?.id ?? null, values, initial: wc ? { ...values } : null };
+    const values = wc ? normalize(wc) : { name: "", code: "", costs_hour: 0, account: await defaultAccount(), time_efficiency: 100, oee_target: 90, time_start: 0, time_stop: 0, calendar: calendars[0]?.id ?? null, note: "" };
+    form = { id: wc?.id ?? null, values, initial: wc ? { ...values } : null, pendingAccount: false };
   }
   const v = form.values;
   const number = (key, extra = "") => `<input type="number" min="0" step="any" data-wc="${key}" data-kind="number" value="${esc(v[key])}" ${extra} class="${INPUT} text-right">`;
@@ -114,7 +143,9 @@ async function renderForm(id) {
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 grid md:grid-cols-2 gap-x-8 gap-y-4">
       ${fieldBlock("Nama", `<input data-wc="name" value="${esc(v.name)}" class="${INPUT}">`)}
       ${fieldBlock("Kode", `<input data-wc="code" value="${esc(v.code)}" class="${INPUT}">`)}
-      ${fieldBlock("Biaya per Jam", number("costs_hour"))}
+      ${fieldBlock("Tarif FOH per Jam (Rp)", number("costs_hour"))}
+      ${fieldBlock("Akun FOH Dibebankan", `<input data-lookup="wc-account" autocomplete="off" role="combobox" aria-autocomplete="list" value="${esc(v.account?.display_name ?? "")}" placeholder="Cari kode atau nama akun..." class="${INPUT}">`)}
+      <p class="md:col-span-2 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3">Saat work order selesai, jam kerjanya dikali tarif ini dan dibebankan ke produksi: <b>Dr Barang Dalam Proses</b>, <b>Cr ${esc(v.account?.display_name ?? "Akun FOH Dibebankan")}</b>. Nilainya ikut membentuk biaya barang jadi, sehingga muncul di <b>Inventory COGM</b>. Dasar jam (jam standar atau waktu aktual) dipilih per operasi di BoM.</p>
       ${fieldBlock("Efisiensi Waktu (%)", number("time_efficiency"))}
       ${fieldBlock("Target OEE (%)", number("oee_target"))}
       ${fieldBlock("Jam Kerja", `<select data-wc="calendar" data-kind="id" class="${INPUT}">${selectOptions(calendars, v.calendar, "-")}</select>`)}
@@ -134,6 +165,7 @@ async function renderForm(id) {
 async function persist() {
   const v = form.values;
   if (!String(v.name).trim()) throw new Error("Nama work center wajib diisi.");
+  if (form.pendingAccount) throw new Error("Pilih akun dari kotak saran, atau kosongkan isiannya.");
   for (const key of ["costs_hour", "time_efficiency", "oee_target", "time_start", "time_stop"]) {
     if (v[key] === "") v[key] = 0;
     if (!(Number(v[key]) >= 0)) throw new Error("Angka pada work center tidak boleh negatif.");
@@ -142,7 +174,8 @@ async function persist() {
   const toOdoo = {
     name: (x) => x.trim(), code: (x) => x.trim() || false, calendar: (x) => x || false, note: (x) => (String(x).trim() ? `<p>${esc(String(x).trim())}</p>` : false),
   };
-  const field = { calendar: "resource_calendar_id" };
+  const field = { calendar: "resource_calendar_id", account: "expense_account_id" };
+  toOdoo.account = (x) => x?.id ?? false;
   const convert = (key) => (toOdoo[key] ? toOdoo[key](v[key]) : Number(v[key]));
   if (!form.id) {
     const vals = {};
@@ -198,5 +231,11 @@ export async function onClick(event, el) {
 }
 
 export function onInput(event, el) {
-  if (form && el.dataset.wc) form.values[el.dataset.wc] = fieldValue(el);
+  if (!form) return;
+  if (el.dataset.wc) form.values[el.dataset.wc] = fieldValue(el);
+  else if (el.dataset.lookup === "wc-account") {
+    form.values.account = null;
+    form.pendingAccount = Boolean(el.value.trim());
+    runLookup(el, 250);
+  }
 }
