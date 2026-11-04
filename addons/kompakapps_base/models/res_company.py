@@ -218,4 +218,3 @@ class ResCompany(models.Model):
             self.env.invalidate_all()
             summary[company.id] = moved
         return summary
-
