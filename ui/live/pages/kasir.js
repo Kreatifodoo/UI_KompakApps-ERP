@@ -343,14 +343,14 @@ async function submitOrder(button) {
 const autoPrint = {
   get() {
     try {
-      return localStorage.getItem("kompakapps.kasir.autoprint") === "1";
+      return localStorage.getItem("nusara.kasir.autoprint") === "1";
     } catch {
       return false;
     }
   },
   set(on) {
     try {
-      localStorage.setItem("kompakapps.kasir.autoprint", on ? "1" : "0");
+      localStorage.setItem("nusara.kasir.autoprint", on ? "1" : "0");
     } catch {
       /* penyimpanan peramban boleh gagal; pilihan berlaku sampai halaman dimuat ulang */
     }

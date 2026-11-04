@@ -1,4 +1,4 @@
-// Bagian bersama UI KompakApps: pembantu tampilan, sesi, kotak saran, dialog, dan chatter.
+// Bagian bersama UI Nusara ERP: pembantu tampilan, sesi, kotak saran, dialog, dan chatter.
 import { OdooError, activeCompany, auth, call, readOne, searchRead } from "./odoo.js";
 
 export const app = document.querySelector("#app");
@@ -421,10 +421,10 @@ export function renderSession() {
 export function renderConnect() {
   app.innerHTML = `
     <section class="bg-white border border-gray-200 rounded-2xl shadow-sm p-8 max-w-xl mx-auto mt-8">
-      <img src="brand/kompakapps-logo.png" alt="KompakApps" class="h-10 w-auto mb-5">
+      <img src="brand/nusara-logo.png" alt="Nusara ERP" class="h-10 w-auto mb-5">
       <div class="font-hand text-2xl text-indigo-600 leading-none">Selamat datang</div>
-      <h1 class="text-2xl font-extrabold text-indigo-900 mt-1">Hubungkan ke KompakApps</h1>
-      <p class="text-sm text-gray-600 mt-2">Halaman ini bertransaksi langsung ke server KompakApps memakai API key milik Anda sendiri.</p>
+      <h1 class="text-2xl font-extrabold text-indigo-900 mt-1">Hubungkan ke Nusara ERP</h1>
+      <p class="text-sm text-gray-600 mt-2">Halaman ini bertransaksi langsung ke server Nusara ERP memakai API key milik Anda sendiri.</p>
       <ol class="text-sm text-gray-600 mt-4 list-decimal ml-5 space-y-1">
         <li>Di Odoo, klik nama Anda di pojok kanan atas, lalu <b>Preferences</b>.</li>
         <li>Buka tab <b>Account Security</b>, klik <b>New API Key</b>, beri nama bebas.</li>

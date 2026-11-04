@@ -1,4 +1,4 @@
-// Struktur menu KompakApps: sama dengan sidebar prototipe (index.html, menuData). Menu yang punya `route`
+// Struktur menu Nusara ERP: sama dengan sidebar prototipe (index.html, menuData). Menu yang punya `route`
 // sudah terhubung ke Odoo; `odoo` mencatat model Odoo tujuannya (docs/MODULE_MAP.md) untuk halaman
 // yang belum dibangun.
 export const MENU = [
