@@ -13,6 +13,11 @@ STOCK_JOURNAL_ACCOUNTS = [
     ("adjustment", "51000030", "Selisih Persediaan (Stock Opname)", "expense_direct_cost"),
     ("scrap", "51000040", "Beban Barang Rusak (Scrap)", "expense_direct_cost"),
 ]
+# Akun persediaan terpisah menurut jenis barang (Q61, D89): bahan baku dan barang jadi (dinilai sebesar harga pokok produksi, COGM).
+INVENTORY_SPLIT_ACCOUNTS = {
+    "raw": ("11300181", "Inventory Bahan Baku"),
+    "finished": ("11300182", "Inventory COGM"),
+}
 
 
 class ResCompany(models.Model):
@@ -165,3 +170,52 @@ class ResCompany(models.Model):
                     }
                 )
         return True
+
+    def kompakapps_split_inventory_accounts(self, raw_categories, finished_categories, repoint_entries=True):
+        """Pisahkan akun persediaan menurut kategori produk (Q61, D89): bahan baku ke "Inventory Bahan Baku", barang jadi ke "Inventory COGM".
+
+        Membuat kedua akun bila belum ada, lalu mengisi Akun Persediaan (valuasi stok) pada kategori yang diberikan; transaksi berikutnya otomatis
+        memakainya. Dengan `repoint_entries`, jurnal yang sudah ada (terposting maupun draf) yang memuat produk pada kategori itu dan memakai akun persediaan
+        lama kategorinya dipindahkan ke akun baru, memakai kategori produk saat ini. Hanya kolom akun pada baris jurnal (dan baris analitik turunannya) yang
+        berubah: debit, kredit, tanggal, dan nomor jurnal tetap, dan kedua akun sejenis (aset lancar) sehingga laporan tetap seimbang. Baris tanpa produk
+        (jurnal manual) tidak disentuh. Mengembalikan ringkasan jumlah baris yang dipindahkan. Aman dijalankan ulang.
+        """
+        Account = self.env["account.account"]
+        summary = {}
+        for company in self:
+            accounts = {}
+            for key, (code, name) in INVENTORY_SPLIT_ACCOUNTS.items():
+                found = Account.with_company(company).search([("code", "=", code), ("company_ids", "in", company.id)], limit=1)
+                accounts[key] = found or Account.with_company(company).create(
+                    {"code": code, "name": name, "account_type": "asset_current", "company_ids": [Command.link(company.id)]}
+                )
+            moved = {"raw": 0, "finished": 0}
+            for key, categories in (("raw", raw_categories), ("finished", finished_categories)):
+                categories = categories.with_company(company)
+                old_accounts = categories.mapped("property_stock_valuation_account_id") - accounts[key]
+                categories.write({"property_stock_valuation_account_id": accounts[key].id})
+                if not (repoint_entries and old_accounts and categories):
+                    continue
+                self.env.flush_all()
+                self.env.cr.execute(
+                    """
+                    UPDATE account_move_line l
+                       SET account_id = %(new)s
+                      FROM product_product p
+                      JOIN product_template t ON t.id = p.product_tmpl_id
+                     WHERE l.product_id = p.id
+                       AND t.categ_id IN %(categories)s
+                       AND l.account_id IN %(old)s
+                       AND l.company_id = %(company)s
+                    RETURNING l.id
+                    """,
+                    {"new": accounts[key].id, "categories": tuple(categories.ids), "old": tuple(old_accounts.ids), "company": company.id},
+                )
+                line_ids = [row[0] for row in self.env.cr.fetchall()]
+                if line_ids:
+                    self.env.cr.execute("UPDATE account_analytic_line SET general_account_id = %s WHERE move_line_id IN %s", (accounts[key].id, tuple(line_ids)))
+                moved[key] = len(line_ids)
+            self.env.invalidate_all()
+            summary[company.id] = moved
+        return summary
+
