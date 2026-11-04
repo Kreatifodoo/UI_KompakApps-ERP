@@ -4,6 +4,7 @@ from odoo import Command, fields
 from odoo.addons.account.tests.common import AccountTestInvoicingCommon
 from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.tests import new_test_user, tagged
+from odoo.tools import mute_logger
 
 
 @tagged("post_install", "-at_install", "kompakapps")
@@ -317,7 +318,7 @@ class TestCogmWorksheet(AccountTestInvoicingCommon):
     def test_duplicate_product_on_the_count_sheet_is_refused(self):
         worksheet = self._worksheet()
         worksheet.write({"opname_ids": [Command.create({"product_id": self.resin.id, "qty": 1.0})]})
-        with self.assertRaises(Exception), self.cr.savepoint():
+        with self.assertRaises(Exception), self.cr.savepoint(), mute_logger("odoo.sql_db"):  # galat SQL ini memang diharapkan; CI menolak baris ERROR di log
             worksheet.write({"opname_ids": [Command.create({"product_id": self.resin.id, "qty": 2.0})]})
 
     def test_warehouse_staff_count_but_only_accounting_pulls_and_executes(self):
