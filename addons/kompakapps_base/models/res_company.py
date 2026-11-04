@@ -22,6 +22,30 @@ INVENTORY_SPLIT_ACCOUNTS = {
 }
 
 
+# Akun COGM periodik (Q64, D92): (peran, kode, nama, jenis akun, bagian COGM). Peran None = akun persediaan atau ikhtisar. Kode yang sudah ada dipakai apa adanya.
+COGM_ACCOUNTS = [
+    ("raw", "11300181", "Inventory Bahan Baku", "asset_current", None),
+    ("fg", "11300182", "Inventory COGM", "asset_current", None),
+    ("wip", "11300200", "Barang Dalam Proses", "asset_current", None),
+    ("summary", "51100001", "COGM", "expense_direct_cost", None),
+    ("map", "51000020", "Purchases - Raw Materials", "expense", "purchase"),
+    ("map", "51000021", "Biaya Angkut Pembelian Bahan Baku", "expense", "purchase"),
+    ("map", "51000022", "Retur Pembelian Bahan Baku", "expense", "purchase"),
+    ("map", "51000023", "Potongan Pembelian Bahan Baku", "expense", "purchase"),
+    ("map", "51200010", "Upah Tenaga Kerja Langsung", "expense_direct_cost", "labor"),
+    ("map", "51300010", "Tenaga Kerja Tidak Langsung Pabrik", "expense_direct_cost", "overhead"),
+    ("map", "51300020", "Listrik, Air, dan Gas Pabrik", "expense_direct_cost", "overhead"),
+    ("map", "51300030", "Penyusutan Mesin dan Peralatan Pabrik", "expense_depreciation", "overhead"),
+    ("map", "51300040", "Perawatan Mesin dan Pabrik", "expense_direct_cost", "overhead"),
+    ("map", "51300050", "Bahan Penolong dan Perlengkapan Pabrik", "expense_direct_cost", "overhead"),
+    # Akun 51 yang bukan biaya produksi periodik (harga pokok penjualan, selisih stok, scrap, dan FOH perpetual): dikecualikan agar tidak dianggap belum diklasifikasikan.
+    ("map", "51000010", "Cost of Goods Sold", "expense_direct_cost", "excluded"),
+    ("map", "51000030", "Selisih Persediaan (Stock Opname)", "expense_direct_cost", "excluded"),
+    ("map", "51000040", "Beban Barang Rusak (Scrap)", "expense_direct_cost", "excluded"),
+    ("map", "51100002", "FOH Dibebankan ke Produksi", "expense_direct_cost", "excluded"),
+]
+
+
 class ResCompany(models.Model):
     _inherit = "res.company"
 
@@ -190,6 +214,44 @@ class ResCompany(models.Model):
             self.env["ir.default"].sudo().set("mrp.workcenter", "expense_account_id", account.id, company_id=company.id)
             self.env["mrp.workcenter"].sudo().with_company(company).search([("expense_account_id", "=", False), ("company_id", "in", [company.id, False])]).write(
                 {"expense_account_id": account.id}
+            )
+        return True
+
+    def kompakapps_setup_cogm(self):
+        """Siapkan COGM periodik (Q64, D92): akun, jurnal COGM, dan pemetaan akun biaya produksi.
+
+        Membuat akun yang belum ada (persediaan bahan baku, barang jadi, WIP, ikhtisar COGM, pembelian, tenaga kerja langsung, overhead), jurnal "Jurnal COGM",
+        lalu pengaturan COGM perusahaan. Hanya mengisi yang masih kosong: akun yang sudah dipetakan pengguna dan pilihan akun lain tidak ditimpa. Aman dijalankan ulang.
+        """
+        Account = self.env["account.account"]
+        for company in self:
+            found = {}
+            for role, code, name, account_type, _section in COGM_ACCOUNTS:
+                account = Account.with_company(company).search([("code", "=", code), ("company_ids", "in", company.id)], limit=1) or Account.with_company(company).create(
+                    {"code": code, "name": name, "account_type": account_type, "company_ids": [Command.link(company.id)]}
+                )
+                found[code] = account
+            journal = self.env["account.journal"].sudo().search([("company_id", "=", company.id), ("code", "=", "COGM")], limit=1) or self.env["account.journal"].sudo().create(
+                {"name": "Jurnal COGM", "code": "COGM", "type": "general", "company_id": company.id}
+            )
+            Config = self.env["kompakapps.cogm.config"].sudo()
+            config = Config.search([("company_id", "=", company.id)], limit=1)
+            roles = {"raw_account_id": found["11300181"], "fg_account_id": found["11300182"], "wip_account_id": found["11300200"], "summary_account_id": found["51100001"]}
+            if config:
+                config.write({field: account.id for field, account in roles.items() if not config[field]})
+                if not config.journal_id:
+                    config.journal_id = journal
+            else:
+                config = Config.create({"company_id": company.id, "journal_id": journal.id, **{field: account.id for field, account in roles.items()}})
+            mapped = config.account_ids.account_id
+            config.write(
+                {
+                    "account_ids": [
+                        Command.create({"account_id": found[code].id, "section": section, "pct": 100.0 if section != "excluded" else 0.0})
+                        for role, code, _name, _type, section in COGM_ACCOUNTS
+                        if role == "map" and found[code] not in mapped
+                    ]
+                }
             )
         return True
 

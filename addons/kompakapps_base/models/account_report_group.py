@@ -60,7 +60,7 @@ BS_TYPES = (
 # Pemetaan lama (kode atau awalan kode l10n_id), dari rumus template sebelum D67. Yang lebih spesifik harus di atas yang lebih umum.
 CODE_RULES = [
     ("42000060", "retur_diskon"), ("42000070", "retur_diskon"), ("41", "penjualan"),
-    ("51000010", "hpp_barang"), ("51000020", "pembelian_bahan"), ("42500010", "perubahan_persediaan"), ("51100002", "perubahan_persediaan"),
+    ("51000010", "hpp_barang"), ("51000020", "pembelian_bahan"), ("51000021", "pembelian_bahan"), ("51000022", "pembelian_bahan"), ("51000023", "pembelian_bahan"), ("42500010", "perubahan_persediaan"), ("51100002", "perubahan_persediaan"),
     ("65110070", "beban_pajak"), ("611", "beban_gaji"), ("631", "beban_umum"), ("641", "beban_umum"), ("651", "beban_jasa"),
     ("661", "beban_kendaraan"), ("69000000", "beban_lain_operasional"), ("99900002", "pendapatan_lain"),
     ("911", "beban_lain"), ("99900001", "beban_lain"), ("99900003", "beban_lain"),

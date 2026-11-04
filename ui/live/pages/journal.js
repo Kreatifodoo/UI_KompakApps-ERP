@@ -81,6 +81,8 @@ const PICKING_ROUTE = { incoming: ["receipt", "Penerimaan"], outgoing: ["deliver
 async function sourceLinks(move) {
   const links = [];
   if (move.move_type === "in_invoice") links.push({ label: `Tagihan Vendor ${move.name}`, href: `#/bill/${move.id}`, icon: "fa-file-invoice" });
+  // jurnal COGM periodik dan pembaliknya tertaut ke kertas kerjanya (Q64)
+  if (move.kompakapps_cogm_id) links.push({ label: `Kertas Kerja COGM ${move.kompakapps_cogm_id[1]}`, href: `#/cogm/${move.kompakapps_cogm_id[0]}`, icon: "fa-calculator" });
   const [payments, stock] = await Promise.all([
     searchRead("account.payment", [["move_id", "=", move.id]], ["name"], { limit: 1 }),
     searchRead("stock.move", [["account_move_id", "=", move.id]], ["picking_id", "picking_code", "scrap_id", "production_id", "raw_material_production_id", "reference"], { limit: 3 }),
@@ -118,7 +120,7 @@ async function sourceLinks(move) {
 
 async function renderForm(id) {
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
-  const move = await readOne("account.move", id, ["name", "state", "move_type", "date", "ref", "partner_id", "journal_id", "currency_id", "amount_total"]);
+  const move = await readOne("account.move", id, ["name", "state", "move_type", "date", "ref", "partner_id", "journal_id", "currency_id", "amount_total", "kompakapps_cogm_id"]);
   if (!move) {
     app.innerHTML = '<p class="text-sm text-rose-600">Jurnal tidak ditemukan.</p>';
     return;

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo noupdate="1">
+    <!-- Nomor kertas kerja COGM periodik (Q64, D92): COGM/<tahun>/0001. -->
+    <record id="seq_cogm_worksheet" model="ir.sequence">
+        <field name="name">Kertas Kerja COGM</field>
+        <field name="code">kompakapps.cogm.worksheet</field>
+        <field name="prefix">COGM/%(year)s/</field>
+        <field name="padding">4</field>
+        <field name="company_id" eval="False" />
+    </record>
+</odoo>
