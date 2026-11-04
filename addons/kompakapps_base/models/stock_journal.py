@@ -386,3 +386,23 @@ class AccountMoveLine(models.Model):
 
     def _get_posted_cogs_value(self):
         return super()._get_posted_cogs_value() - sum(self._kompakapps_posted_cogs_lines().mapped("balance"))
+
+
+class MrpProduction(models.Model):
+    _inherit = "mrp.production"
+
+    def kompakapps_post_missing_stock_journals(self):
+        """Jurnalkan MO selesai yang belum punya jurnal stok, misalnya karena selesai sebelum jurnal per transaksi aktif (Q62, D90).
+
+        Komponen yang keluar didebit ke Barang Dalam Proses dan dikreditkan dari akun persediaannya, lalu barang jadi yang masuk didebit ke akun
+        persediaannya dan dikreditkan dari Barang Dalam Proses, sama seperti MO yang selesai sesudah aktivasi. Jurnal bertanggal selesai MO. Pergerakan
+        yang sudah punya jurnal dilewati, jadi aman dijalankan ulang. Mengembalikan jumlah jurnal yang dibuat.
+        """
+        created = 0
+        for production in self.filtered(lambda mo: mo.state == "done").sorted("date_finished"):
+            moves = (production.move_raw_ids | production.move_finished_ids).filtered(lambda move: move.state == "done" and not move.account_move_id)
+            if not moves:
+                continue
+            date = fields.Datetime.context_timestamp(production, production.date_finished).date() if production.date_finished else fields.Date.context_today(production)
+            created += len(moves.with_context(force_period_date=date)._create_account_move())
+        return created

@@ -16,6 +16,7 @@ class TestInventorySplit(AccountTestInvoicingCommon):
                 "group_ids": [
                     Command.link(cls.env.ref("sales_team.group_sale_manager").id),
                     Command.link(cls.env.ref("stock.group_stock_manager").id),
+                    Command.link(cls.env.ref("mrp.group_mrp_manager").id),
                 ]
             }
         )
@@ -141,3 +142,59 @@ class TestInventorySplit(AccountTestInvoicingCommon):
         line.account_id = category_account  # pola lama: tagihan draf langsung ke akun persediaan
         self.company.kompakapps_split_inventory_accounts(self.raw_category, self.fin_category)
         self.assertEqual(line.account_id.code, "11300181", "Tagihan draf ikut dipindahkan")
+
+    def test_cogm_account_holds_only_manufactured_goods(self):
+        """Barang yang dibeli jadi kembali ke Inventory; Inventory COGM hanya berisi hasil produksi, termasuk MO lama yang belum punya jurnal."""
+        goods = self.env.ref("product.product_category_goods").with_company(self.company)
+        trade_category = self.env["product.category"].create({"name": "Barang Dagang Uji", "parent_id": goods.id, "property_cost_method": "average"})
+        common = {"type": "consu", "is_storable": True, "standard_price": 0.0, "list_price": 300000.0, "taxes_id": [Command.clear()], "supplier_taxes_id": [Command.clear()]}
+        trade = self._create_product(name="Barang Dagang Pisah Akun", categ_id=trade_category.id, **common)
+        self._receive_and_bill(self.raw, qty=10.0, price=100000.0)
+        self._receive_and_bill(trade, qty=5.0, price=200000.0)
+        # MO yang selesai sebelum jurnal per transaksi aktif: akun Barang Dalam Proses pada lokasi Production dikosongkan dulu
+        production_location = self.env["stock.location"].search([("company_id", "=", self.company.id), ("usage", "=", "production")], limit=1)
+        wip_account = production_location.valuation_account_id
+        production_location.valuation_account_id = False
+        bom = self.env["mrp.bom"].create(
+            {
+                "product_tmpl_id": self.fin.product_tmpl_id.id,
+                "product_qty": 1.0,
+                "product_uom_id": self.fin.uom_id.id,
+                "bom_line_ids": [Command.create({"product_id": self.raw.id, "product_qty": 2.0})],
+            }
+        )
+        production = self.env["mrp.production"].create({"product_id": self.fin.id, "product_qty": 3.0, "bom_id": bom.id})
+        production.action_confirm()
+        production.qty_producing = 3.0
+        for move in production.move_raw_ids:
+            move.write({"quantity": move.product_uom_qty, "picked": True})
+        production.button_mark_done()
+        self.assertEqual(production.state, "done")
+        self.assertFalse((production.move_raw_ids | production.move_finished_ids).account_move_id, "MO lama tidak dijurnal")
+        self._sell(self.fin, 1.0)  # satu unit barang jadi terjual: pengiriman mengkredit akun persediaannya
+        production_location.valuation_account_id = wip_account
+
+        self.company.kompakapps_split_inventory_accounts(self.raw_category, self.fin_category, trade_category)
+        trade_account = self.company.account_stock_valuation_id
+        raw_account = self.raw_category.property_stock_valuation_account_id
+        cogm_account = self.fin_category.property_stock_valuation_account_id
+        self.assertEqual(trade_category.property_stock_valuation_account_id, trade_account, "Barang dibeli jadi memakai akun Inventory bawaan")
+        self.assertEqual(self._balance(trade_account), trade.total_value, "Inventory berisi barang dagang")
+        self.assertEqual(self._balance(trade_account, self.fin), 0.0, "Tidak ada barang jadi produksi di Inventory")
+        self.assertEqual(self._balance(cogm_account, trade) + self._balance(cogm_account, self.raw), 0.0, "Tidak ada barang dibeli di Inventory COGM")
+        self.assertEqual(self._balance(cogm_account), -200000.0, "Sebelum MO dijurnalkan, COGM hanya punya kredit penjualan")
+
+        created = production.kompakapps_post_missing_stock_journals()
+        self.assertEqual(created, 1)
+        entry = (production.move_raw_ids | production.move_finished_ids).account_move_id
+        self.assertEqual(len(entry), 1)
+        self.assertEqual(entry.date, fields.Date.context_today(production, production.date_finished))
+        lines = {}
+        for line in entry.line_ids:
+            debit, credit = lines.get(line.account_id, (0.0, 0.0))
+            lines[line.account_id] = (debit + line.debit, credit + line.credit)
+        self.assertEqual(lines, {wip_account: (600000.0, 600000.0), raw_account: (0.0, 600000.0), cogm_account: (600000.0, 0.0)})
+        self.assertEqual(self._balance(cogm_account), self.fin.total_value, "Saldo Inventory COGM sama dengan nilai stok barang jadi produksi")
+        self.assertEqual(self._balance(raw_account), self.raw.total_value, "Saldo Inventory Bahan Baku sama dengan nilai stok bahan baku")
+        self.assertEqual(self._balance(wip_account), 0.0)
+        self.assertEqual(production.kompakapps_post_missing_stock_journals(), 0, "Jalan ulang tidak membuat jurnal lagi")

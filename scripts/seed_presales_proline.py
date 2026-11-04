@@ -10,7 +10,7 @@ Yang dibuat: identitas perusahaan demo (PROLINE (Demo), gudang di Jababeka, Cika
 penjualan, rak dingin 2-8 C, pelanggan dan pemasok rekaan, lalu transaksi berurutan: CRM, Sales Order (diterima, dikirim sebagian, dan menunggu),
 Purchase Request dan Purchase Order dengan penerimaan ber-lot, transfer ke rak dingin, Manufacturing Order kit kolesterol, tagihan, faktur, dan pembayaran,
 semuanya dengan akun analitik dan beberapa aktivitas terjadwal. Nama pelanggan, pemasok, harga, dan jumlah adalah rekaan untuk demo; nama produk mengikuti
-katalog di proline.co.id. Akun persediaan dipisah: komponen PRL-C-* di kategori Raw Material memakai Inventory Bahan Baku, kategori produk lainnya memakai Inventory COGM. Seluruh isi dikomit di akhir (bila ada galat, tidak ada yang tersimpan).
+katalog di proline.co.id. Akun persediaan dipisah: komponen PRL-C-* di kategori Raw Material memakai Inventory Bahan Baku, barang hasil produksi (punya BoM) di kategori Finished Goods memakai Inventory COGM, dan barang dibeli jadi memakai Inventory. Seluruh isi dikomit di akhir (bila ada galat, tidak ada yang tersimpan).
 """
 import datetime
 from odoo import Command, fields
@@ -446,10 +446,12 @@ for pick in so_mitra.picking_ids:
 # Lab Cikarang: quotation draf
 so_cikarang = order(c_cikarang, 0, [(x3i, 1), (tsh, 10), (vitd, 10), (jasa_inst, 1)], opp_cikarang, tax_services=True)
 
-# ---------- akun persediaan terpisah (Q61, D89): bahan baku ke Inventory Bahan Baku, barang jadi ke Inventory COGM, termasuk jurnal yang sudah terbentuk ----------
+# ---------- akun persediaan terpisah (Q61, D89, Q62, D90): bahan baku ke Inventory Bahan Baku, hasil produksi (punya BoM) ke Inventory COGM, barang dibeli jadi ke Inventory ----------
 C_RAW = Categ.search([("name", "=", "Raw Material"), ("parent_id", "=", goods.id)], limit=1) or categ("Raw Material")
+C_FIN = Categ.search([("name", "=", "Finished Goods"), ("parent_id", "=", goods.id)], limit=1) or categ("Finished Goods")
 Product.search(["|", ("default_code", "=like", "PRL-C-%"), ("name", "=", "Bahan Baku KompakApps")]).filtered(lambda p: p.categ_id == goods).write({"categ_id": C_RAW.id})
-company.kompakapps_split_inventory_accounts(C_RAW, C_KIMIA | C_HEMA | C_IMUN | C_URIN | C_RAPID | C_BIO | C_KAL | goods)
+env["mrp.bom"].search([]).mapped("product_tmpl_id.product_variant_ids").write({"categ_id": C_FIN.id})
+company.kompakapps_split_inventory_accounts(C_RAW, C_FIN, C_KIMIA | C_HEMA | C_IMUN | C_URIN | C_RAPID | C_BIO | C_KAL | goods)
 
 env.cr.commit()
 print(
