@@ -132,7 +132,7 @@ async function renderReport(sub, def, query) {
   const moves = query.get("moves") === "all" ? "all" : "posted";
   const [template] = await searchRead("ir.model.data", [["module", "=", "kompakapps_base"], ["name", "=", def.name]], ["res_id"], { limit: 1 });
   if (!template) {
-    app.innerHTML = '<p class="text-sm text-rose-600">Template laporan belum dimuat. Perbarui modul kompakapps_base di Odoo.</p>';
+    app.innerHTML = '<p class="text-sm text-rose-600">Template laporan belum dimuat. Perbarui modul dasar Nusara ERP di Odoo (menu Apps).</p>';
     return;
   }
   // saring per akun analitik: hanya item jurnal yang distribusi analitiknya memuat akun itu (sama seperti Budget Report)

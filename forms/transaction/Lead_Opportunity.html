@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Opportunity - KompakApps</title>
+  <title>Opportunity - Nusara ERP</title>
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Font Awesome Icons -->
@@ -14,10 +14,10 @@
       theme: {
         extend: {
           colors: {
-            kompak: {
-              primary: '#1E40AF',       /* Kompak Deep Blue */
+            nusara: {
+              primary: '#1E40AF',       /* Nusara Deep Blue */
               primaryHover: '#1D4ED8',  /* Blue Hover */
-              accent: '#0284C7',        /* Kompak Cyan / Sky */
+              accent: '#0284C7',        /* Nusara Cyan / Sky */
               accentHover: '#0369A1',
               navy: '#0F172A',          /* Dark Slate */
               canvas: '#F8FAFC',        /* Light Grayish Blue Canvas */
@@ -44,8 +44,8 @@
       font-size: 13px;
     }
 
-    /* Chevron Status Stage Pipeline Kompak */
-    .kompak-stage {
+    /* Chevron Status Stage Pipeline Nusara */
+    .nusara-stage {
       position: relative;
       display: inline-flex;
       align-items: center;
@@ -57,17 +57,17 @@
       transition: all 0.15s ease-in-out;
       margin-left: -7px;
     }
-    .kompak-stage:first-child {
+    .nusara-stage:first-child {
       clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%);
       margin-left: 0;
       padding-left: 14px;
     }
-    .kompak-stage:last-child {
+    .nusara-stage:last-child {
       clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 10px 50%);
     }
 
-    /* Form Input Fields Kompak */
-    .kompak-input {
+    /* Form Input Fields Nusara */
+    .nusara-input {
       border: 1px solid #CBD5E1;
       background-color: transparent;
       padding: 5px 9px;
@@ -76,13 +76,13 @@
       color: #0F172A;
       transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
     }
-    .kompak-input:focus {
+    .nusara-input:focus {
       outline: none;
       border-color: #1E40AF;
       box-shadow: 0 0 0 2px rgba(30, 64, 175, 0.15);
       background-color: #FFFFFF;
     }
-    .kompak-input:hover:not(:focus) {
+    .nusara-input:hover:not(:focus) {
       border-color: #94A3B8;
     }
 
@@ -102,18 +102,18 @@
   <!-- ========================================================
        TOP CONTROL PANEL & NAVBAR (Breadcrumb + Model Switcher)
        ======================================================== -->
-  <header class="bg-white border-b border-kompak-border sticky top-0 z-30 shadow-xs">
+  <header class="bg-white border-b border-nusara-border sticky top-0 z-30 shadow-xs">
     <div class="max-w-[1240px] mx-auto px-4 sm:px-6 h-12 flex items-center justify-between">
       <!-- Brand & Breadcrumbs -->
       <div class="flex items-center space-x-2 text-xs sm:text-sm">
-        <div class="w-6 h-6 bg-kompak-primary rounded-md flex items-center justify-center text-white text-xs font-bold mr-1 shadow-xs">
+        <div class="w-6 h-6 bg-nusara-primary rounded-md flex items-center justify-center text-white text-xs font-bold mr-1 shadow-xs">
           <i class="fa-solid fa-shapes text-2xs"></i>
         </div>
-        <span class="font-bold text-kompak-primary tracking-wide mr-1">KOMPAK</span>
+        <span class="font-bold text-nusara-primary tracking-wide mr-1">NUSARA</span>
         <span class="text-slate-300">|</span>
-        <span class="text-kompak-muted hover:text-kompak-primary cursor-pointer font-medium" id="breadcrumbParent">Penjualan</span>
+        <span class="text-nusara-muted hover:text-nusara-primary cursor-pointer font-medium" id="breadcrumbParent">Penjualan</span>
         <span class="text-slate-300">/</span>
-        <span class="font-bold text-kompak-navy" id="breadcrumbCurrentDoc">SO-2026-0891</span>
+        <span class="font-bold text-nusara-navy" id="breadcrumbCurrentDoc">SO-2026-0891</span>
         
         <!-- Save indicator -->
         <span class="ml-2 text-2xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
@@ -124,27 +124,27 @@
       <!-- Action Pager & Model Switcher -->
       <div class="flex items-center gap-2">
         <!-- Switch Form Category (Transaksi vs Master Data) -->
-        <div class="bg-slate-100 p-0.5 rounded-lg border border-kompak-border flex items-center text-xs">
-          <button id="btnModeTx" style="display:none;" onclick="switchFormMode('transaction')" class="px-3 py-1 rounded-md bg-white shadow-xs font-semibold text-kompak-primary flex items-center gap-1.5 transition">
+        <div class="bg-slate-100 p-0.5 rounded-lg border border-nusara-border flex items-center text-xs">
+          <button id="btnModeTx" style="display:none;" onclick="switchFormMode('transaction')" class="px-3 py-1 rounded-md bg-white shadow-xs font-semibold text-nusara-primary flex items-center gap-1.5 transition">
             <i class="fa-solid fa-file-invoice text-xs"></i> Transaksi Data
           </button>
-          <button id="btnModeMaster" style="display:none;" onclick="switchFormMode('master')" class="px-3 py-1 rounded-md text-kompak-muted hover:text-kompak-navy flex items-center gap-1.5 transition font-medium">
+          <button id="btnModeMaster" style="display:none;" onclick="switchFormMode('master')" class="px-3 py-1 rounded-md text-nusara-muted hover:text-nusara-navy flex items-center gap-1.5 transition font-medium">
             <i class="fa-solid fa-address-book text-xs"></i> Master Data
           </button>
         </div>
 
         <!-- Pager Navigation -->
-        <div class="hidden sm:flex items-center text-xs text-kompak-muted border-l border-kompak-border pl-3 ml-1">
+        <div class="hidden sm:flex items-center text-xs text-nusara-muted border-l border-nusara-border pl-3 ml-1">
           <span class="mr-2 font-mono">1 / 48</span>
-          <button class="p-1 hover:text-kompak-navy hover:bg-slate-100 rounded text-xs transition" title="Sebelumnya"><i class="fa-solid fa-chevron-left"></i></button>
-          <button class="p-1 hover:text-kompak-navy hover:bg-slate-100 rounded text-xs transition" title="Berikutnya"><i class="fa-solid fa-chevron-right"></i></button>
+          <button class="p-1 hover:text-nusara-navy hover:bg-slate-100 rounded text-xs transition" title="Sebelumnya"><i class="fa-solid fa-chevron-left"></i></button>
+          <button class="p-1 hover:text-nusara-navy hover:bg-slate-100 rounded text-xs transition" title="Berikutnya"><i class="fa-solid fa-chevron-right"></i></button>
         </div>
       </div>
     </div>
   </header>
 
   <!-- ========================================================
-       KOMPAK FORM SHEET CONTAINER (Max-Width 1140px Sheet)
+       NUSARA FORM SHEET CONTAINER (Max-Width 1140px Sheet)
        ======================================================== -->
   <main class="w-full max-w-form-sheet mx-auto px-2 sm:px-4 mt-4 flex-1">
     
@@ -152,28 +152,28 @@
     <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-20 opacity-0 transition-all duration-300 pointer-events-none flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg border text-xs font-medium"></div>
 
     <!-- Outer Form Box -->
-    <div class="bg-white border border-kompak-border rounded-xl shadow-xs overflow-hidden">
+    <div class="bg-white border border-nusara-border rounded-xl shadow-xs overflow-hidden">
 
       <!-- ========================================================
            SECTION 1: STATUS BAR
            Kiri: Action Buttons (Primary / Secondary)
            Kanan: Status Stage Pipeline
            ======================================================== -->
-      <section id="section-status-bar" class="bg-slate-50/80 border-b border-kompak-border px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 min-h-[46px]">
+      <section id="section-status-bar" class="bg-slate-50/80 border-b border-nusara-border px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 min-h-[46px]">
         <!-- 1.A: Action Buttons (Kiri) -->
         <div class="flex flex-wrap items-center gap-2">
-          <button id="btnPrimaryAction" onclick="handlePrimaryAction()" class="bg-kompak-primary hover:bg-kompak-primaryHover text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold shadow-xs transition flex items-center gap-1.5 active:scale-98">
+          <button id="btnPrimaryAction" onclick="handlePrimaryAction()" class="bg-nusara-primary hover:bg-nusara-primaryHover text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold shadow-xs transition flex items-center gap-1.5 active:scale-98">
             <i class="fa-solid fa-check text-xs"></i>
             <span id="primaryActionText">KONFIRMASI</span>
           </button>
 
-          <button onclick="handleSecondaryAction()" class="bg-white hover:bg-slate-100 text-kompak-navy border border-kompak-border px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5">
-            <i class="fa-regular fa-paper-plane text-kompak-muted"></i>
+          <button onclick="handleSecondaryAction()" class="bg-white hover:bg-slate-100 text-nusara-navy border border-nusara-border px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5">
+            <i class="fa-regular fa-paper-plane text-nusara-muted"></i>
             <span>Kirim Notifikasi</span>
           </button>
 
-          <button onclick="window.print()" class="bg-white hover:bg-slate-100 text-kompak-navy border border-kompak-border px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5">
-            <i class="fa-solid fa-print text-kompak-muted"></i>
+          <button onclick="window.print()" class="bg-white hover:bg-slate-100 text-nusara-navy border border-nusara-border px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5">
+            <i class="fa-solid fa-print text-nusara-muted"></i>
             <span>Cetak PDF</span>
           </button>
 
@@ -184,14 +184,14 @@
 
         <!-- 1.B: Status Stage Pipeline (Kanan) -->
         <div class="flex items-center overflow-x-auto scrollbar-none self-end sm:self-center">
-          <div id="statusPipeline" class="flex items-center select-none border border-kompak-border rounded-lg overflow-hidden bg-slate-200">
+          <div id="statusPipeline" class="flex items-center select-none border border-nusara-border rounded-lg overflow-hidden bg-slate-200">
             <!-- Injected via JavaScript -->
           </div>
         </div>
       </section>
 
       <!-- ========================================================
-           KOMPAK FORM SHEET CONTENT
+           NUSARA FORM SHEET CONTENT
            ======================================================== -->
       <div class="p-6 sm:p-8 bg-white relative">
 
@@ -199,7 +199,7 @@
              SECTION 2: LINK DOCUMENTS (Multi-Document Linked Hub)
              Terletak di pojok kanan atas lembar formulir
              ======================================================== -->
-        <section id="section-link-documents" class="flex justify-end mb-5 border-b border-kompak-borderLight pb-4">
+        <section id="section-link-documents" class="flex justify-end mb-5 border-b border-nusara-borderLight pb-4">
           <div id="linkedDocsContainer" class="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <!-- Smart Button Cards rendered dynamically via JS -->
           </div>
@@ -211,11 +211,11 @@
         <section id="section-header-fields" class="mb-6">
           <!-- Document Title & Badge -->
           <div class="mb-5">
-            <span id="headerPrefixBadge" class="text-3xs uppercase tracking-wider font-bold text-kompak-muted block mb-1">
+            <span id="headerPrefixBadge" class="text-3xs uppercase tracking-wider font-bold text-nusara-muted block mb-1">
               Sales Order
             </span>
             <div class="flex items-center gap-3">
-              <h1 id="headerDocumentTitle" class="text-2xl sm:text-3xl font-extrabold text-kompak-navy tracking-tight">SO-2026-0891</h1>
+              <h1 id="headerDocumentTitle" class="text-2xl sm:text-3xl font-extrabold text-nusara-navy tracking-tight">SO-2026-0891</h1>
               <span id="headerDocStatusTag" class="px-2.5 py-0.5 rounded-full text-2xs font-semibold bg-sky-100 text-sky-800 border border-sky-200">Aktif</span>
             </div>
           </div>
@@ -232,37 +232,37 @@
              ======================================================== -->
         <section id="section-order-lines" class="mb-6">
           <!-- Notebook Tab Bar -->
-          <div class="flex items-center justify-between border-b border-kompak-border mb-3">
+          <div class="flex items-center justify-between border-b border-nusara-border mb-3">
             <div class="flex items-center space-x-6 text-xs font-semibold">
-              <button class="pb-2.5 border-b-2 border-kompak-primary text-kompak-primary flex items-center gap-1.5" id="tabLineItems">
+              <button class="pb-2.5 border-b-2 border-nusara-primary text-nusara-primary flex items-center gap-1.5" id="tabLineItems">
                 <i class="fa-solid fa-list-check text-xs"></i>
                 <span id="orderLineSectionTitle">Rincian Baris Data</span>
-                <span id="lineItemCountBadge" class="bg-blue-50 text-kompak-primary border border-blue-200 px-2 py-0.2 rounded-full text-2xs font-bold ml-1">3</span>
+                <span id="lineItemCountBadge" class="bg-blue-50 text-nusara-primary border border-blue-200 px-2 py-0.2 rounded-full text-2xs font-bold ml-1">3</span>
               </button>
-              <button class="pb-2.5 text-kompak-muted hover:text-kompak-navy transition" onclick="showToast('Tab Informasi Ekstra (Catatan Pengiriman, Akun Finansial)', 'info')">
+              <button class="pb-2.5 text-nusara-muted hover:text-nusara-navy transition" onclick="showToast('Tab Informasi Ekstra (Catatan Pengiriman, Akun Finansial)', 'info')">
                 Informasi Tambahan
               </button>
-              <button class="pb-2.5 text-kompak-muted hover:text-kompak-navy transition" onclick="showToast('Tab Dokumen Pendukung & Lampiran Kontrak', 'info')">
+              <button class="pb-2.5 text-nusara-muted hover:text-nusara-navy transition" onclick="showToast('Tab Dokumen Pendukung & Lampiran Kontrak', 'info')">
                 Berkas Pendukung
               </button>
             </div>
 
             <!-- Tax & Subtotal Toggle Switch (Optional Subtotal & Tax) -->
-            <div id="taxToggleWrapper" class="flex items-center gap-2 mb-2 bg-slate-50 border border-kompak-border px-3 py-1 rounded-lg text-2xs">
-              <span class="text-kompak-muted font-medium">Pajak & Subtotal:</span>
+            <div id="taxToggleWrapper" class="flex items-center gap-2 mb-2 bg-slate-50 border border-nusara-border px-3 py-1 rounded-lg text-2xs">
+              <span class="text-nusara-muted font-medium">Pajak & Subtotal:</span>
               <label class="relative inline-flex items-center cursor-pointer">
                 <input type="checkbox" id="toggleTaxSubtotal" class="sr-only peer" checked onchange="toggleTaxCalculation(this.checked)">
-                <div class="w-8 h-4 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-kompak-primary"></div>
+                <div class="w-8 h-4 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-nusara-primary"></div>
               </label>
             </div>
           </div>
 
           <!-- List Table Container -->
-          <div class="overflow-x-auto border border-kompak-border rounded-lg shadow-2xs">
+          <div class="overflow-x-auto border border-nusara-border rounded-lg shadow-2xs">
             <table class="w-full text-left border-collapse text-xs">
               <thead>
-                <tr class="bg-slate-100/70 text-kompak-navy font-semibold border-b border-kompak-border select-none">
-                  <th class="p-2.5 w-8 text-center text-kompak-muted font-mono">#</th>
+                <tr class="bg-slate-100/70 text-nusara-navy font-semibold border-b border-nusara-border select-none">
+                  <th class="p-2.5 w-8 text-center text-nusara-muted font-mono">#</th>
                   <th class="p-2.5">Item Deskripsi</th>
                   <th class="p-2.5 w-24 text-center" id="colQty">Kuantitas</th>
                   <th class="p-2.5 w-24 text-center" id="colUnit">Satuan</th>
@@ -280,52 +280,52 @@
 
           <!-- Add Line Action -->
           <div class="mt-3 flex items-center justify-between">
-            <button onclick="addNewLineItem()" class="text-kompak-primary hover:text-kompak-primaryHover font-semibold text-xs flex items-center gap-1.5 py-1.5 px-3 bg-blue-50/60 hover:bg-blue-100/70 rounded-lg transition border border-blue-200/60">
+            <button onclick="addNewLineItem()" class="text-nusara-primary hover:text-nusara-primaryHover font-semibold text-xs flex items-center gap-1.5 py-1.5 px-3 bg-blue-50/60 hover:bg-blue-100/70 rounded-lg transition border border-blue-200/60">
               <i class="fa-solid fa-plus text-2xs"></i>
               <span id="btnAddLineText">Tambahkan Baris Baru</span>
             </button>
-            <span class="text-3xs text-kompak-muted italic">* Nilai angka pada tabel dapat diubah langsung</span>
+            <span class="text-3xs text-nusara-muted italic">* Nilai angka pada tabel dapat diubah langsung</span>
           </div>
         </section>
 
         <!-- ========================================================
              SECTION 5: FOOTER FIELDS (Terms & Grand Totals)
              ======================================================== -->
-        <section id="section-footer-fields" class="pt-5 border-t border-kompak-border">
+        <section id="section-footer-fields" class="pt-5 border-t border-nusara-border">
           <div class="grid grid-cols-1 md:grid-cols-12 gap-6">
             <!-- Left Side: Terms & Notes -->
             <div class="md:col-span-7 space-y-3">
               <div>
-                <label class="block text-2xs font-bold uppercase tracking-wider text-kompak-muted mb-1">Syarat & Ketentuan / Catatan Rekanan</label>
-                <textarea id="fieldTerms" rows="2" class="w-full kompak-input text-xs" placeholder="Syarat pembayaran, penyerahan barang, atau ketentuan khusus..."></textarea>
+                <label class="block text-2xs font-bold uppercase tracking-wider text-nusara-muted mb-1">Syarat & Ketentuan / Catatan Rekanan</label>
+                <textarea id="fieldTerms" rows="2" class="w-full nusara-input text-xs" placeholder="Syarat pembayaran, penyerahan barang, atau ketentuan khusus..."></textarea>
               </div>
 
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                 <div>
-                  <label class="block text-2xs font-semibold text-kompak-muted mb-1">Catatan Internal Perusahaan</label>
-                  <input type="text" id="fieldInternalNote" class="w-full kompak-input" placeholder="Hanya terlihat oleh tim internal">
+                  <label class="block text-2xs font-semibold text-nusara-muted mb-1">Catatan Internal Perusahaan</label>
+                  <input type="text" id="fieldInternalNote" class="w-full nusara-input" placeholder="Hanya terlihat oleh tim internal">
                 </div>
                 <div>
-                  <label class="block text-2xs font-semibold text-kompak-muted mb-1">Penanggung Jawab (PIC Staff)</label>
-                  <input type="text" id="fieldApprover" class="w-full kompak-input" value="Budi Setiawan (Kompak Operations)">
+                  <label class="block text-2xs font-semibold text-nusara-muted mb-1">Penanggung Jawab (PIC Staff)</label>
+                  <input type="text" id="fieldApprover" class="w-full nusara-input" value="Budi Setiawan (Nusara Operations)">
                 </div>
               </div>
             </div>
 
             <!-- Right Side: Calculation Totals Box -->
             <div id="footerSummaryBox" class="md:col-span-5 flex flex-col justify-start">
-              <div class="bg-slate-50 border border-kompak-border rounded-xl p-3.5 text-xs space-y-2.5">
-                <div class="flex justify-between items-center text-kompak-muted">
+              <div class="bg-slate-50 border border-nusara-border rounded-xl p-3.5 text-xs space-y-2.5">
+                <div class="flex justify-between items-center text-nusara-muted">
                   <span>Jumlah Bersih (Untaxed)</span>
-                  <span id="summaryUntaxed" class="font-mono font-medium text-kompak-navy">Rp 0</span>
+                  <span id="summaryUntaxed" class="font-mono font-medium text-nusara-navy">Rp 0</span>
                 </div>
-                <div id="summaryTaxRow" class="flex justify-between items-center text-kompak-muted">
+                <div id="summaryTaxRow" class="flex justify-between items-center text-nusara-muted">
                   <span>Pajak Pertambahan Nilai (11%)</span>
-                  <span id="summaryTax" class="font-mono font-medium text-kompak-navy">Rp 0</span>
+                  <span id="summaryTax" class="font-mono font-medium text-nusara-navy">Rp 0</span>
                 </div>
-                <div class="border-t border-kompak-border pt-2 flex justify-between items-baseline">
-                  <span class="font-bold text-sm text-kompak-navy">Total Akhir</span>
-                  <span id="summaryTotal" class="font-mono text-base font-extrabold text-kompak-primary">Rp 0</span>
+                <div class="border-t border-nusara-border pt-2 flex justify-between items-baseline">
+                  <span class="font-bold text-sm text-nusara-navy">Total Akhir</span>
+                  <span id="summaryTotal" class="font-mono text-base font-extrabold text-nusara-primary">Rp 0</span>
                 </div>
               </div>
             </div>
@@ -337,46 +337,46 @@
       <!-- ========================================================
            SECTION 6: ACTIVITIES TRACKING (Chatter & Audit Trail)
            ======================================================== -->
-      <section id="section-activities-tracking" class="bg-slate-50 border-t border-kompak-border p-6 sm:p-8">
+      <section id="section-activities-tracking" class="bg-slate-50 border-t border-nusara-border p-6 sm:p-8">
         <div class="max-w-[850px] mx-auto">
           <!-- Tracking Action Bar -->
-          <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-kompak-border">
+          <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-nusara-border">
             <div class="flex items-center gap-2">
-              <button onclick="openChatterInput('comment')" class="px-3.5 py-1.5 bg-kompak-primary hover:bg-kompak-primaryHover text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-xs transition">
+              <button onclick="openChatterInput('comment')" class="px-3.5 py-1.5 bg-nusara-primary hover:bg-nusara-primaryHover text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-xs transition">
                 <i class="fa-solid fa-message text-2xs"></i>
                 <span>Kirim Pesan</span>
               </button>
-              <button onclick="openChatterInput('log')" class="px-3 py-1.5 bg-white hover:bg-slate-100 text-kompak-navy border border-kompak-border rounded-lg text-xs font-medium flex items-center gap-1.5 transition">
-                <i class="fa-regular fa-clipboard text-2xs text-kompak-muted"></i>
+              <button onclick="openChatterInput('log')" class="px-3 py-1.5 bg-white hover:bg-slate-100 text-nusara-navy border border-nusara-border rounded-lg text-xs font-medium flex items-center gap-1.5 transition">
+                <i class="fa-regular fa-clipboard text-2xs text-nusara-muted"></i>
                 <span>Catat Log</span>
               </button>
-              <button onclick="openChatterInput('activity')" class="px-3 py-1.5 bg-white hover:bg-slate-100 text-kompak-navy border border-kompak-border rounded-lg text-xs font-medium flex items-center gap-1.5 transition">
+              <button onclick="openChatterInput('activity')" class="px-3 py-1.5 bg-white hover:bg-slate-100 text-nusara-navy border border-nusara-border rounded-lg text-xs font-medium flex items-center gap-1.5 transition">
                 <i class="fa-regular fa-calendar-check text-2xs text-sky-600"></i>
                 <span>Jadwalkan Aktivitas</span>
               </button>
             </div>
 
             <!-- Followers Tag -->
-            <div class="flex items-center text-xs text-kompak-muted gap-2">
-              <span class="flex items-center gap-1 bg-white border border-kompak-border px-2.5 py-1 rounded-full">
-                <i class="fa-regular fa-bell text-kompak-primary"></i>
-                <span>Pengikut: <strong class="text-kompak-navy">3</strong></span>
+            <div class="flex items-center text-xs text-nusara-muted gap-2">
+              <span class="flex items-center gap-1 bg-white border border-nusara-border px-2.5 py-1 rounded-full">
+                <i class="fa-regular fa-bell text-nusara-primary"></i>
+                <span>Pengikut: <strong class="text-nusara-navy">3</strong></span>
               </span>
             </div>
           </div>
 
           <!-- Chatter Compose Box -->
-          <div id="chatterInputBox" class="hidden mt-4 bg-white p-3.5 rounded-xl border border-kompak-border shadow-xs">
+          <div id="chatterInputBox" class="hidden mt-4 bg-white p-3.5 rounded-xl border border-nusara-border shadow-xs">
             <div class="flex items-center justify-between mb-2">
-              <span id="chatterInputLabel" class="text-xs font-bold text-kompak-navy">Kirim Pesan ke Pengikut</span>
-              <button onclick="closeChatterInput()" class="text-kompak-muted hover:text-kompak-navy text-xs p-1">
+              <span id="chatterInputLabel" class="text-xs font-bold text-nusara-navy">Kirim Pesan ke Pengikut</span>
+              <button onclick="closeChatterInput()" class="text-nusara-muted hover:text-nusara-navy text-xs p-1">
                 <i class="fa-solid fa-xmark"></i>
               </button>
             </div>
-            <textarea id="txtChatterInput" rows="2" class="w-full kompak-input text-xs" placeholder="Tuliskan catatan atau instruksi aktivitas..."></textarea>
+            <textarea id="txtChatterInput" rows="2" class="w-full nusara-input text-xs" placeholder="Tuliskan catatan atau instruksi aktivitas..."></textarea>
             <div class="mt-2.5 flex justify-end gap-2">
-              <button onclick="closeChatterInput()" class="px-3 py-1.5 text-xs text-kompak-muted hover:text-kompak-navy">Batal</button>
-              <button onclick="submitChatterEntry()" class="px-3.5 py-1.5 bg-kompak-primary hover:bg-kompak-primaryHover text-white rounded-lg text-xs font-semibold transition">Posting</button>
+              <button onclick="closeChatterInput()" class="px-3 py-1.5 text-xs text-nusara-muted hover:text-nusara-navy">Batal</button>
+              <button onclick="submitChatterEntry()" class="px-3.5 py-1.5 bg-nusara-primary hover:bg-nusara-primaryHover text-white rounded-lg text-xs font-semibold transition">Posting</button>
             </div>
           </div>
 
@@ -397,7 +397,7 @@
     let currentMode = 'transaction';
     let isTaxEnabled = true;
 
-    // DATA FOR TRANSACTION MODE (Kompak Sales Order)
+    // DATA FOR TRANSACTION MODE (Nusara Sales Order)
     const transactionData = {
     "code": "OPP-0010",
     "badge": "Opportunity",
@@ -464,7 +464,7 @@
     "activities": []
 };
 
-    // DATA FOR MASTER DATA MODE (Kompak Partner / Contact Master)
+    // DATA FOR MASTER DATA MODE (Nusara Partner / Contact Master)
     const masterData = {
       code: "PT SAMUDERA BAHARI SENTOSA",
       badge: "Master Kontak & Rekanan",
@@ -499,7 +499,7 @@
       terms: "Perjanjian Kerjasama: Fasilitas pembayaran tempo 14 hari kerja dengan diskon kontrak khusus 5%.",
       activities: [
         { user: "Ahmad Zaki", role: "Legal Specialist", time: "3 hari lalu", type: "stage_change", text: "Verifikasi legalitas dan NPWP disetujui. Status diperbarui ke <b>Mitra Aktif</b>." },
-        { user: "Kompak System", role: "Sistem Otomatis", time: "1 minggu lalu", type: "system", text: "Entitas rekanan berhasil didaftarkan ke basis data Kompak." }
+        { user: "Nusara System", role: "Sistem Otomatis", time: "1 minggu lalu", type: "system", text: "Entitas rekanan berhasil didaftarkan ke basis data Nusara." }
       ]
     };
 
@@ -519,13 +519,13 @@
       const btnMaster = document.getElementById('btnModeMaster');
 
       if (mode === 'transaction') {
-        btnTx.className = "px-3 py-1 rounded-md bg-white shadow-xs font-semibold text-kompak-primary flex items-center gap-1.5 transition";
-        btnMaster.className = "px-3 py-1 rounded-md text-kompak-muted hover:text-kompak-navy flex items-center gap-1.5 transition font-medium";
+        btnTx.className = "px-3 py-1 rounded-md bg-white shadow-xs font-semibold text-nusara-primary flex items-center gap-1.5 transition";
+        btnMaster.className = "px-3 py-1 rounded-md text-nusara-muted hover:text-nusara-navy flex items-center gap-1.5 transition font-medium";
         document.getElementById('taxToggleWrapper').classList.remove('hidden');
         document.getElementById('footerSummaryBox').classList.remove('hidden');
       } else {
-        btnMaster.className = "px-3 py-1 rounded-md bg-white shadow-xs font-semibold text-kompak-primary flex items-center gap-1.5 transition";
-        btnTx.className = "px-3 py-1 rounded-md text-kompak-muted hover:text-kompak-navy flex items-center gap-1.5 transition font-medium";
+        btnMaster.className = "px-3 py-1 rounded-md bg-white shadow-xs font-semibold text-nusara-primary flex items-center gap-1.5 transition";
+        btnTx.className = "px-3 py-1 rounded-md text-nusara-muted hover:text-nusara-navy flex items-center gap-1.5 transition font-medium";
         document.getElementById('taxToggleWrapper').classList.add('hidden');
         document.getElementById('footerSummaryBox').classList.add('hidden');
       }
@@ -551,12 +551,12 @@
         const stageBtn = document.createElement('button');
         stageBtn.type = "button";
         stageBtn.onclick = () => updateStage(index);
-        stageBtn.className = `kompak-stage ${
+        stageBtn.className = `nusara-stage ${
           isActive 
-            ? 'bg-kompak-primary text-white font-semibold shadow-xs z-10' 
+            ? 'bg-nusara-primary text-white font-semibold shadow-xs z-10' 
             : isPassed 
               ? 'bg-slate-200 text-slate-700 hover:bg-slate-300' 
-              : 'bg-white text-kompak-muted hover:bg-slate-100'
+              : 'bg-white text-nusara-muted hover:bg-slate-100'
         }`;
 
         stageBtn.innerHTML = `
@@ -610,14 +610,14 @@
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.onclick = () => showToast(`Membuka dokumen referensi: ${doc.label}`, 'info');
-        btn.className = `flex items-center gap-2.5 p-2.5 border border-kompak-border rounded-xl text-left transition ${doc.bg} bg-white group hover:border-blue-300`;
+        btn.className = `flex items-center gap-2.5 p-2.5 border border-nusara-border rounded-xl text-left transition ${doc.bg} bg-white group hover:border-blue-300`;
         btn.innerHTML = `
           <div class="w-8 h-8 rounded-lg flex items-center justify-center ${doc.badgeColor} font-bold text-xs">
             <i class="fa-solid ${doc.icon}"></i>
           </div>
           <div class="leading-tight">
-            <div class="font-extrabold text-xs text-kompak-navy group-hover:text-kompak-primary">${doc.count}</div>
-            <div class="text-3xs text-kompak-muted font-medium">${doc.subtext}</div>
+            <div class="font-extrabold text-xs text-nusara-navy group-hover:text-nusara-primary">${doc.count}</div>
+            <div class="text-3xs text-nusara-muted font-medium">${doc.subtext}</div>
           </div>
         `;
         container.appendChild(btn);
@@ -636,23 +636,23 @@
       // Left Column Group
       const leftCol = document.createElement('div');
       leftCol.className = "space-y-2.5";
-      data.headerLeft.forEach(f => leftCol.appendChild(createKompakFieldRow(f)));
+      data.headerLeft.forEach(f => leftCol.appendChild(createNusaraFieldRow(f)));
 
       // Right Column Group
       const rightCol = document.createElement('div');
       rightCol.className = "space-y-2.5";
-      data.headerRight.forEach(f => rightCol.appendChild(createKompakFieldRow(f)));
+      data.headerRight.forEach(f => rightCol.appendChild(createNusaraFieldRow(f)));
 
       container.appendChild(leftCol);
       container.appendChild(rightCol);
     }
 
-    function createKompakFieldRow(field) {
+    function createNusaraFieldRow(field) {
       const row = document.createElement('div');
       row.className = "flex flex-col sm:flex-row sm:items-center justify-between text-xs gap-1";
 
       const label = document.createElement('label');
-      label.className = "w-full sm:w-2/5 font-semibold text-kompak-navy";
+      label.className = "w-full sm:w-2/5 font-semibold text-nusara-navy";
       label.textContent = field.label;
 
       const inputContainer = document.createElement('div');
@@ -660,7 +660,7 @@
 
       if (field.type === 'select') {
         const sel = document.createElement('select');
-        sel.className = "w-full kompak-input";
+        sel.className = "w-full nusara-input";
         field.options.forEach(opt => {
           const optEl = document.createElement('option');
           optEl.value = opt;
@@ -673,7 +673,7 @@
         const inp = document.createElement('input');
         inp.type = field.type;
         inp.value = field.value;
-        inp.className = "w-full kompak-input";
+        inp.className = "w-full nusara-input";
         inputContainer.appendChild(inp);
       }
 
@@ -699,32 +699,32 @@
         untaxedTotal += lineSubtotal;
 
         const tr = document.createElement('tr');
-        tr.className = "hover:bg-slate-50 transition border-b border-kompak-borderLight";
+        tr.className = "hover:bg-slate-50 transition border-b border-nusara-borderLight";
 
         tr.innerHTML = `
-          <td class="p-2.5 text-center text-kompak-muted font-mono text-xs">${index + 1}</td>
+          <td class="p-2.5 text-center text-nusara-muted font-mono text-xs">${index + 1}</td>
           <td class="p-2.5">
-            <input type="text" value="${item.name}" onchange="updateLineField(${item.id}, 'name', this.value)" class="w-full bg-transparent hover:bg-white focus:bg-white kompak-input text-xs font-medium">
+            <input type="text" value="${item.name}" onchange="updateLineField(${item.id}, 'name', this.value)" class="w-full bg-transparent hover:bg-white focus:bg-white nusara-input text-xs font-medium">
           </td>
           <td class="p-2.5 text-center">
-            <input type="number" min="1" value="${item.qty}" onchange="updateLineField(${item.id}, 'qty', this.value)" class="w-16 text-center kompak-input text-xs font-mono">
+            <input type="number" min="1" value="${item.qty}" onchange="updateLineField(${item.id}, 'qty', this.value)" class="w-16 text-center nusara-input text-xs font-mono">
           </td>
           <td class="p-2.5 text-center">
-            <input type="text" value="${item.unit}" onchange="updateLineField(${item.id}, 'unit', this.value)" class="w-16 text-center kompak-input text-xs">
+            <input type="text" value="${item.unit}" onchange="updateLineField(${item.id}, 'unit', this.value)" class="w-16 text-center nusara-input text-xs">
           </td>
           <td class="p-2.5 text-right">
             ${currentMode === 'transaction' 
-              ? `<input type="number" value="${item.price}" onchange="updateLineField(${item.id}, 'price', this.value)" class="w-28 text-right kompak-input text-xs font-mono">`
-              : `<span class="text-xs text-kompak-muted">-</span>`
+              ? `<input type="number" value="${item.price}" onchange="updateLineField(${item.id}, 'price', this.value)" class="w-28 text-right nusara-input text-xs font-mono">`
+              : `<span class="text-xs text-nusara-muted">-</span>`
             }
           </td>
           <td class="p-2.5 text-right col-tax-cell ${isTaxEnabled ? '' : 'hidden'}">
-            ${currentMode === 'transaction' ? '<span class="text-2xs bg-blue-50 text-kompak-primary border border-blue-200 px-1.5 py-0.5 rounded font-mono font-semibold">11%</span>' : '-'}
+            ${currentMode === 'transaction' ? '<span class="text-2xs bg-blue-50 text-nusara-primary border border-blue-200 px-1.5 py-0.5 rounded font-mono font-semibold">11%</span>' : '-'}
           </td>
           <td class="p-2.5 text-right font-medium col-subtotal-cell ${isTaxEnabled ? '' : 'hidden'}">
             ${currentMode === 'transaction' 
-              ? `<span class="font-mono text-kompak-navy font-semibold">${formatIDR(lineSubtotal)}</span>` 
-              : `<span class="text-kompak-muted text-xs">${item.customSub || '-'}</span>`
+              ? `<span class="font-mono text-nusara-navy font-semibold">${formatIDR(lineSubtotal)}</span>` 
+              : `<span class="text-nusara-muted text-xs">${item.customSub || '-'}</span>`
             }
           </td>
           <td class="p-2.5 text-center">
@@ -820,7 +820,7 @@
         item.className = "flex gap-3 text-xs";
 
         let badgeIcon = 'fa-comment';
-        let badgeStyle = 'bg-blue-100 text-kompak-primary';
+        let badgeStyle = 'bg-blue-100 text-nusara-primary';
 
         if (act.type === 'stage_change') {
           badgeIcon = 'fa-arrow-right-arrow-left';
@@ -834,13 +834,13 @@
           <div class="flex-shrink-0 w-8 h-8 rounded-full ${badgeStyle} flex items-center justify-center font-bold text-xs shadow-2xs">
             <i class="fa-solid ${badgeIcon}"></i>
           </div>
-          <div class="flex-1 bg-white p-3 rounded-xl border border-kompak-border shadow-2xs">
+          <div class="flex-1 bg-white p-3 rounded-xl border border-nusara-border shadow-2xs">
             <div class="flex items-center justify-between mb-1">
               <div class="flex items-center gap-2">
-                <span class="font-bold text-kompak-navy">${act.user}</span>
-                <span class="text-3xs bg-slate-100 text-kompak-muted px-2 py-0.5 rounded-full font-medium">${act.role}</span>
+                <span class="font-bold text-nusara-navy">${act.user}</span>
+                <span class="text-3xs bg-slate-100 text-nusara-muted px-2 py-0.5 rounded-full font-medium">${act.role}</span>
               </div>
-              <span class="text-3xs text-kompak-muted">${act.time}</span>
+              <span class="text-3xs text-nusara-muted">${act.time}</span>
             </div>
             <p class="text-slate-700 text-xs leading-relaxed">${act.text}</p>
           </div>
@@ -909,7 +909,7 @@
 
     function showToast(message, type = 'info') {
       const toast = document.getElementById('toast');
-      let colors = 'bg-kompak-navy text-white border-slate-700';
+      let colors = 'bg-nusara-navy text-white border-slate-700';
       let icon = '<i class="fa-solid fa-circle-info text-sky-400"></i>';
 
       if (type === 'success') {

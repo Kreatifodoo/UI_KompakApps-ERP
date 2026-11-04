@@ -4,7 +4,7 @@ import { call, esc, searchRead } from "./common.js";
 export const fmtQty = (n) => new Intl.NumberFormat("id-ID", { maximumFractionDigits: 3 }).format(n ?? 0);
 
 /** Kunci parameter sistem: bila "1", formulir menolak jumlah yang melebihi stok tersedia (Inventory Setting, D70). Bawaan: hanya memberi peringatan merah. */
-export const BLOCK_OVER_STOCK = "kompakapps.block_over_stock";
+export const BLOCK_OVER_STOCK = "nusara.block_over_stock";
 let blockCache = null; // { value, at }; disimpan 30 detik supaya perubahan dari pengguna lain cepat terlihat
 export async function blockOverStock() {
   if (!blockCache || Date.now() - blockCache.at > 30_000) {

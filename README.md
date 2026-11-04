@@ -1,4 +1,4 @@
-<p><img src="ui/live/brand/kompakapps-logo.png" alt="KompakApps" width="280"></p>
+<p><img src="docs/brand/kompakapps-logo.png" alt="KompakApps" width="280"></p>
 
 # KompakApps
 
@@ -36,7 +36,7 @@ Business_Form_Template.html   # template tunggal untuk semua form
 generate_forms.py             # membuat 23 form di forms/ dari template + data
 forms/master/                 # 13 form master data
 forms/transaction/            # 10 form transaksi
-kompakapps_system.html        # versi lama index.html (duplikat, akan dihapus)
+nusara_erp_system.html         # versi lama index.html (duplikat, akan dihapus)
 addons/kompakapps_base/           # modul Odoo pertama (fondasi + test)
 oca.lock                      # repo OCA 19.0 yang dipakai, dikunci ke commit
 docker/, docker-compose.yml   # image Odoo 19 + OCA dan lingkungan lokal
