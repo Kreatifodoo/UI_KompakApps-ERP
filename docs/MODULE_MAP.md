@@ -49,7 +49,7 @@ Odoo inti tidak punya Purchase Request. Pakai OCA `purchase_request`.
 | Operation > Inventory Loss | `stock.move` ke lokasi Inventory Loss | C | Form (adjustment) |
 | Report > Stock, Location, Move History, Move Analisis | `stock.quant`, `stock.move.line`, `stock.report` | C | Tabel palsu |
 
-## 4. Manufacture (7 menu)
+## 4. Manufacture (9 menu)
 
 | Menu | Odoo | Edisi | Prototipe |
 |---|---|---|---|
@@ -57,6 +57,7 @@ Odoo inti tidak punya Purchase Request. Pakai OCA `purchase_request`.
 | Master > WorkCenter | `mrp.workcenter` | C | Form |
 | Schedule Production | Planning produksi / Gantt | E? | Tabel palsu |
 | Manufacturing Order | `mrp.production` | C | Form |
+| COGM Periodik > Kertas Kerja COGM, Pengaturan COGM | `kompakapps.cogm.worksheet`, `kompakapps.cogm.config` (modul `kompakapps_base`, D92) | Custom | Form |
 | Reporting > Production Analisis | `mrp.production` (pivot) | C | Tabel palsu |
 
 Subcontracting (`mrp_subcontracting`) belum ada di menu KompakApps tetapi sudah ada di Kompak; pertimbangkan menambahkannya.

@@ -5,3 +5,23 @@ access_kompakapps_payroll_bracket_user,kompakapps.payroll.bracket user,model_kom
 access_kompakapps_payroll_bracket_manager,kompakapps.payroll.bracket manager,model_kompakapps_payroll_bracket,payroll.group_payroll_manager,1,1,1,1
 access_kompakapps_payslip_self,hr.payslip karyawan (baca slip sendiri),payroll.model_hr_payslip,base.group_user,1,0,0,0
 access_kompakapps_payslip_line_self,hr.payslip.line karyawan (baca baris slip sendiri),payroll.model_hr_payslip_line,base.group_user,1,0,0,0
+access_kompakapps_cogm_config_stock,kompakapps.cogm.config stock,model_kompakapps_cogm_config,stock.group_stock_user,1,0,0,0
+access_kompakapps_cogm_config_mrp,kompakapps.cogm.config mrp,model_kompakapps_cogm_config,mrp.group_mrp_user,1,0,0,0
+access_kompakapps_cogm_config_account,kompakapps.cogm.config akuntan,model_kompakapps_cogm_config,account.group_account_user,1,0,0,0
+access_kompakapps_cogm_config_manager,kompakapps.cogm.config advisor,model_kompakapps_cogm_config,account.group_account_manager,1,1,1,1
+access_kompakapps_cogm_account_stock,kompakapps.cogm.account stock,model_kompakapps_cogm_account,stock.group_stock_user,1,0,0,0
+access_kompakapps_cogm_account_mrp,kompakapps.cogm.account mrp,model_kompakapps_cogm_account,mrp.group_mrp_user,1,0,0,0
+access_kompakapps_cogm_account_account,kompakapps.cogm.account akuntan,model_kompakapps_cogm_account,account.group_account_user,1,0,0,0
+access_kompakapps_cogm_account_manager,kompakapps.cogm.account advisor,model_kompakapps_cogm_account,account.group_account_manager,1,1,1,1
+access_kompakapps_cogm_worksheet_stock,kompakapps.cogm.worksheet stock,model_kompakapps_cogm_worksheet,stock.group_stock_user,1,1,1,0
+access_kompakapps_cogm_worksheet_mrp,kompakapps.cogm.worksheet mrp,model_kompakapps_cogm_worksheet,mrp.group_mrp_user,1,1,1,0
+access_kompakapps_cogm_worksheet_account,kompakapps.cogm.worksheet akuntan,model_kompakapps_cogm_worksheet,account.group_account_user,1,1,1,1
+access_kompakapps_cogm_opname_stock,kompakapps.cogm.opname stock,model_kompakapps_cogm_opname,stock.group_stock_user,1,1,1,1
+access_kompakapps_cogm_opname_mrp,kompakapps.cogm.opname mrp,model_kompakapps_cogm_opname,mrp.group_mrp_user,1,1,1,1
+access_kompakapps_cogm_opname_account,kompakapps.cogm.opname akuntan,model_kompakapps_cogm_opname,account.group_account_user,1,1,1,1
+access_kompakapps_cogm_wip_stock,kompakapps.cogm.wip stock,model_kompakapps_cogm_wip,stock.group_stock_user,1,1,1,1
+access_kompakapps_cogm_wip_mrp,kompakapps.cogm.wip mrp,model_kompakapps_cogm_wip,mrp.group_mrp_user,1,1,1,1
+access_kompakapps_cogm_wip_account,kompakapps.cogm.wip akuntan,model_kompakapps_cogm_wip,account.group_account_user,1,1,1,1
+access_kompakapps_cogm_line_stock,kompakapps.cogm.line stock,model_kompakapps_cogm_line,stock.group_stock_user,1,0,0,0
+access_kompakapps_cogm_line_mrp,kompakapps.cogm.line mrp,model_kompakapps_cogm_line,mrp.group_mrp_user,1,0,0,0
+access_kompakapps_cogm_line_account,kompakapps.cogm.line akuntan,model_kompakapps_cogm_line,account.group_account_user,1,1,1,1

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <!-- COGM periodik (Q64, D92): semua tabelnya milik satu perusahaan, jadi hanya perusahaan yang diizinkan (dan aktif) yang terlihat. Aturan global tanpa grup. -->
+    <record id="cogm_config_company_rule" model="ir.rule">
+        <field name="name">COGM Pengaturan: perusahaan</field>
+        <field name="model_id" ref="model_kompakapps_cogm_config" />
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
+    <record id="cogm_account_company_rule" model="ir.rule">
+        <field name="name">COGM Pemetaan Akun: perusahaan</field>
+        <field name="model_id" ref="model_kompakapps_cogm_account" />
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
+    <record id="cogm_worksheet_company_rule" model="ir.rule">
+        <field name="name">Kertas Kerja COGM: perusahaan</field>
+        <field name="model_id" ref="model_kompakapps_cogm_worksheet" />
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
+    <record id="cogm_line_company_rule" model="ir.rule">
+        <field name="name">Data Buku Besar COGM: perusahaan</field>
+        <field name="model_id" ref="model_kompakapps_cogm_line" />
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
+    <record id="cogm_opname_company_rule" model="ir.rule">
+        <field name="name">Opname Bahan Baku COGM: perusahaan</field>
+        <field name="model_id" ref="model_kompakapps_cogm_opname" />
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
+    <record id="cogm_wip_company_rule" model="ir.rule">
+        <field name="name">Opname WIP COGM: perusahaan</field>
+        <field name="model_id" ref="model_kompakapps_cogm_wip" />
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
+</odoo>

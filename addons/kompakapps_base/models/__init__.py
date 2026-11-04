@@ -2,6 +2,7 @@ from . import access_scope
 from . import account_report_group
 from . import activity_mixin
 from . import base_import
+from . import cogm
 from . import mis_loader
 from . import payroll
 from . import payroll_id

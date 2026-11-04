@@ -61,6 +61,7 @@ export const MENU = [
       { title: "Master", items: [{ title: "Bill of Material", route: "bom" }, { title: "WorkCenter/workStation", route: "workcenter" }] },
       { title: "Schedule Production", route: "schedule" },
       { title: "Manufacturing Order", route: "mo" },
+      { title: "COGM Periodik", items: [{ title: "Kertas Kerja COGM", route: "cogm" }, { title: "Pengaturan COGM", route: "cogm/setting" }] },
       { title: "Reporting", items: [{ title: "Production Analisis", route: "production" }] },
       { title: "Setting", route: "modsetting/manufacture" },
     ],
