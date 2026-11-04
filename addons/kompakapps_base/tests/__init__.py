@@ -23,3 +23,4 @@ from . import test_payroll
 from . import test_payroll_id
 from . import test_payroll_access
 from . import test_access_scope
+from . import test_inventory_split
