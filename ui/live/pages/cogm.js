@@ -510,7 +510,12 @@ function fgView(r, values) {
   const availableValue = openingValue + producedValue;
   const unit = availableQty > 0 && availableValue > 0 ? cents(availableValue / availableQty) : r.openingCost;
   const ending = cents(num(r.qty) * unit);
-  return { openingValue, producedQty, producedValue, availableQty, availableValue, unit, sold: availableQty - num(r.qty), ending, cogs: availableValue - ending, adjustment: availableValue - ending - r.provisional };
+  const before = r.deliveredQty > 0 && r.provisional ? cents(r.provisional / r.deliveredQty) : r.openingCost;
+  const stockBefore = cents(num(r.qty) * before);
+  return {
+    openingValue, producedQty, producedValue, availableQty, availableValue, unit, sold: availableQty - num(r.qty), ending, cogs: availableValue - ending, adjustment: availableValue - ending - r.provisional,
+    before, stockBefore, stockAdjustment: ending - stockBefore,
+  };
 }
 
 const signedCell = (n) => `<span class="${n < 0 ? "text-rose-700" : n > 0 ? "text-emerald-700" : "text-gray-600"}">${esc(n === 0 ? rupiah(0) : signed(n))}</span>`;
@@ -523,45 +528,48 @@ function fgsHtml() {
   const rows = form.fgs
     .map((r, i) => {
       const v = views[i];
-      const qtyCell = draft ? numInput(`data-fg="${i}" data-field="qty" aria-label="Stok akhir fisik"`, r.qty) : nf.format(num(r.qty));
+      const qtyCell = draft ? numInput(`data-fg="${i}" data-field="qty" aria-label="Qty on hand fisik"`, r.qty) : nf.format(num(r.qty));
       const note = draft ? `<input data-fg="${i}" data-field="explanation" value="${esc(r.explanation)}" placeholder="Wajib bila selisih besar" class="${INPUT}">` : esc(r.explanation);
       return `<tr class="text-sm align-top"><td class="py-2 px-3 min-w-56">${esc(r.product?.display_name)}</td>
-        <td class="py-2 px-3 text-right tabular-nums text-gray-600" title="Pengiriman ke pelanggan menurut pergerakan stok">${nf.format(r.deliveredQty)}</td>
         <td class="py-2 px-3 text-right tabular-nums text-gray-600">${nf.format(r.bookQty)}</td>
         <td class="py-2 px-3 ${draft ? "w-36" : "text-right tabular-nums"}">${qtyCell}</td>
-        <td class="py-2 px-3 text-right tabular-nums" id="fg-sold-${i}">${nf.format(v.sold)}</td>
-        <td class="py-2 px-3 text-right tabular-nums" id="fg-unit-${i}">${esc(rupiah(v.unit))}</td>
-        <td class="py-2 px-3 text-right tabular-nums font-medium" id="fg-cogs-${i}">${esc(rupiah(v.cogs))}</td>
-        <td class="py-2 px-3 text-right tabular-nums text-gray-600">${esc(rupiah(r.provisional))}</td>
-        <td class="py-2 px-3 text-right tabular-nums" id="fg-adj-${i}">${signedCell(v.cogs - r.provisional)}</td>
-        <td class="py-2 px-3 text-right tabular-nums" id="fg-end-${i}">${esc(rupiah(v.ending))}</td>
+        <td class="py-2 px-3 text-right tabular-nums">${nf.format(v.producedQty)}</td>
+        <td class="py-2 px-3 text-right tabular-nums" id="fg-sold-${i}" title="Stok awal + produksi - stok akhir; pengiriman menurut sistem: ${esc(nf.format(r.deliveredQty))}">${nf.format(v.sold)}</td>
+        <td class="py-2 px-3 text-right tabular-nums text-gray-600" id="fg-before-${i}" title="Biaya yang dipakai saat penjualan (HPP sementara / qty terkirim) atau biaya produk">${esc(rupiah(v.before))}</td>
+        <td class="py-2 px-3 text-right tabular-nums font-medium" id="fg-unit-${i}" title="Rata-rata tertimbang: (nilai awal + COGM produksi) / (stok awal + produksi)">${esc(rupiah(v.unit))}</td>
+        <td class="py-2 px-3 text-right tabular-nums" id="fg-stockadj-${i}" title="Nilai stok akhir sesudah dikurangi nilai stok akhir sebelum adjustment">${signedCell(v.stockAdjustment)}</td>
+        <td class="py-2 px-3 text-right tabular-nums" id="fg-adj-${i}" title="HPP aktual dikurangi HPP sementara">${signedCell(v.adjustment)}</td>
         <td class="py-2 px-3 min-w-44">${note}</td>${draft ? `<td class="py-2 px-3"><button data-action="cogm-rm-fg" data-i="${i}" class="text-rose-600 hover:text-rose-800" aria-label="Hapus baris"><i class="fas fa-trash"></i></button></td>` : ""}</tr>`;
     })
     .join("");
-  const totals = form.fgs.reduce((t, r, i) => ({ cogs: t.cogs + views[i].cogs, provisional: t.provisional + r.provisional, ending: t.ending + views[i].ending }), { cogs: 0, provisional: 0, ending: 0 });
+  const total = form.fgs.reduce(
+    (t, r, i) => ({ cogs: t.cogs + views[i].cogs, provisional: t.provisional + r.provisional, ending: t.ending + views[i].ending, stockAdjustment: t.stockAdjustment + views[i].stockAdjustment }),
+    { cogs: 0, provisional: 0, ending: 0, stockAdjustment: 0 },
+  );
   const detail = form.fgs.length
-    ? `<details class="border-t border-gray-100" ${posted ? "open" : ""}><summary class="px-5 py-2 text-sm font-medium text-indigo-700 cursor-pointer">Rincian biaya rata-rata barang jadi${posted ? ", penyesuaian stok, dan biaya produk" : ""}</summary>
-      <div class="overflow-x-auto"><table class="w-full text-left" data-list="on"><thead class="border-b border-gray-200"><tr>${["Barang Jadi", "Stok Awal", "Biaya Awal", "Nilai Awal", "Diproduksi", "Nilai Produksi (COGM)", "Tersedia", "Nilai Tersedia", "Biaya Rata-rata", ...(posted ? ["Penyesuaian Stok", "Biaya Produk Lama → Baru"] : [])].map((label, i) => th(label, i > 0)).join("")}</tr></thead>
+    ? `<details class="border-t border-gray-100" ${posted ? "open" : ""}><summary class="px-5 py-2 text-sm font-medium text-indigo-700 cursor-pointer">Rincian perhitungan${posted ? ", penyesuaian stok, dan biaya produk" : ""}</summary>
+      <div class="overflow-x-auto"><table class="w-full text-left" data-list="on"><thead class="border-b border-gray-200"><tr>${["Barang Jadi", "Stok Awal", "Biaya Awal", "Nilai Awal", "Diproduksi", "Nilai Produksi (COGM)", "Tersedia", "Nilai Tersedia", "Terkirim (Sistem)", "HPP Aktual", "HPP Sementara", "Nilai Stok Sebelum", "Nilai Stok Sesudah", ...(posted ? ["Penyesuaian Stok", "Biaya Produk Lama → Baru"] : [])].map((label, i) => th(label, i > 0)).join("")}</tr></thead>
       <tbody class="divide-y divide-gray-100">${form.fgs
         .map((r, i) => {
           const v = views[i];
           const adjust = r.adjustQty ? `${r.adjustQty > 0 ? "+" : ""}${nf.format(r.adjustQty)}` : "-";
           return `<tr class="text-sm"><td class="py-1.5 px-3">${esc(r.product?.display_name)}</td><td class="py-1.5 px-3 text-right tabular-nums">${nf.format(r.openingQty)}</td><td class="py-1.5 px-3 text-right tabular-nums">${esc(rupiah(r.openingCost))}</td>
             <td class="py-1.5 px-3 text-right tabular-nums">${esc(rupiah(v.openingValue))}</td><td class="py-1.5 px-3 text-right tabular-nums">${nf.format(v.producedQty)}</td><td class="py-1.5 px-3 text-right tabular-nums">${esc(rupiah(v.producedValue))}</td>
-            <td class="py-1.5 px-3 text-right tabular-nums">${nf.format(v.availableQty)}</td><td class="py-1.5 px-3 text-right tabular-nums">${esc(rupiah(v.availableValue))}</td><td class="py-1.5 px-3 text-right tabular-nums font-medium">${esc(rupiah(v.unit))}</td>
+            <td class="py-1.5 px-3 text-right tabular-nums">${nf.format(v.availableQty)}</td><td class="py-1.5 px-3 text-right tabular-nums">${esc(rupiah(v.availableValue))}</td><td class="py-1.5 px-3 text-right tabular-nums">${nf.format(r.deliveredQty)}</td>
+            <td class="py-1.5 px-3 text-right tabular-nums font-medium">${esc(rupiah(v.cogs))}</td><td class="py-1.5 px-3 text-right tabular-nums">${esc(rupiah(r.provisional))}</td><td class="py-1.5 px-3 text-right tabular-nums">${esc(rupiah(v.stockBefore))}</td><td class="py-1.5 px-3 text-right tabular-nums">${esc(rupiah(v.ending))}</td>
             ${posted ? `<td class="py-1.5 px-3 text-right tabular-nums">${esc(adjust)}</td><td class="py-1.5 px-3 text-right tabular-nums whitespace-nowrap">${esc(r.costUpdated ? `${rupiah(r.oldCost)} → ${rupiah(r.unitCost)}` : "-")}</td>` : ""}</tr>`;
         })
         .join("")}</tbody></table></div></details>`
     : "";
-  const head = ["Barang Jadi", "Terkirim (Sistem)", "Stok Sistem", "Stok Akhir (Fisik)", "Qty Terjual", "Biaya Rata-rata", "HPP Aktual", "HPP Sementara", "Penyesuaian HPP", "Nilai Stok Akhir", "Alasan Selisih"]
-    .map((label, i) => th(label, i > 0 && i < 10))
+  const head = ["Nama Produk", "Qty On Hand (Sistem)", "Qty On Hand (Fisik)", "Qty Produksi", "Qty Jual", "Biaya Sebelum Adjustment", "Biaya Sesudah Adjustment", "Penyesuaian Inventory COGM (Belum Terjual)", "Penyesuaian HPP (Terjual)", "Alasan Selisih"]
+    .map((label, i) => th(label, i > 0 && i < 9))
     .join("");
   return `<div class="overflow-x-auto"><table class="w-full text-left" data-list="on"><thead class="border-b border-gray-200"><tr>${head}${draft ? th("") : ""}</tr></thead>
-    <tbody class="divide-y divide-gray-100">${rows || `<tr><td colspan="12" class="py-6 text-center text-sm text-gray-500">Belum ada barang jadi berstok dilacak. Barang pada Hasil Produksi dan barang buatan yang punya stok awal muncul setelah Tarik dari Buku Besar.</td></tr>`}</tbody>
-    <tfoot><tr class="border-t border-gray-200 text-sm font-semibold"><td class="py-2 px-3" colspan="6">Total HPP penjualan</td><td class="py-2 px-3 text-right tabular-nums" id="fg-cogs-total">${esc(rupiah(totals.cogs))}</td>
-      <td class="py-2 px-3 text-right tabular-nums text-gray-600" id="fg-prov-total">${esc(rupiah(totals.provisional))}</td><td class="py-2 px-3 text-right tabular-nums" id="fg-adj-total">${signedCell(totals.cogs - totals.provisional)}</td>
-      <td class="py-2 px-3 text-right tabular-nums" id="fg-end-total">${esc(rupiah(totals.ending))}</td><td colspan="${draft ? 2 : 1}"></td></tr></tfoot></table></div>
-    <p class="px-5 py-2 text-xs text-gray-500 border-t border-gray-100"><b>HPP aktual</b> = (stok awal x biaya awal + COGM barang yang diproduksi) dikurangi nilai stok akhir (hitung fisik x biaya rata-rata tertimbang). <b>HPP sementara</b> = HPP yang sudah dibukukan saat penjualan pada akun HPP (diambil dari buku besar). <b>Penyesuaian HPP</b> = aktual dikurangi sementara; inilah yang dijurnal saat Execute (Dr HPP, Cr Inventory COGM). Barang yang diproduksi dan terjual pada bulan yang sama ikut dihitung karena HPP baru diketahui setelah COGM bulan itu selesai. Penjualan sesudah Execute memakai biaya rata-rata yang tersimpan sebagai biaya produk dan masuk penyesuaian bulan berikutnya.</p>
+    <tbody class="divide-y divide-gray-100">${rows || `<tr><td colspan="11" class="py-6 text-center text-sm text-gray-500">Belum ada barang jadi berstok dilacak. Barang pada Hasil Produksi dan barang buatan yang punya stok awal muncul setelah Tarik dari Buku Besar.</td></tr>`}</tbody>
+    <tfoot><tr class="border-t border-gray-200 text-sm font-semibold"><td class="py-2 px-3" colspan="7">Total penyesuaian</td>
+      <td class="py-2 px-3 text-right tabular-nums" id="fg-stockadj-total">${signedCell(total.stockAdjustment)}</td><td class="py-2 px-3 text-right tabular-nums" id="fg-adj-total">${signedCell(total.cogs - total.provisional)}</td><td colspan="${draft ? 2 : 1}"></td></tr></tfoot></table></div>
+    <div class="px-5 py-3 border-t border-gray-100 flex flex-wrap gap-x-8 gap-y-1 text-sm"><span>HPP aktual <b id="fg-cogs-total" class="tabular-nums">${esc(rupiah(total.cogs))}</b></span><span>HPP sementara dibukukan <b id="fg-prov-total" class="tabular-nums">${esc(rupiah(total.provisional))}</b></span><span>Nilai stok akhir (Inventory COGM) <b id="fg-end-total" class="tabular-nums">${esc(rupiah(total.ending))}</b></span></div>
+    <p class="px-5 py-2 text-xs text-gray-500 border-t border-gray-100"><b>Qty Jual</b> = stok awal + produksi - stok akhir fisik (pengiriman menurut sistem tampil saat kursor di angkanya). <b>Biaya Sebelum</b> = biaya yang dipakai saat penjualan (HPP sementara dibagi qty terkirim), atau biaya produk bila belum ada penjualan yang dibukukan. <b>Biaya Sesudah</b> = rata-rata tertimbang (nilai stok awal + COGM yang diproduksi) dibagi (stok awal + produksi). <b>Penyesuaian HPP (terjual)</b> = HPP aktual dikurangi HPP sementara, dijurnal Dr HPP, Cr Inventory COGM. <b>Penyesuaian Inventory COGM (belum terjual)</b> = dampak biaya baru pada stok akhir; nilainya sudah ikut dalam jurnal COGM yang mendebit Inventory COGM, jadi saldo akunnya sama dengan nilai stok akhir. Barang yang diproduksi dan terjual pada bulan yang sama ikut dihitung karena HPP baru pasti setelah COGM bulan itu selesai.</p>
     ${detail}
     ${draft ? `<div class="px-5 py-3 flex flex-wrap items-center gap-2"><input data-lookup="cogm-fg-product" autocomplete="off" role="combobox" aria-autocomplete="list" placeholder="Tambah barang jadi berstok (mis. stok awal tanpa produksi)..." class="${INPUT} max-w-sm"></div>` : ""}`;
 }

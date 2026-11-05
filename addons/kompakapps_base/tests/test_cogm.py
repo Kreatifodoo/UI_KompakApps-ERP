@@ -630,6 +630,9 @@ class TestCogmWorksheet(AccountTestInvoicingCommon):
         self.assertEqual((line.sold_qty, line.ending_value, line.cogs), (405.0, 37_018_812.6, 24_781_187.4))
         self.assertEqual(line.cogs_adjustment, 781_187.4, "HPP aktual 24.781.187,40 dikurangi HPP sementara 24.000.000")
         self.assertEqual((worksheet.fg_cogs, worksheet.fg_provisional, worksheet.fg_adjustment), (24_781_187.4, 24_000_000.0, 781_187.4))
+        self.assertEqual(line.cost_before, 60000.0, "HPP sementara 24.000.000 / 400 unit terkirim")
+        self.assertEqual((line.stock_value_before, line.stock_adjustment), (36_300_000.0, 718_812.6), "605 x 60.000 sebelum; 37.018.812,60 sesudah")
+        self.assertEqual(worksheet.fg_stock_adjustment, 718_812.6)
         result = worksheet.action_check()
         self.assertEqual(result["state"], "green", [c for c in result["checks"] if c["status"] == "error"])
         self.assertEqual(next(c for c in result["checks"] if c["key"] == "cogs")["status"], "ok")
@@ -694,3 +697,15 @@ class TestCogmWorksheet(AccountTestInvoicingCommon):
         check = next(c for c in worksheet.action_check()["checks"] if c["key"] == "fg_gl")
         self.assertEqual(check["status"], "warn")
         self.assertIn("5.000.000", check["message"])
+
+
+    def test_sold_quantity_that_differs_from_the_deliveries_is_a_warning(self):
+        self._book_period()
+        kit = self._sold_kit()
+        worksheet = self._fg_worksheet(kit)
+        worksheet.fg_ids.qty = 610.0  # terjual 400 sama dengan pengiriman
+        self.assertNotIn("fg_sold", {c["key"] for c in worksheet.action_check()["checks"]})
+        worksheet.output_ids.qty = 950.0  # qty diproduksi lebih kecil dari yang diterima gudang: terjual hasil hitungan 350 vs terkirim 400
+        check = next(c for c in worksheet.action_check()["checks"] if c["key"] == "fg_sold")
+        self.assertEqual(check["status"], "warn")
+        self.assertIn("350", check["message"])
