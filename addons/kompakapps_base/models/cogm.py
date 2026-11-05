@@ -367,6 +367,12 @@ class KompakappsCogmFg(models.Model):
     cogs = fields.Monetary(string="HPP Aktual", compute="_compute_values", store=True, help="Nilai tersedia dikurangi nilai stok akhir.")
     provisional_cogs = fields.Monetary(string="HPP Sementara", copy=False, help="HPP yang sudah dibukukan saat penjualan pada akun HPP untuk barang ini dalam periode (diambil dari buku besar).")
     cogs_adjustment = fields.Monetary(string="Penyesuaian HPP", compute="_compute_values", store=True, help="HPP aktual dikurangi HPP sementara.")
+    cost_before = fields.Float(
+        string="Biaya Sebelum Adjustment", digits="Product Price", compute="_compute_values", store=True,
+        help="Biaya per unit yang dipakai saat penjualan: HPP sementara dibagi qty terkirim; bila belum ada HPP sementara, biaya akhir periode sebelumnya atau biaya produk.",
+    )
+    stock_value_before = fields.Monetary(string="Nilai Stok Sebelum Adjustment", compute="_compute_values", store=True, help="Stok akhir (hitung fisik) x biaya sebelum adjustment.")
+    stock_adjustment = fields.Monetary(string="Penyesuaian Nilai Stok (Belum Terjual)", compute="_compute_values", store=True, help="Nilai stok akhir sesudah adjustment dikurangi nilai sebelum adjustment: dampak biaya baru pada barang yang belum terjual.")
     old_cost = fields.Float(string="Biaya Produk Sebelum Execute", digits="Product Price", copy=False)
     cost_updated = fields.Boolean(string="Biaya Produk Diperbarui", copy=False)
     adjust_qty = fields.Float(string="Penyesuaian Stok", digits="Product Unit", copy=False)
@@ -381,7 +387,7 @@ class KompakappsCogmFg(models.Model):
                 raise ValidationError(_("Stok akhir tidak boleh negatif (%s).", line.product_id.display_name))
 
     @api.depends(
-        "product_id", "worksheet_id.output_ids.qty", "worksheet_id.output_ids.cogm_value", "opening_qty", "opening_cost", "qty", "book_qty", "provisional_cogs", "currency_id"
+        "product_id", "worksheet_id.output_ids.qty", "worksheet_id.output_ids.cogm_value", "opening_qty", "opening_cost", "qty", "book_qty", "provisional_cogs", "delivered_qty", "currency_id"
     )
     def _compute_values(self):
         for line in self:
@@ -401,6 +407,10 @@ class KompakappsCogmFg(models.Model):
             line.cogs = line.available_value - line.ending_value
             line.cogs_adjustment = line.cogs - line.provisional_cogs
             line.variance_qty = line.qty - line.book_qty
+            price = self.env["decimal.precision"].precision_get("Product Price")
+            line.cost_before = float_round(line.provisional_cogs / line.delivered_qty, precision_digits=price) if line.delivered_qty > 0 and line.provisional_cogs else line.opening_cost
+            line.stock_value_before = round_(line.qty * line.cost_before)
+            line.stock_adjustment = line.ending_value - line.stock_value_before
 
     @api.depends("product_id", "worksheet_id.date_to", "worksheet_id.company_id")
     def _compute_book_qty(self):
@@ -514,6 +524,7 @@ class KompakappsCogmWorksheet(models.Model):
     fg_cogs = fields.Monetary(string="HPP Penjualan Aktual", compute="_compute_fg_totals")
     fg_provisional = fields.Monetary(string="HPP Sementara Dibukukan", compute="_compute_fg_totals")
     fg_adjustment = fields.Monetary(string="Penyesuaian HPP", compute="_compute_fg_totals")
+    fg_stock_adjustment = fields.Monetary(string="Penyesuaian Nilai Stok Belum Terjual", compute="_compute_fg_totals")
 
     control_state = fields.Selection(CONTROL, string="Control Balance", default="unchecked", copy=False)
     control_checked_at = fields.Datetime(string="Diperiksa Pada", readonly=True, copy=False)
@@ -556,7 +567,7 @@ class KompakappsCogmWorksheet(models.Model):
             worksheet.unit_overhead = round_(worksheet.overhead / divisor) if divisor else 0.0
             worksheet.unit_wip = round_((worksheet.wip_opening - worksheet.wip_ending) / divisor) if divisor else 0.0
 
-    @api.depends("fg_ids.ending_value", "fg_ids.cogs", "fg_ids.provisional_cogs", "fg_ids.cogs_adjustment", "currency_id")
+    @api.depends("fg_ids.ending_value", "fg_ids.cogs", "fg_ids.provisional_cogs", "fg_ids.cogs_adjustment", "fg_ids.stock_adjustment", "currency_id")
     def _compute_fg_totals(self):
         """Jumlah HPP penjualan barang jadi; tidak disimpan supaya selalu dihitung dari baris terbaru."""
         for worksheet in self:
@@ -565,6 +576,7 @@ class KompakappsCogmWorksheet(models.Model):
             worksheet.fg_cogs = round_(sum(worksheet.fg_ids.mapped("cogs")))
             worksheet.fg_provisional = round_(sum(worksheet.fg_ids.mapped("provisional_cogs")))
             worksheet.fg_adjustment = round_(sum(worksheet.fg_ids.mapped("cogs_adjustment")))
+            worksheet.fg_stock_adjustment = round_(sum(worksheet.fg_ids.mapped("stock_adjustment")))
 
     # ------------------------------------------------------------------ dasar
 
@@ -1018,6 +1030,13 @@ class KompakappsCogmWorksheet(models.Model):
                     _("Saldo awal %(account)s di buku besar %(gl)s berbeda dari nilai barang jadi awal %(fg)s (selisih %(diff)s), mis. COGM bulan sebelumnya yang barang jadinya belum dilacak. Selisih ini tidak ikut dihitung sebagai HPP.", account=config.fg_account_id.display_name, gl=self._fmt(opening_gl), fg=self._fmt(opening_fg), diff=self._fmt(opening_gl - opening_fg)),
                 )
             tolerance = config.tolerance_pct
+            apart = fg.filtered(lambda line: abs(line.sold_qty - line.delivered_qty) > abs(line.delivered_qty) * tolerance / 100.0 + 1e-9)
+            if apart:
+                detail = "; ".join(f"{line.product_id.display_name}: terjual {line.sold_qty:g}, terkirim {line.delivered_qty:g}" for line in apart[:3])
+                add(
+                    "fg_sold", _("Qty terjual sesuai pengiriman"), "warn",
+                    _("Qty terjual hasil hitungan (stok awal + produksi - stok akhir) berbeda dari pengiriman menurut sistem pada %(n)d barang: %(detail)s. Periksa qty diproduksi terhadap penerimaan barang jadi, atau hitung fisik.", n=len(apart), detail=detail),
+                )
             off = fg.filtered(lambda line: abs(line.variance_qty) > abs(line.book_qty) * tolerance / 100.0 + 1e-9)
             unexplained = off.filtered(lambda line: not (line.explanation or "").strip())
             if unexplained:
