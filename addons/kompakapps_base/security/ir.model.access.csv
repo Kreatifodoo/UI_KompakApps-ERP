@@ -28,3 +28,6 @@ access_kompakapps_cogm_line_account,kompakapps.cogm.line akuntan,model_kompakapp
 access_kompakapps_cogm_output_stock,kompakapps.cogm.output stock,model_kompakapps_cogm_output,stock.group_stock_user,1,1,1,1
 access_kompakapps_cogm_output_mrp,kompakapps.cogm.output mrp,model_kompakapps_cogm_output,mrp.group_mrp_user,1,1,1,1
 access_kompakapps_cogm_output_account,kompakapps.cogm.output akuntan,model_kompakapps_cogm_output,account.group_account_user,1,1,1,1
+access_kompakapps_cogm_fg_stock,kompakapps.cogm.fg stock,model_kompakapps_cogm_fg,stock.group_stock_user,1,1,1,1
+access_kompakapps_cogm_fg_mrp,kompakapps.cogm.fg mrp,model_kompakapps_cogm_fg,mrp.group_mrp_user,1,1,1,1
+access_kompakapps_cogm_fg_account,kompakapps.cogm.fg akuntan,model_kompakapps_cogm_fg,account.group_account_user,1,1,1,1

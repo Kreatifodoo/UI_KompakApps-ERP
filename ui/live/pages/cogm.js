@@ -128,13 +128,17 @@ async function createWorksheet() {
 
 const WS_FIELDS = [
   "name", "company_id", "date_from", "date_to", "state", "note", "pulled_at", "rm_opening", "purchases", "rm_available", "rm_ending", "rm_used", "direct_labor", "overhead",
-  "total_cost", "wip_opening", "wip_ending", "cogm", "qty_produced", "unit_cogm", "unit_material", "unit_labor", "unit_overhead", "unit_wip", "control_state", "move_id", "post_user_id", "post_date",
+  "total_cost", "wip_opening", "wip_ending", "cogm", "qty_produced", "unit_cogm", "unit_material", "unit_labor", "unit_overhead", "unit_wip", "fg_ending_value", "fg_cogs", "fg_provisional", "fg_adjustment", "control_state", "move_id", "post_user_id", "post_date",
 ];
 
 const opRow = (r) => ({
   id: r.id, product: ref(r.product_id), uom: r.uom_id?.[1] ?? "", storable: r.is_storable, qty: String(r.qty), unitCost: String(r.unit_cost), bookQty: r.book_qty, explanation: r.explanation || "",
   costSource: r.cost_source, openingQty: r.opening_qty, openingCost: r.opening_cost, purchaseQty: r.purchase_qty, purchaseValue: r.purchase_value, avgCost: r.avg_cost,
   oldCost: r.old_cost, costUpdated: r.cost_updated, adjustQty: r.adjust_qty, autoCost: r.cost_source === "manual" ? null : r.unit_cost, autoSource: r.cost_source === "manual" ? null : r.cost_source,
+});
+const fgRow = (r) => ({
+  id: r.id, product: ref(r.product_id), uom: r.uom_id?.[1] ?? "", openingQty: r.opening_qty, openingCost: r.opening_cost, deliveredQty: r.delivered_qty, bookQty: r.book_qty, qty: String(r.qty),
+  explanation: r.explanation || "", provisional: r.provisional_cogs, oldCost: r.old_cost, costUpdated: r.cost_updated, adjustQty: r.adjust_qty, unitCost: r.unit_cost,
 });
 const outRow = (r) => ({ id: r.id, product: ref(r.product_id), uom: r.uom_id?.[1] ?? "", moQty: r.mo_qty, qty: String(r.qty), source: r.source, cogmValue: r.cogm_value });
 const wipRow = (r) => ({
@@ -150,7 +154,7 @@ async function loadForm(id) {
   if (!ws) return null;
   // Control Balance dijalankan lebih dulu: ia menghitung ulang stok sistem pembanding, yang lalu dibaca bersama baris opname.
   const check = ws.state === "draft" ? await call(MODEL, "action_check", { ids: [id] }) : null;
-  const [lines, ops, wips, outs] = await Promise.all([
+  const [lines, ops, wips, outs, fgs] = await Promise.all([
     searchRead("kompakapps.cogm.line", [["worksheet_id", "=", id]], ["section", "account_id", "debit", "credit", "balance", "pct", "amount"], { order: "id" }),
     searchRead(
       "kompakapps.cogm.opname", [["worksheet_id", "=", id]],
@@ -159,8 +163,13 @@ async function loadForm(id) {
     ),
     searchRead("kompakapps.cogm.wip", [["worksheet_id", "=", id]], ["name", "product_id", "qty", "material_cost", "material_pct", "conversion_cost", "completion_pct"], { order: "id" }),
     searchRead("kompakapps.cogm.output", [["worksheet_id", "=", id]], ["product_id", "uom_id", "mo_qty", "qty", "source", "cogm_value"], { order: "id" }),
+    searchRead(
+      "kompakapps.cogm.fg", [["worksheet_id", "=", id]],
+      ["product_id", "uom_id", "opening_qty", "opening_cost", "delivered_qty", "book_qty", "qty", "explanation", "provisional_cogs", "old_cost", "cost_updated", "adjust_qty", "unit_cost"],
+      { order: "id" },
+    ),
   ]);
-  return { id, ws, lines, ops: ops.map(opRow), wips: wips.map(wipRow), outs: outs.map(outRow), removed: { ops: [], wips: [], outs: [] }, dirty: false, check, defaults, canExecute: defaults.can_execute };
+  return { id, ws, lines, ops: ops.map(opRow), wips: wips.map(wipRow), outs: outs.map(outRow), fgs: fgs.map(fgRow), removed: { ops: [], wips: [], outs: [], fgs: [] }, dirty: false, check, defaults, canExecute: defaults.can_execute };
 }
 
 async function renderForm(id) {
@@ -211,6 +220,9 @@ function paintForm() {
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4">
       <div class="px-5 py-3 border-b border-gray-200 font-semibold text-gray-900">5. Kalkulasi COGM dan HPP per Unit <span id="preview-note" class="text-xs font-normal text-amber-700">${form.dirty ? "pratinjau, belum disimpan" : ""}</span></div>
       <div id="calc-box">${calcHtml()}</div></section>
+    <section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4">
+      <div class="px-5 py-3 border-b border-gray-200 font-semibold text-gray-900">6. HPP Penjualan Barang Jadi <span class="text-xs font-normal text-gray-500">barang yang laku: HPP aktual dibanding HPP sementara saat penjualan</span></div>
+      <div id="fg-box">${fgsHtml()}</div></section>
     ${chatterHtml(MODEL, ws.id)}`;
 }
 
@@ -466,6 +478,94 @@ function outsHtml() {
     ${draft ? `<div class="px-5 pb-3"><button data-action="cogm-add-out" class="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50"><i class="fas fa-plus mr-2"></i>Tambah Barang Jadi</button></div>` : ""}`;
 }
 
+/* ----- HPP penjualan barang jadi ----- */
+
+/** Nilai COGM tiap barang jadi menurut qty (sisa pembulatan ke baris terbesar), sama dengan perhitungan server. */
+function outValues(cogm) {
+  const total = outQty();
+  const values = new Map();
+  if (total > 0) {
+    let sum = 0;
+    for (const r of form.outs) {
+      const value = cents((cogm * num(r.qty)) / total);
+      values.set(r, value);
+      sum += value;
+    }
+    const rest = cents(cogm - sum);
+    if (rest) {
+      const largest = form.outs.reduce((best, r) => (num(r.qty) > num(best.qty) ? r : best), form.outs[0]);
+      values.set(largest, cents(values.get(largest) + rest));
+    }
+  }
+  return values;
+}
+
+/** Hitungan satu baris barang jadi (pratinjau di draft; angka server pada kertas kerja terposting). */
+function fgView(r, values) {
+  const produced = form.outs.filter((o) => o.product?.id === r.product?.id);
+  const producedQty = produced.reduce((total, o) => total + num(o.qty), 0);
+  const producedValue = produced.reduce((total, o) => total + (values.get(o) ?? 0), 0);
+  const openingValue = cents(r.openingQty * r.openingCost);
+  const availableQty = r.openingQty + producedQty;
+  const availableValue = openingValue + producedValue;
+  const unit = availableQty > 0 && availableValue > 0 ? cents(availableValue / availableQty) : r.openingCost;
+  const ending = cents(num(r.qty) * unit);
+  return { openingValue, producedQty, producedValue, availableQty, availableValue, unit, sold: availableQty - num(r.qty), ending, cogs: availableValue - ending, adjustment: availableValue - ending - r.provisional };
+}
+
+const signedCell = (n) => `<span class="${n < 0 ? "text-rose-700" : n > 0 ? "text-emerald-700" : "text-gray-600"}">${esc(n === 0 ? rupiah(0) : signed(n))}</span>`;
+
+function fgsHtml() {
+  const draft = form.ws.state === "draft";
+  const posted = form.ws.state === "posted";
+  const values = posted ? new Map(form.outs.map((o) => [o, o.cogmValue])) : outValues(figures().cogm);
+  const views = form.fgs.map((r) => fgView(r, values));
+  const rows = form.fgs
+    .map((r, i) => {
+      const v = views[i];
+      const qtyCell = draft ? numInput(`data-fg="${i}" data-field="qty" aria-label="Stok akhir fisik"`, r.qty) : nf.format(num(r.qty));
+      const note = draft ? `<input data-fg="${i}" data-field="explanation" value="${esc(r.explanation)}" placeholder="Wajib bila selisih besar" class="${INPUT}">` : esc(r.explanation);
+      return `<tr class="text-sm align-top"><td class="py-2 px-3 min-w-56">${esc(r.product?.display_name)}</td>
+        <td class="py-2 px-3 text-right tabular-nums text-gray-600" title="Pengiriman ke pelanggan menurut pergerakan stok">${nf.format(r.deliveredQty)}</td>
+        <td class="py-2 px-3 text-right tabular-nums text-gray-600">${nf.format(r.bookQty)}</td>
+        <td class="py-2 px-3 ${draft ? "w-36" : "text-right tabular-nums"}">${qtyCell}</td>
+        <td class="py-2 px-3 text-right tabular-nums" id="fg-sold-${i}">${nf.format(v.sold)}</td>
+        <td class="py-2 px-3 text-right tabular-nums" id="fg-unit-${i}">${esc(rupiah(v.unit))}</td>
+        <td class="py-2 px-3 text-right tabular-nums font-medium" id="fg-cogs-${i}">${esc(rupiah(v.cogs))}</td>
+        <td class="py-2 px-3 text-right tabular-nums text-gray-600">${esc(rupiah(r.provisional))}</td>
+        <td class="py-2 px-3 text-right tabular-nums" id="fg-adj-${i}">${signedCell(v.cogs - r.provisional)}</td>
+        <td class="py-2 px-3 text-right tabular-nums" id="fg-end-${i}">${esc(rupiah(v.ending))}</td>
+        <td class="py-2 px-3 min-w-44">${note}</td>${draft ? `<td class="py-2 px-3"><button data-action="cogm-rm-fg" data-i="${i}" class="text-rose-600 hover:text-rose-800" aria-label="Hapus baris"><i class="fas fa-trash"></i></button></td>` : ""}</tr>`;
+    })
+    .join("");
+  const totals = form.fgs.reduce((t, r, i) => ({ cogs: t.cogs + views[i].cogs, provisional: t.provisional + r.provisional, ending: t.ending + views[i].ending }), { cogs: 0, provisional: 0, ending: 0 });
+  const detail = form.fgs.length
+    ? `<details class="border-t border-gray-100" ${posted ? "open" : ""}><summary class="px-5 py-2 text-sm font-medium text-indigo-700 cursor-pointer">Rincian biaya rata-rata barang jadi${posted ? ", penyesuaian stok, dan biaya produk" : ""}</summary>
+      <div class="overflow-x-auto"><table class="w-full text-left" data-list="on"><thead class="border-b border-gray-200"><tr>${["Barang Jadi", "Stok Awal", "Biaya Awal", "Nilai Awal", "Diproduksi", "Nilai Produksi (COGM)", "Tersedia", "Nilai Tersedia", "Biaya Rata-rata", ...(posted ? ["Penyesuaian Stok", "Biaya Produk Lama → Baru"] : [])].map((label, i) => th(label, i > 0)).join("")}</tr></thead>
+      <tbody class="divide-y divide-gray-100">${form.fgs
+        .map((r, i) => {
+          const v = views[i];
+          const adjust = r.adjustQty ? `${r.adjustQty > 0 ? "+" : ""}${nf.format(r.adjustQty)}` : "-";
+          return `<tr class="text-sm"><td class="py-1.5 px-3">${esc(r.product?.display_name)}</td><td class="py-1.5 px-3 text-right tabular-nums">${nf.format(r.openingQty)}</td><td class="py-1.5 px-3 text-right tabular-nums">${esc(rupiah(r.openingCost))}</td>
+            <td class="py-1.5 px-3 text-right tabular-nums">${esc(rupiah(v.openingValue))}</td><td class="py-1.5 px-3 text-right tabular-nums">${nf.format(v.producedQty)}</td><td class="py-1.5 px-3 text-right tabular-nums">${esc(rupiah(v.producedValue))}</td>
+            <td class="py-1.5 px-3 text-right tabular-nums">${nf.format(v.availableQty)}</td><td class="py-1.5 px-3 text-right tabular-nums">${esc(rupiah(v.availableValue))}</td><td class="py-1.5 px-3 text-right tabular-nums font-medium">${esc(rupiah(v.unit))}</td>
+            ${posted ? `<td class="py-1.5 px-3 text-right tabular-nums">${esc(adjust)}</td><td class="py-1.5 px-3 text-right tabular-nums whitespace-nowrap">${esc(r.costUpdated ? `${rupiah(r.oldCost)} → ${rupiah(r.unitCost)}` : "-")}</td>` : ""}</tr>`;
+        })
+        .join("")}</tbody></table></div></details>`
+    : "";
+  const head = ["Barang Jadi", "Terkirim (Sistem)", "Stok Sistem", "Stok Akhir (Fisik)", "Qty Terjual", "Biaya Rata-rata", "HPP Aktual", "HPP Sementara", "Penyesuaian HPP", "Nilai Stok Akhir", "Alasan Selisih"]
+    .map((label, i) => th(label, i > 0 && i < 10))
+    .join("");
+  return `<div class="overflow-x-auto"><table class="w-full text-left" data-list="on"><thead class="border-b border-gray-200"><tr>${head}${draft ? th("") : ""}</tr></thead>
+    <tbody class="divide-y divide-gray-100">${rows || `<tr><td colspan="12" class="py-6 text-center text-sm text-gray-500">Belum ada barang jadi berstok dilacak. Barang pada Hasil Produksi dan barang buatan yang punya stok awal muncul setelah Tarik dari Buku Besar.</td></tr>`}</tbody>
+    <tfoot><tr class="border-t border-gray-200 text-sm font-semibold"><td class="py-2 px-3" colspan="6">Total HPP penjualan</td><td class="py-2 px-3 text-right tabular-nums" id="fg-cogs-total">${esc(rupiah(totals.cogs))}</td>
+      <td class="py-2 px-3 text-right tabular-nums text-gray-600" id="fg-prov-total">${esc(rupiah(totals.provisional))}</td><td class="py-2 px-3 text-right tabular-nums" id="fg-adj-total">${signedCell(totals.cogs - totals.provisional)}</td>
+      <td class="py-2 px-3 text-right tabular-nums" id="fg-end-total">${esc(rupiah(totals.ending))}</td><td colspan="${draft ? 2 : 1}"></td></tr></tfoot></table></div>
+    <p class="px-5 py-2 text-xs text-gray-500 border-t border-gray-100"><b>HPP aktual</b> = (stok awal x biaya awal + COGM barang yang diproduksi) dikurangi nilai stok akhir (hitung fisik x biaya rata-rata tertimbang). <b>HPP sementara</b> = HPP yang sudah dibukukan saat penjualan pada akun HPP (diambil dari buku besar). <b>Penyesuaian HPP</b> = aktual dikurangi sementara; inilah yang dijurnal saat Execute (Dr HPP, Cr Inventory COGM). Barang yang diproduksi dan terjual pada bulan yang sama ikut dihitung karena HPP baru diketahui setelah COGM bulan itu selesai. Penjualan sesudah Execute memakai biaya rata-rata yang tersimpan sebagai biaya produk dan masuk penyesuaian bulan berikutnya.</p>
+    ${detail}
+    ${draft ? `<div class="px-5 py-3 flex flex-wrap items-center gap-2"><input data-lookup="cogm-fg-product" autocomplete="off" role="combobox" aria-autocomplete="list" placeholder="Tambah barang jadi berstok (mis. stok awal tanpa produksi)..." class="${INPUT} max-w-sm"></div>` : ""}`;
+}
+
 /* ----- kalkulasi ----- */
 
 function figures() {
@@ -499,6 +599,20 @@ function calcHtml() {
     ${row("=", "Total Biaya Produksi", f.total, "sum")}${row("+", "Barang Dalam Proses Awal", ws.wip_opening)}${row("-", "Barang Dalam Proses Akhir (estimasi)", f.wipEnd)}
     ${row("=", "Harga Pokok Produksi (COGM)", f.cogm, "final")}
     ${f.qty > 0 ? `${text("÷", "Qty yang diproduksi (pembagi)", `${nf.format(f.qty)} unit`)}${row("", "Bahan baku terpakai per unit", f.unitMaterial)}${row("", "Tenaga kerja langsung per unit", f.unitLabor)}${row("", "Overhead pabrik per unit", f.unitOverhead)}${row("", "Perubahan barang dalam proses per unit", f.unitWip)}${row("=", "HPP per Unit (COGM ÷ qty diproduksi)", f.unit, "final")}` : text("÷", "Isi qty yang diproduksi pada bagian Hasil Produksi untuk menghitung HPP per unit.", "-")}</tbody></table>`;
+}
+
+function refreshFg() {
+  const box = document.getElementById("fg-box");
+  if (!box) return;
+  const focus = document.activeElement;
+  const key = focus?.dataset?.fg !== undefined ? `[data-fg="${focus.dataset.fg}"][data-field="${focus.dataset.field}"]` : null;
+  const pos = focus?.selectionStart;
+  box.innerHTML = fgsHtml();
+  if (key) {
+    const again = box.querySelector(key);
+    again?.focus();
+    if (pos != null) again?.setSelectionRange?.(pos, pos);
+  }
 }
 
 function refreshLive() {
@@ -537,6 +651,7 @@ function refreshLive() {
     const cell = document.getElementById(id);
     if (cell) cell.textContent = text;
   }
+  refreshFg();
   const opTotal = document.getElementById("op-total");
   if (opTotal) opTotal.textContent = rupiah(form.ops.reduce((sum, r) => sum + opValue(r), 0));
   const wipTotal = document.getElementById("wip-total");
@@ -611,6 +726,13 @@ async function persist() {
     (r) => ({ product_id: r.product.id, qty: num(r.qty) }),
     (a, b) => a.product?.id === b.product?.id && num(a.qty) === num(b.qty),
   );
+  const fgRows = form.fgs.filter((r) => r.product || r.id);
+  for (const r of fgRows) if (!(num(r.qty) >= 0)) throw new Error(`Stok akhir ${r.product.display_name} tidak boleh negatif.`);
+  const fgCommands = commands(
+    fgRows, form.initialFgs ?? [], form.removed.fgs,
+    (r) => ({ qty: num(r.qty), explanation: r.explanation.trim() || false }),
+    (a, b) => num(a.qty) === num(b.qty) && (a.explanation ?? "") === (b.explanation ?? ""),
+  );
   const vals = {};
   if (form.headerDirty) {
     const header = form.headerValues;
@@ -620,6 +742,7 @@ async function persist() {
   if (opCommands.length) vals.opname_ids = opCommands;
   if (wipCommands.length) vals.wip_ids = wipCommands;
   if (outCommands.length) vals.output_ids = outCommands;
+  if (fgCommands.length) vals.fg_ids = fgCommands;
   if (Object.keys(vals).length) await call(MODEL, "write", { ids: [ws.id], vals });
   form = null;
   return true;
@@ -629,6 +752,7 @@ const snapshotInitial = () => {
   form.initialOps = form.ops.map((r) => ({ ...r }));
   form.initialWips = form.wips.map((r) => ({ ...r }));
   form.initialOuts = form.outs.map((r) => ({ ...r }));
+  form.initialFgs = form.fgs.map((r) => ({ ...r }));
   form.headerValues = { date_from: form.ws.date_from, date_to: form.ws.date_to, note: form.ws.note || "" };
 };
 const markDirty = () => {
@@ -638,12 +762,13 @@ const markDirty = () => {
 
 /* ---------- Pengaturan ---------- */
 
-const CFG_FIELDS = ["company_id", "journal_id", "raw_account_id", "wip_account_id", "fg_account_id", "summary_account_id", "scan_prefix", "tolerance_pct", "cost_method", "update_product_cost", "adjust_stock", "account_ids"];
+const CFG_FIELDS = ["company_id", "journal_id", "raw_account_id", "wip_account_id", "fg_account_id", "summary_account_id", "cogs_account_id", "scan_prefix", "tolerance_pct", "cost_method", "update_product_cost", "adjust_stock", "account_ids"];
 const ROLES = [
   ["raw", "Persediaan Bahan Baku", "Saldo awal diambil dari akun ini; saat jurnal COGM dieksekusi akun disesuaikan ke hasil opname."],
   ["wip", "Barang Dalam Proses (WIP)", "Saldo awal WIP diambil dari akun ini; disesuaikan ke estimasi WIP akhir."],
   ["fg", "Persediaan Barang Jadi (Inventory COGM)", "Menerima COGM periode (Debit)."],
   ["summary", "Akun Ikhtisar COGM", "Akun perantara yang berakhir nol; memperlihatkan seluruh unsur COGM dalam satu jurnal."],
+  ["cogs", "Akun HPP Penjualan (opsional)", "Saat Execute, selisih HPP aktual terhadap HPP sementara yang sudah dibukukan pada akun ini dijurnal (Dr HPP, Cr Inventory COGM). Kosong = HPP penjualan tidak dijurnal."],
 ];
 
 registerLookup("cogm-cfg-account", {
@@ -688,7 +813,7 @@ async function renderSetting() {
   cfg = {
     id: config.id, canEdit, journals, journal: config.journal_id[0], scan: config.scan_prefix || "", tolerance: String(config.tolerance_pct),
     costMethod: config.cost_method, updateCost: config.update_product_cost, adjustStock: config.adjust_stock,
-    accounts: { raw: ref(config.raw_account_id), wip: ref(config.wip_account_id), fg: ref(config.fg_account_id), summary: ref(config.summary_account_id) },
+    accounts: { raw: ref(config.raw_account_id), wip: ref(config.wip_account_id), fg: ref(config.fg_account_id), summary: ref(config.summary_account_id), cogs: ref(config.cogs_account_id) },
     maps: mappings.map((m) => ({ id: m.id, account: ref(m.account_id), section: m.section, pct: String(m.pct) })), initialMaps: mappings.map((m) => ({ id: m.id, account: m.account_id[0], section: m.section, pct: String(m.pct) })), removed: [],
   };
   paintSetting();
@@ -733,7 +858,7 @@ function paintSetting() {
 }
 
 async function saveSetting() {
-  const missing = Object.entries(cfg.accounts).filter(([, account]) => !account).map(([key]) => ROLES.find((r) => r[0] === key)[1]);
+  const missing = Object.entries(cfg.accounts).filter(([key, account]) => !account && key !== "cogs").map(([key]) => ROLES.find((r) => r[0] === key)[1]);
   if (missing.length) throw new Error(`Pilih akun untuk: ${missing.join(", ")}.`);
   if (cfg.maps.some((m) => !m.account)) throw new Error("Pilih akun dari kotak saran pada setiap baris pemetaan, atau hapus barisnya.");
   const seen = new Set();
@@ -756,7 +881,7 @@ async function saveSetting() {
   await call("kompakapps.cogm.config", "write", {
     ids: [cfg.id],
     vals: {
-      journal_id: cfg.journal, raw_account_id: cfg.accounts.raw.id, wip_account_id: cfg.accounts.wip.id, fg_account_id: cfg.accounts.fg.id, summary_account_id: cfg.accounts.summary.id,
+      journal_id: cfg.journal, raw_account_id: cfg.accounts.raw.id, wip_account_id: cfg.accounts.wip.id, fg_account_id: cfg.accounts.fg.id, summary_account_id: cfg.accounts.summary.id, cogs_account_id: cfg.accounts.cogs?.id ?? false,
       scan_prefix: cfg.scan.trim() || false, tolerance_pct: num(cfg.tolerance), cost_method: cfg.costMethod, update_product_cost: cfg.updateCost, adjust_stock: cfg.adjustStock, account_ids: accountCommands,
     },
   });
@@ -786,6 +911,28 @@ registerLookup("cogm-product", {
     document.getElementById("ops-box").innerHTML = opsHtml();
     refreshLive();
     document.querySelector(`[data-op="${form.ops.indexOf(row)}"][data-field="qty"]`)?.focus();
+  },
+});
+registerLookup("cogm-fg-product", {
+  pageSize: PRODUCT_PAGE,
+  search: (q, _input, page) => searchProducts(q, page, { domain: [["type", "=", "consu"], ["is_storable", "=", true]], fields: ["display_name", "uom_id"] }),
+  sub: (r) => r.uom_id?.[1] ?? "",
+  isChosen: () => false,
+  choose: async (input, item) => {
+    if (form.fgs.some((r) => r.product?.id === item.id)) {
+      toast(`${item.display_name} sudah ada pada HPP penjualan.`, "error");
+      return;
+    }
+    const id = form.id;
+    const done = await guarded(null, async () => {
+      if (form.dirty) await persist();
+      await call(MODEL, "write", { ids: [id], vals: { fg_ids: [[0, 0, { product_id: item.id }]] } });
+      return true;
+    });
+    if (done) {
+      form = null;
+      await renderForm(id);
+    }
   },
 });
 registerLookup("cogm-out-product", {
@@ -847,6 +994,11 @@ export async function onClick(event, el) {
     document.getElementById("ops-box").innerHTML = opsHtml();
     refreshLive();
     document.querySelector(`[data-lookup="cogm-product"][data-op="${form.ops.length - 1}"]`)?.focus();
+  } else if (action === "cogm-rm-fg") {
+    const [removed] = form.fgs.splice(Number(el.dataset.i), 1);
+    if (removed.id) form.removed.fgs.push(removed.id);
+    form.dirty = true;
+    refreshLive();
   } else if (action === "cogm-add-out") {
     form.outs.push(blankOut());
     form.dirty = true;
@@ -974,6 +1126,9 @@ export function onInput(event, el) {
       const label = document.getElementById(`op-src-${dataset.op}`);
       if (label) label.innerHTML = costSourceHtml(row);
     }
+    markDirty();
+  } else if (dataset.fg !== undefined && dataset.field && form) {
+    form.fgs[Number(dataset.fg)][dataset.field] = el.value;
     markDirty();
   } else if (dataset.out !== undefined && dataset.field && form) {
     const row = form.outs[Number(dataset.out)];

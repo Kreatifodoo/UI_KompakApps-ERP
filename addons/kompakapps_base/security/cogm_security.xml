@@ -36,4 +36,9 @@
         <field name="model_id" ref="model_kompakapps_cogm_output" />
         <field name="domain_force">[('company_id', 'in', company_ids)]</field>
     </record>
+    <record id="cogm_fg_company_rule" model="ir.rule">
+        <field name="name">Barang Jadi COGM: perusahaan</field>
+        <field name="model_id" ref="model_kompakapps_cogm_fg" />
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
 </odoo>

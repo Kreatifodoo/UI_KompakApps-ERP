@@ -11,7 +11,8 @@ jurnal perpetual, skema 1) tidak tercampur. Isinya dua bulan terakhir:
   pada hasil opname (260 seharusnya 20). Perbaiki angkanya pada yang Merah, simpan, lalu periksa: Hijau. Bila yang Hijau dieksekusi lebih dulu, yang lain
   menjadi Merah karena periodenya sudah terposting. Harga beli bulan lalu naik (3 sampai 6 persen) sehingga biaya rata-rata tertimbang berbeda dari biaya
   produk; Execute memperbarui biaya produk dan menyesuaikan stok, Reverse mengembalikannya. Qty barang jadi yang diproduksi menjadi pembagi: HPP per unit =
-  total biaya aktual (COGM) dibagi qty itu.
+  total biaya aktual (COGM) dibagi qty itu. Barang jadi (stok dilacak) laku sebelum COGM dihitung dengan HPP sementara pada perkiraan biaya standar;
+  saat Execute, HPP aktual (rata-rata tertimbang stok awal + produksi) dibandingkan dan selisihnya dijurnal sebagai penyesuaian HPP.
 
 Dijalankan lewat `odoo shell` (variabel `env` disediakan shell); database harus sudah memasang kompakapps_base. Aman dijalankan ulang: bila perusahaannya sudah
 ada, tidak ada yang diubah.
@@ -96,11 +97,16 @@ PRICE_UP = {"RM-REG-KOL": 1.05, "RM-ENZ-CHO": 1.03, "RM-BTL-50": 1.0, "RM-LBL-KI
 # Barang jadi yang diproduksi: qty-nya menjadi pembagi HPP per unit pada kertas kerja.
 FINISHED = {
     code: env["product.product"].with_company(company).create(
-        {"name": name, "default_code": code, "type": "consu", "categ_id": category.id, "company_id": company.id, "taxes_id": [Command.clear()], "supplier_taxes_id": [Command.clear()], "standard_price": 0.0}
+        {"name": name, "default_code": code, "type": "consu", "is_storable": True, "categ_id": category.id, "company_id": company.id, "taxes_id": [Command.clear()], "supplier_taxes_id": [Command.clear()], "standard_price": 0.0}
     )
     for code, name in (("FG-KIT-KOL", "Kit Reagen Kolesterol 4 x 50 ml (Demo)"), ("FG-KIT-GLU", "Kit Reagen Glukosa 4 x 50 ml (Demo)"))
 }
 PRODUCED = {0: {"FG-KIT-KOL": 1200.0, "FG-KIT-GLU": 800.0}, 1: {"FG-KIT-KOL": 1100.0, "FG-KIT-GLU": 900.0}}  # qty diproduksi per bulan
+SOLD = {0: {"FG-KIT-KOL": 700.0, "FG-KIT-GLU": 500.0}, 1: {"FG-KIT-KOL": 900.0, "FG-KIT-GLU": 600.0}}  # qty terjual per bulan, sebelum COGM dihitung
+PRICE = {"FG-KIT-KOL": 150000.0, "FG-KIT-GLU": 140000.0}  # harga jual per kit
+PROVISIONAL = {"FG-KIT-KOL": 90000.0, "FG-KIT-GLU": 85000.0}  # HPP sementara per kit yang dibukukan saat penjualan (perkiraan biaya standar)
+customer = env["res.partner"].create({"name": "PT Laboratorium Pelanggan Demo", "is_company": True, "customer_rank": 1, "company_id": company.id})
+cogs_acc, fg_acc = config.cogs_account_id, config.fg_account_id
 warehouse = env["stock.warehouse"].search([("company_id", "=", company.id)], limit=1)
 stock_loc = warehouse.lot_stock_id
 production_loc = env["stock.location"].search([("usage", "=", "production"), ("company_id", "=", company.id)], limit=1)
@@ -135,6 +141,42 @@ def consume(product, qty, when):
     move.write({"quantity": qty, "picked": True})
     move._action_done()
     stamp(move, when)
+
+
+def deliver(product, qty, when):
+    """Pengiriman barang jadi ke pelanggan: kartu stok berkurang."""
+    move = env["stock.move"].create(
+        {
+            "product_id": product.id, "product_uom_qty": qty, "product_uom": product.uom_id.id, "location_id": stock_loc.id,
+            "location_dest_id": env.ref("stock.stock_location_customers").id, "company_id": company.id,
+        }
+    )
+    move._action_confirm()
+    move._action_assign()
+    move.write({"quantity": qty, "picked": True})
+    move._action_done()
+    stamp(move, when)
+
+
+def sell(product, qty, day):
+    """Penjualan barang jadi sebelum COGM bulan itu dihitung: pengiriman, faktur, dan HPP sementara (Dr HPP, Cr Inventory COGM) pada perkiraan biaya standar."""
+    deliver(product, qty, at(day))
+    env["account.move"].create(
+        {
+            "move_type": "out_invoice", "partner_id": customer.id, "invoice_date": day, "date": day, "company_id": company.id,
+            "invoice_line_ids": [Command.create({"product_id": product.id, "quantity": qty, "price_unit": PRICE[product.default_code], "tax_ids": [Command.clear()]})],
+        }
+    ).action_post()
+    amount = qty * PROVISIONAL[product.default_code]
+    env["account.move"].create(
+        {
+            "move_type": "entry", "journal_id": misc.id, "date": day, "ref": f"HPP sementara {product.default_code}",
+            "line_ids": [
+                Command.create({"account_id": cogs_acc.id, "debit": amount, "credit": 0.0, "product_id": product.id, "name": f"HPP sementara {product.name}"}),
+                Command.create({"account_id": fg_acc.id, "debit": 0.0, "credit": amount, "product_id": product.id, "name": f"HPP sementara {product.name}"}),
+            ],
+        }
+    ).action_post()
 
 
 def purchase(vendor, when, lines):
@@ -201,6 +243,10 @@ def run_month(index, first, last, spec):
     journal(last, "Penyusutan mesin dan peralatan pabrik", [(depreciation, spec["depreciation"], 0.0), (accumulated, 0.0, spec["depreciation"])])
     journal(last, "Perawatan mesin pabrik", [(maintenance, spec["maintenance"], 0.0), (payable_other, 0.0, spec["maintenance"])])
     journal(last, "Bahan penolong dan perlengkapan pabrik", [(supplies, spec["supplies"], 0.0), (payable_other, 0.0, spec["supplies"])])
+    for code, qty in PRODUCED[index].items():  # hasil produksi masuk gudang barang jadi
+        adjust_stock(FINISHED[code], FINISHED[code].qty_available + qty, at(last - timedelta(days=2)))
+    for code, qty in SOLD[index].items():  # barang laku sebelum COGM dihitung
+        sell(FINISHED[code], qty, first + timedelta(days=17))
 
 
 def worksheet(first, last, index, wip_lines, note, counts=None):
@@ -229,12 +275,15 @@ sheet1 = worksheet(
     ],
     "Contoh sudah dieksekusi. Buffer Fosfat selisih 1 kg (di atas toleransi) dijelaskan di kolom Alasan Selisih.",
 )
+glucose = sheet1.fg_ids.filtered(lambda line: line.product_id == FINISHED["FG-KIT-GLU"])
+glucose.write({"qty": glucose.book_qty - 2, "explanation": "Rusak saat pengemasan"})  # hitung fisik: susut 2 kit
 result = sheet1.action_check()
 assert result["state"] == "green", [c for c in result["checks"] if c["status"] == "error"]
 sheet1.action_post()
 for row in RAW:  # Execute sudah menyamakan stok sistem dengan hasil hitung fisik dan memperbarui biaya produk
     product = products[row[0]]
     assert product.qty_available == float(row[7][0]), (product.name, product.qty_available, row[7][0])
+assert FINISHED["FG-KIT-KOL"].qty_available == 500.0 and FINISHED["FG-KIT-GLU"].qty_available == 298.0, "stok barang jadi disamakan dengan hitung fisik"
 
 # ---- bulan kedua: satu kertas kerja Hijau (siap Execute) dan satu Merah (salah ketik), dari buku besar yang sama ----
 run_month(1, m2_from, m2_to, {"freight": 1_600_000.0, "returns": 0.0, "labor": 41_200_000.0, "indirect": 9_600_000.0, "power": 15_300_000.0, "depreciation": 6_750_000.0, "maintenance": 4_900_000.0, "supplies": 2_700_000.0})
@@ -253,6 +302,6 @@ assert green["state"] == "green", [c for c in green["checks"] if c["status"] == 
 assert [c["key"] for c in red["checks"] if c["status"] == "error"] == ["variance"], red
 env.cr.commit()
 print(f"{NAME}: perusahaan id {company.id}")
-print(f"  {sheet1.name} {m1_from}..{m1_to}: COGM {sheet1.cogm:,.0f} (Terposting, jurnal {sheet1.move_id.name})")
-print(f"  {sheet2.name} {m2_from}..{m2_to}: COGM {sheet2.cogm:,.0f} (draft, Control Balance {green['state']})")
+print(f"  {sheet1.name} {m1_from}..{m1_to}: COGM {sheet1.cogm:,.0f} (Terposting, jurnal {sheet1.move_id.name}); HPP penjualan {sheet1.fg_cogs:,.0f}, sementara {sheet1.fg_provisional:,.0f}, penyesuaian {sheet1.fg_adjustment:,.0f}")
+print(f"  {sheet2.name} {m2_from}..{m2_to}: COGM {sheet2.cogm:,.0f} (draft, Control Balance {green['state']}); HPP penjualan {sheet2.fg_cogs:,.0f}, sementara {sheet2.fg_provisional:,.0f}, penyesuaian {sheet2.fg_adjustment:,.0f}")
 print(f"  {sheet3.name} {m2_from}..{m2_to}: COGM {sheet3.cogm:,.0f} (draft, Control Balance {red['state']}: {[c['key'] for c in red['checks'] if c['status'] == 'error']})")

@@ -241,8 +241,10 @@ class ResCompany(models.Model):
                 config.write({field: account.id for field, account in roles.items() if not config[field]})
                 if not config.journal_id:
                     config.journal_id = journal
+                if not config.cogs_account_id:
+                    config.cogs_account_id = found["51000010"]
             else:
-                config = Config.create({"company_id": company.id, "journal_id": journal.id, **{field: account.id for field, account in roles.items()}})
+                config = Config.create({"company_id": company.id, "journal_id": journal.id, "cogs_account_id": found["51000010"].id, **{field: account.id for field, account in roles.items()}})
             mapped = config.account_ids.account_id
             config.write(
                 {

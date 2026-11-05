@@ -40,6 +40,7 @@ LOCKED_WHEN_NOT_DRAFT = {"company_id", "date_from", "date_to", "line_ids", "opna
 COST_METHODS = [("average", "Rata-rata tertimbang periode"), ("standard", "Biaya standar produk")]
 COST_SOURCES = [("standard", "Biaya produk"), ("average", "Rata-rata periode"), ("manual", "Manual")]
 BASIS_KEYS = ("opening_qty", "opening_cost", "purchase_qty", "purchase_value", "avg_cost")
+FG_BASIS_KEYS = ("opening_qty", "opening_cost", "delivered_qty", "provisional_cogs")
 
 
 class KompakappsCogmConfig(models.Model):
@@ -64,6 +65,9 @@ class KompakappsCogmConfig(models.Model):
     )
     tolerance_pct = fields.Float(
         string="Toleransi Selisih Opname (%)", default=2.0, help="Selisih jumlah fisik terhadap stok sistem sampai persentase ini dianggap wajar. Di atasnya perlu alasan selisih per baris."
+    )
+    cogs_account_id = fields.Many2one(
+        "account.account", string="Akun HPP Penjualan", help="Akun harga pokok penjualan. Saat Execute, selisih HPP aktual terhadap HPP sementara yang sudah dibukukan pada akun ini dijurnal (Dr HPP, Cr Persediaan Barang Jadi). Kosong = HPP penjualan tidak dijurnal."
     )
     cost_method = fields.Selection(
         COST_METHODS,
@@ -308,11 +312,21 @@ class KompakappsCogmOutput(models.Model):
             if line.qty < 0:
                 raise ValidationError(_("Qty diproduksi tidak boleh negatif (%s).", line.product_id.display_name))
 
-    @api.depends("qty", "worksheet_id.unit_cogm", "currency_id")
+    @api.depends("qty", "worksheet_id.cogm", "worksheet_id.qty_produced", "currency_id")
     def _compute_cogm_value(self):
-        for line in self:
-            value = line.qty * line.worksheet_id.unit_cogm
-            line.cogm_value = line.currency_id.round(value) if line.currency_id else value
+        """COGM dialokasikan menurut qty; sisa pembulatan masuk ke baris terbesar supaya jumlah semua barang jadi sama persis dengan COGM."""
+        for worksheet in self.worksheet_id:
+            lines = worksheet.output_ids
+            total = sum(lines.mapped("qty"))
+            round_ = worksheet.currency_id.round
+            values = {}
+            if total > 0:
+                values = {line.id: round_(worksheet.cogm * line.qty / total) for line in lines}
+                rest = round_(worksheet.cogm - sum(values.values()))
+                if rest:
+                    values[max(lines, key=lambda line: line.qty).id] += rest
+            for line in lines & self:
+                line.cogm_value = values.get(line.id, 0.0)
 
     def write(self, vals):
         if "qty" in vals and "source" not in vals and not self.env.context.get("kompakapps_output_auto"):
@@ -322,6 +336,94 @@ class KompakappsCogmOutput(models.Model):
                 rest = self - changed
                 return super(KompakappsCogmOutput, rest).write(vals) if rest else True
         return super().write(vals)
+
+
+class KompakappsCogmFg(models.Model):
+    _name = "kompakapps.cogm.fg"
+    _inherit = ["kompakapps.cogm.child"]
+    _description = "Barang Jadi dan HPP Penjualan Kertas Kerja COGM"
+    _order = "worksheet_id, id"
+
+    worksheet_id = fields.Many2one("kompakapps.cogm.worksheet", string="Kertas Kerja", required=True, ondelete="cascade", index=True)
+    company_id = fields.Many2one(related="worksheet_id.company_id", store=True, index=True)
+    currency_id = fields.Many2one(related="worksheet_id.currency_id")
+    product_id = fields.Many2one("product.product", string="Barang Jadi", required=True, domain="[('type', '=', 'consu'), ('is_storable', '=', True)]")
+    uom_id = fields.Many2one(related="product_id.uom_id", string="Satuan")
+    opening_qty = fields.Float(string="Stok Awal", digits="Product Unit", copy=False, help="Stok sistem akhir hari sebelum periode.")
+    opening_cost = fields.Float(string="Biaya Awal per Unit", digits="Product Price", copy=False, help="Biaya akhir periode sebelumnya (kertas kerja terposting) atau biaya produk saat ini.")
+    opening_value = fields.Monetary(string="Nilai Awal", compute="_compute_values", store=True)
+    produced_qty = fields.Float(string="Qty Diproduksi", digits="Product Unit", compute="_compute_values", store=True, help="Dari bagian Hasil Produksi.")
+    produced_value = fields.Monetary(string="Nilai Produksi (COGM)", compute="_compute_values", store=True)
+    available_qty = fields.Float(string="Qty Tersedia", digits="Product Unit", compute="_compute_values", store=True)
+    available_value = fields.Monetary(string="Nilai Tersedia", compute="_compute_values", store=True)
+    unit_cost = fields.Float(string="Biaya Rata-rata per Unit", digits="Product Price", compute="_compute_values", store=True, help="(nilai awal + nilai produksi) / (stok awal + qty diproduksi).")
+    delivered_qty = fields.Float(string="Terkirim (Sistem)", digits="Product Unit", copy=False, help="Pengiriman ke pelanggan menurut pergerakan stok dalam periode, dikurangi retur.")
+    book_qty = fields.Float(string="Stok Sistem Akhir", digits="Product Unit", compute="_compute_book_qty", store=True)
+    qty = fields.Float(string="Stok Akhir (Fisik)", digits="Product Unit", help="Hasil hitung fisik barang jadi; terisi dari stok sistem, ubah bila hitung fisik berbeda.")
+    variance_qty = fields.Float(string="Selisih Jumlah", digits="Product Unit", compute="_compute_values", store=True)
+    explanation = fields.Char(string="Alasan Selisih", help="Wajib bila selisih jumlah melebihi toleransi.")
+    sold_qty = fields.Float(string="Qty Terjual", digits="Product Unit", compute="_compute_values", store=True, help="Stok tersedia dikurangi stok akhir.")
+    ending_value = fields.Monetary(string="Nilai Stok Akhir", compute="_compute_values", store=True)
+    cogs = fields.Monetary(string="HPP Aktual", compute="_compute_values", store=True, help="Nilai tersedia dikurangi nilai stok akhir.")
+    provisional_cogs = fields.Monetary(string="HPP Sementara", copy=False, help="HPP yang sudah dibukukan saat penjualan pada akun HPP untuk barang ini dalam periode (diambil dari buku besar).")
+    cogs_adjustment = fields.Monetary(string="Penyesuaian HPP", compute="_compute_values", store=True, help="HPP aktual dikurangi HPP sementara.")
+    old_cost = fields.Float(string="Biaya Produk Sebelum Execute", digits="Product Price", copy=False)
+    cost_updated = fields.Boolean(string="Biaya Produk Diperbarui", copy=False)
+    adjust_qty = fields.Float(string="Penyesuaian Stok", digits="Product Unit", copy=False)
+    adjust_move_ids = fields.Many2many("stock.move", "kompakapps_cogm_fg_move_rel", "fg_id", "move_id", string="Pergerakan Penyesuaian Stok", copy=False, readonly=True)
+
+    _product_unique = models.Constraint("UNIQUE(worksheet_id, product_id)", "Barang jadi ini sudah ada pada HPP penjualan. Ubah stok akhirnya pada baris yang ada.")
+
+    @api.constrains("qty")
+    def _check_qty(self):
+        for line in self:
+            if line.qty < 0:
+                raise ValidationError(_("Stok akhir tidak boleh negatif (%s).", line.product_id.display_name))
+
+    @api.depends(
+        "product_id", "worksheet_id.output_ids.qty", "worksheet_id.output_ids.cogm_value", "opening_qty", "opening_cost", "qty", "book_qty", "provisional_cogs", "currency_id"
+    )
+    def _compute_values(self):
+        for line in self:
+            round_ = line.currency_id.round
+            outputs = line.worksheet_id.output_ids.filtered(lambda output: output.product_id == line.product_id)
+            line.produced_qty = sum(outputs.mapped("qty"))
+            line.produced_value = sum(outputs.mapped("cogm_value"))
+            line.opening_value = round_(line.opening_qty * line.opening_cost)
+            line.available_qty = line.opening_qty + line.produced_qty
+            line.available_value = line.opening_value + line.produced_value
+            if line.available_qty > 0 and line.available_value > 0:
+                line.unit_cost = float_round(line.available_value / line.available_qty, precision_digits=self.env["decimal.precision"].precision_get("Product Price"))
+            else:
+                line.unit_cost = line.opening_cost
+            line.sold_qty = line.available_qty - line.qty
+            line.ending_value = round_(line.qty * line.unit_cost)
+            line.cogs = line.available_value - line.ending_value
+            line.cogs_adjustment = line.cogs - line.provisional_cogs
+            line.variance_qty = line.qty - line.book_qty
+
+    @api.depends("product_id", "worksheet_id.date_to", "worksheet_id.company_id")
+    def _compute_book_qty(self):
+        for line in self:
+            line.book_qty = line.worksheet_id._stock_qty(line.product_id) if line.worksheet_id.date_to else 0.0
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        for vals in vals_list:
+            if vals.get("product_id") and vals.get("worksheet_id"):
+                worksheet = self.env["kompakapps.cogm.worksheet"].browse(vals["worksheet_id"])
+                product = self.env["product.product"].browse(vals["product_id"])
+                basis = worksheet._fg_basis(product)
+                for key in FG_BASIS_KEYS:
+                    vals.setdefault(key, basis[key])
+                vals.setdefault("qty", worksheet._stock_qty(product))
+        return super().create(vals_list)
+
+    def _refresh_fg_basis(self):
+        """Hitung ulang stok awal, biaya awal, pengiriman, dan HPP sementara dari sistem dan buku besar."""
+        for line in self:
+            basis = line.worksheet_id._fg_basis(line.product_id)
+            line.write({key: basis[key] for key in FG_BASIS_KEYS})
 
 
 class KompakappsCogmWip(models.Model):
@@ -388,6 +490,7 @@ class KompakappsCogmWorksheet(models.Model):
     opname_ids = fields.One2many("kompakapps.cogm.opname", "worksheet_id", string="Opname Bahan Baku", copy=True)
     wip_ids = fields.One2many("kompakapps.cogm.wip", "worksheet_id", string="Opname WIP", copy=True)
     output_ids = fields.One2many("kompakapps.cogm.output", "worksheet_id", string="Hasil Produksi", copy=True)
+    fg_ids = fields.One2many("kompakapps.cogm.fg", "worksheet_id", string="Barang Jadi dan HPP Penjualan", copy=False)
     pulled_at = fields.Datetime(string="Data Ditarik Pada", readonly=True, copy=False)
 
     rm_opening = fields.Monetary(string="Persediaan Bahan Baku Awal", compute="_compute_totals", store=True)
@@ -407,6 +510,10 @@ class KompakappsCogmWorksheet(models.Model):
     unit_labor = fields.Monetary(string="Tenaga Kerja per Unit", compute="_compute_totals", store=True)
     unit_overhead = fields.Monetary(string="Overhead per Unit", compute="_compute_totals", store=True)
     unit_wip = fields.Monetary(string="Penyesuaian WIP per Unit", compute="_compute_totals", store=True)
+    fg_ending_value = fields.Monetary(string="Nilai Barang Jadi Akhir", compute="_compute_fg_totals")
+    fg_cogs = fields.Monetary(string="HPP Penjualan Aktual", compute="_compute_fg_totals")
+    fg_provisional = fields.Monetary(string="HPP Sementara Dibukukan", compute="_compute_fg_totals")
+    fg_adjustment = fields.Monetary(string="Penyesuaian HPP", compute="_compute_fg_totals")
 
     control_state = fields.Selection(CONTROL, string="Control Balance", default="unchecked", copy=False)
     control_checked_at = fields.Datetime(string="Diperiksa Pada", readonly=True, copy=False)
@@ -448,6 +555,16 @@ class KompakappsCogmWorksheet(models.Model):
             worksheet.unit_labor = round_(worksheet.direct_labor / divisor) if divisor else 0.0
             worksheet.unit_overhead = round_(worksheet.overhead / divisor) if divisor else 0.0
             worksheet.unit_wip = round_((worksheet.wip_opening - worksheet.wip_ending) / divisor) if divisor else 0.0
+
+    @api.depends("fg_ids.ending_value", "fg_ids.cogs", "fg_ids.provisional_cogs", "fg_ids.cogs_adjustment", "currency_id")
+    def _compute_fg_totals(self):
+        """Jumlah HPP penjualan barang jadi; tidak disimpan supaya selalu dihitung dari baris terbaru."""
+        for worksheet in self:
+            round_ = worksheet.currency_id.round if worksheet.currency_id else round
+            worksheet.fg_ending_value = round_(sum(worksheet.fg_ids.mapped("ending_value")))
+            worksheet.fg_cogs = round_(sum(worksheet.fg_ids.mapped("cogs")))
+            worksheet.fg_provisional = round_(sum(worksheet.fg_ids.mapped("provisional_cogs")))
+            worksheet.fg_adjustment = round_(sum(worksheet.fg_ids.mapped("cogs_adjustment")))
 
     # ------------------------------------------------------------------ dasar
 
@@ -547,6 +664,7 @@ class KompakappsCogmWorksheet(models.Model):
             worksheet.opname_ids.modified(["product_id"])  # stok sistem dan selisih dihitung ulang
             worksheet.opname_ids._refresh_cost_basis()
             worksheet._pull_outputs()
+            worksheet._pull_fg()
             worksheet.message_post(body=_("Data ditarik dari buku besar: periode %(from)s s.d. %(to)s.", **{"from": worksheet.date_from, "to": worksheet.date_to}))
         return True
 
@@ -575,6 +693,65 @@ class KompakappsCogmWorksheet(models.Model):
                 commands.append(Command.update(line.id, {"mo_qty": 0.0, "qty": 0.0}))
         if commands:
             self.with_context(kompakapps_output_auto=True).write({"output_ids": commands})
+
+    def _stock_qty(self, product, day=None):
+        """Stok sistem `product` pada akhir hari `day` (bawaan akhir periode); nol bila stoknya tidak dilacak."""
+        self.ensure_one()
+        product = product.sudo().with_company(self.company_id)
+        if not product.is_storable:
+            return 0.0
+        return product.with_context(to_date=self._cutoff(day), allowed_company_ids=[self.company_id.id]).qty_available
+
+    def _fg_basis(self, product):
+        """Dasar HPP penjualan satu barang jadi: stok awal dan biayanya, pengiriman ke pelanggan, dan HPP sementara yang sudah dibukukan pada akun HPP."""
+        self.ensure_one()
+        company = self.company_id
+        product = product.sudo().with_company(company)
+        config = self.env["kompakapps.cogm.config"]._for_company(company)
+        previous = self.env["kompakapps.cogm.fg"].sudo().search(
+            [("product_id", "=", product.id), ("worksheet_id.company_id", "=", company.id), ("worksheet_id.state", "=", "posted"), ("worksheet_id.date_to", "<", self.date_from)]
+        )
+        previous = previous.sorted(lambda line: line.worksheet_id.date_to, reverse=True)[:1]
+        moves = self.env["stock.move"].sudo().search(
+            [
+                ("company_id", "=", company.id), ("product_id", "=", product.id), ("state", "=", "done"),
+                ("date", ">", self._cutoff(self.date_from - timedelta(days=1))), ("date", "<=", self._cutoff()),
+                "|", ("location_dest_id.usage", "=", "customer"), ("location_id.usage", "=", "customer"),
+            ]
+        )
+        delivered = 0.0
+        for move in moves:
+            quantity = move.product_uom._compute_quantity(move.quantity, product.uom_id)
+            delivered += quantity if move.location_dest_id.usage == "customer" and move.location_id.usage != "customer" else -quantity
+        provisional = self._fg_provisional(product, config)
+        return {
+            "opening_qty": max(self._stock_qty(product, self.date_from - timedelta(days=1)), 0.0), "opening_cost": previous.unit_cost if previous else product.standard_price,
+            "delivered_qty": delivered, "provisional_cogs": provisional,
+        }
+
+    def _fg_provisional(self, product, config):
+        """HPP sementara: saldo akun HPP pada baris bertanda produk ini dalam periode, di luar jurnal kertas kerja COGM."""
+        self.ensure_one()
+        if not config.cogs_account_id:
+            return 0.0
+        debit, credit = self._gl_sum(
+            [("account_id", "=", config.cogs_account_id.id), ("product_id", "=", product.id), ("date", ">=", self.date_from), ("date", "<=", self.date_to), ("move_id.kompakapps_cogm_id", "=", False)]
+        )
+        return self.currency_id.round(debit - credit)
+
+    def _pull_fg(self):
+        """Barang jadi yang masuk perhitungan HPP penjualan: yang diproduksi pada periode, dan barang buatan (punya BoM) yang punya stok awal. Hanya yang stoknya dilacak."""
+        self.ensure_one()
+        products = self.output_ids.product_id.filtered("is_storable")
+        boms = self.env["mrp.bom"].sudo().search([("type", "=", "normal"), ("company_id", "in", [self.company_id.id, False])])
+        for product in boms.product_tmpl_id.product_variant_ids.filtered("is_storable") - products:
+            if self._stock_qty(product, self.date_from - timedelta(days=1)) > 0:
+                products |= product
+        existing = self.fg_ids.mapped("product_id")
+        new = products - existing
+        if new:
+            self.write({"fg_ids": [Command.create({"product_id": product.id}) for product in new]})
+        self.fg_ids.filtered(lambda line: line.product_id in existing)._refresh_fg_basis()
 
     # ------------------------------------------------------------------ bantuan untuk UI
 
@@ -809,24 +986,65 @@ class KompakappsCogmWorksheet(models.Model):
         else:
             add("output", _("Qty diproduksi terisi"), "info", _("Tidak ada produksi dan COGM nol; tidak ada yang dibagi."))
 
+        # HPP penjualan: barang jadi (qty awal + produksi - stok akhir = terjual) dinilai pada biaya rata-rata tertimbang.
+        fg = self.fg_ids
+        if fg:
+            problems = []
+            stale = fg.filtered(lambda line: abs(self._fg_provisional(line.product_id, config) - line.provisional_cogs) > 0.005)
+            if stale:
+                problems.append(_("HPP sementara di buku besar berubah sejak ditarik (%s): tarik ulang.", ", ".join(stale.mapped("product_id.display_name")[:3])))
+            over = fg.filtered(lambda line: line.sold_qty < -1e-9)
+            if over:
+                problems.append(_("stok akhir melebihi yang tersedia (stok awal + produksi) pada %s: periksa hitung fisik dan qty diproduksi.", ", ".join(over.mapped("product_id.display_name")[:3])))
+            no_cost = fg.filtered(lambda line: line.available_qty > 0 and line.unit_cost <= 0)
+            if no_cost:
+                problems.append(_("biaya per unit nol pada %s.", ", ".join(no_cost.mapped("product_id.display_name")[:3])))
+            if problems:
+                add("cogs", _("HPP penjualan barang jadi"), "error", "; ".join(str(p) for p in problems).capitalize())
+            elif not config.cogs_account_id:
+                add("cogs", _("HPP penjualan barang jadi"), "warn", _("Akun HPP penjualan belum dipilih di Pengaturan COGM, jadi HPP aktual %s tidak dijurnal.", self._fmt(self.fg_cogs)))
+            else:
+                add(
+                    "cogs", _("HPP penjualan barang jadi"), "ok",
+                    _("HPP aktual %(cogs)s untuk %(sold)g unit terjual; sementara %(prov)s; penyesuaian %(adj)s; nilai stok akhir %(end)s.", cogs=self._fmt(self.fg_cogs), sold=sum(fg.mapped("sold_qty")), prov=self._fmt(self.fg_provisional), adj=self._fmt(self.fg_adjustment), end=self._fmt(self.fg_ending_value)),
+                )
+            # Saldo awal akun barang jadi di buku besar seharusnya sama dengan nilai barang jadi awal per produk.
+            debit, credit = self._gl_sum([("account_id", "=", config.fg_account_id.id), ("date", "<", self.date_from)])
+            opening_gl = self.currency_id.round(debit - credit)
+            opening_fg = self.currency_id.round(sum(fg.mapped("opening_value")))
+            if abs(opening_gl - opening_fg) > 0.5:
+                add(
+                    "fg_gl", _("Saldo awal Inventory COGM cocok"), "warn",
+                    _("Saldo awal %(account)s di buku besar %(gl)s berbeda dari nilai barang jadi awal %(fg)s (selisih %(diff)s), mis. COGM bulan sebelumnya yang barang jadinya belum dilacak. Selisih ini tidak ikut dihitung sebagai HPP.", account=config.fg_account_id.display_name, gl=self._fmt(opening_gl), fg=self._fmt(opening_fg), diff=self._fmt(opening_gl - opening_fg)),
+                )
+            tolerance = config.tolerance_pct
+            off = fg.filtered(lambda line: abs(line.variance_qty) > abs(line.book_qty) * tolerance / 100.0 + 1e-9)
+            unexplained = off.filtered(lambda line: not (line.explanation or "").strip())
+            if unexplained:
+                detail = "; ".join(f"{line.product_id.display_name}: fisik {line.qty:g}, sistem {line.book_qty:g} ({line.variance_qty:+g})" for line in unexplained[:3])
+                add("fg_variance", _("Stok akhir barang jadi wajar"), "error", _("%(n)d barang jadi selisih di atas toleransi %(tol)g%% tanpa alasan: %(detail)s.", n=len(unexplained), tol=tolerance, detail=detail))
+            else:
+                add("fg_variance", _("Stok akhir barang jadi wajar"), "ok", _("Stok akhir barang jadi dalam toleransi atau sudah dijelaskan."))
+
         # Jurnal yang akan dibuat harus seimbang dan angka COGM-nya harus sama dengan kertas kerja.
         lines = self._journal_lines(config)
         debit_total = round(sum(line[1] for line in lines), 2)
         credit_total = round(sum(line[2] for line in lines), 2)
         fg_debit = sum(line[1] - line[2] for line in lines if line[0] == config.fg_account_id)
-        if abs(debit_total - credit_total) > 0.005 or abs(fg_debit - self.cogm) > 0.005:
+        fg_expected = self.cogm - (self.fg_adjustment if config.cogs_account_id else 0.0)  # akun barang jadi menerima COGM dan dikurangi penyesuaian HPP penjualan
+        if abs(debit_total - credit_total) > 0.005 or abs(fg_debit - fg_expected) > 0.005:
             add(
                 "journal", _("Jurnal COGM seimbang"), "error",
-                _("Jurnal tidak seimbang atau tidak sama dengan kertas kerja: Debit %(d)s, Kredit %(c)s, COGM di jurnal %(fg)s, COGM kertas kerja %(cogm)s.", d=self._fmt(debit_total), c=self._fmt(credit_total), fg=self._fmt(fg_debit), cogm=self._fmt(self.cogm)),
-                expected=self.cogm, actual=fg_debit,
+                _("Jurnal tidak seimbang atau tidak sama dengan kertas kerja: Debit %(d)s, Kredit %(c)s, COGM di jurnal %(fg)s, COGM kertas kerja %(cogm)s.", d=self._fmt(debit_total), c=self._fmt(credit_total), fg=self._fmt(fg_debit), cogm=self._fmt(fg_expected)),
+                expected=fg_expected, actual=fg_debit,
             )
         else:
             add("journal", _("Jurnal COGM seimbang"), "ok", _("Debit = Kredit = %(total)s; selisih 0.", total=self._fmt(debit_total)), expected=debit_total, actual=credit_total)
 
         # Penyesuaian stok dan biaya produk yang akan dilakukan saat Execute.
-        if config.adjust_stock and opname:
+        if config.adjust_stock and (opname or self.fg_ids):
             todo, skipped = self._adjustment_plan(config)
-            manual = self._manual_adjustments_after_period(opname)
+            manual = self._manual_adjustments_after_period()
             notes = []
             if todo:
                 notes.append(_("Saat Execute stok sistem disesuaikan ke hasil opname untuk %(n)d bahan (bersih %(net)+g).", n=len(todo), net=sum(delta for _line, delta in todo)))
@@ -899,6 +1117,10 @@ class KompakappsCogmWorksheet(models.Model):
         move(summary, -self.wip_ending, _("Barang dalam proses akhir (opname)"))
         move(config.fg_account_id, self.cogm, _("COGM periode %(from)s s.d. %(to)s", **{"from": self.date_from, "to": self.date_to}))
         move(summary, -self.cogm, _("COGM dipindah ke persediaan barang jadi"))
+        if config.cogs_account_id:
+            # HPP penjualan aktual (qty terjual x biaya rata-rata) dikurangi HPP sementara yang sudah dibukukan saat penjualan
+            move(config.cogs_account_id, self.fg_adjustment, _("HPP penjualan: penyesuaian terhadap HPP sementara"))
+            move(config.fg_account_id, -self.fg_adjustment, _("HPP penjualan barang jadi (penyesuaian)"))
         return lines
 
     def action_post(self):
@@ -941,7 +1163,7 @@ class KompakappsCogmWorksheet(models.Model):
         """([(baris, selisih jumlah)], [(baris, alasan dilewati)]) penyesuaian stok yang dilakukan saat Execute: jumlah fisik dikurangi stok sistem akhir periode."""
         self.ensure_one()
         todo, skipped = [], []
-        for line in self.opname_ids:
+        for line in [*self.opname_ids, *self.fg_ids]:
             product = line.product_id.sudo().with_company(self.company_id)
             if not product.is_storable:
                 continue
@@ -956,25 +1178,29 @@ class KompakappsCogmWorksheet(models.Model):
                 todo.append((line, delta))
         return todo, skipped
 
-    def _manual_adjustments_after_period(self, opname):
-        """Jumlah penyesuaian stok (inventory adjustment) terselesaikan setelah akhir periode pada bahan yang diopname, di luar yang dibuat kertas kerja ini."""
+    def _manual_adjustments_after_period(self):
+        """Jumlah penyesuaian stok (inventory adjustment) terselesaikan setelah akhir periode pada bahan dan barang jadi yang dihitung, di luar yang dibuat kertas kerja ini."""
         self.ensure_one()
+        products = self.opname_ids.product_id | self.fg_ids.product_id
+        own = self.opname_ids.adjust_move_ids | self.fg_ids.adjust_move_ids
         return self.env["stock.move"].sudo().search_count(
             [
-                ("company_id", "=", self.company_id.id), ("product_id", "in", opname.product_id.ids), ("is_inventory", "=", True), ("state", "=", "done"),
-                ("date", ">", self._cutoff()), ("id", "not in", opname.adjust_move_ids.ids),
+                ("company_id", "=", self.company_id.id), ("product_id", "in", products.ids), ("is_inventory", "=", True), ("state", "=", "done"),
+                ("date", ">", self._cutoff()), ("id", "not in", own.ids),
             ]
         )
 
     def _apply_costs(self, config):
         """Ganti biaya produk dengan biaya rata-rata tertimbang periode (baris bersumber rata-rata). Mengembalikan jumlah bahan yang berubah."""
         self.ensure_one()
-        if not (config.update_product_cost and config.cost_method == "average"):
+        if not config.update_product_cost:
             return 0
         changed = 0
-        for line in self.opname_ids.filtered(lambda line: line.cost_source == "average"):
+        # bahan baku: hanya baris bersumber rata-rata tertimbang; barang jadi: biaya rata-rata tertimbang HPP penjualan
+        lines = [*(self.opname_ids.filtered(lambda line: line.cost_source == "average") if config.cost_method == "average" else []), *self.fg_ids]
+        for line in lines:
             product = line.product_id.sudo().with_company(self.company_id)
-            if product.categ_id.property_valuation == "real_time" or abs(product.standard_price - line.unit_cost) <= 0.004:
+            if product.categ_id.property_valuation == "real_time" or line.unit_cost <= 0 or abs(product.standard_price - line.unit_cost) <= 0.004:
                 continue
             line.write({"old_cost": product.standard_price, "cost_updated": True})
             product.standard_price = line.unit_cost
@@ -1038,7 +1264,7 @@ class KompakappsCogmWorksheet(models.Model):
         """Kembalikan biaya produk dan penyesuaian stok yang dibuat saat Execute (dipanggil setelah kertas kerja kembali ke draft)."""
         self.ensure_one()
         when = self._cutoff()
-        for line in self.opname_ids:
+        for line in [*self.opname_ids, *self.fg_ids]:
             product = line.product_id.sudo().with_company(self.company_id)
             if line.cost_updated:
                 if abs(product.standard_price - line.unit_cost) <= 0.004:  # tidak menimpa biaya yang sudah diubah pihak lain sesudah Execute
