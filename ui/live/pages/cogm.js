@@ -294,32 +294,59 @@ function varianceCell(r) {
   return `<span class="${tone}">${diff > 0 ? "+" : ""}${nf.format(diff)}</span>`;
 }
 
+/** Nilai persediaan menurut sistem (stok sistem x biaya per unit); kosong untuk bahan yang tidak dilacak stoknya. */
+const bookValue = (r) => (r.storable ? Math.round(r.bookQty * num(r.unitCost)) : null);
+/** Selisih nilai = nilai valuasi baru (hasil opname) dikurangi nilai sistem. */
+const valueDiff = (r) => (r.storable ? opValue(r) - bookValue(r) : null);
+const signed = (n) => `${n > 0 ? "+" : ""}${rupiah(n)}`;
+
+function bookValueCell(r) {
+  const value = bookValue(r);
+  return value === null ? '<span class="text-gray-400" title="Produk tidak dilacak stoknya, jadi tidak ada nilai sistem">-</span>' : esc(rupiah(value));
+}
+
+function valueDiffCell(r) {
+  const diff = valueDiff(r);
+  if (diff === null) return '<span class="text-gray-400" title="Produk tidak dilacak stoknya">-</span>';
+  return `<span class="${diff < 0 ? "text-rose-700" : diff > 0 ? "text-emerald-700" : "text-gray-600"}">${esc(diff === 0 ? rupiah(0) : signed(diff))}</span>`;
+}
+
+const sum = (rows, fn) => rows.reduce((total, r) => total + (fn(r) ?? 0), 0);
+
 function opsHtml() {
   const draft = form.ws.state === "draft";
   const rows = form.ops
     .map((r, i) => {
       if (!draft) {
-        return `<tr class="text-sm align-top"><td class="py-2 px-3">${esc(r.product?.display_name)}</td><td class="py-2 px-3">${esc(r.uom)}</td><td class="py-2 px-3 text-right tabular-nums">${r.storable ? nf.format(r.bookQty) : "-"}</td>
-          <td class="py-2 px-3 text-right tabular-nums">${nf.format(num(r.qty))}</td><td class="py-2 px-3 text-right tabular-nums">${esc(rupiah(num(r.unitCost)))}</td>
-          <td class="py-2 px-3 text-right tabular-nums">${esc(rupiah(opValue(r)))}</td><td class="py-2 px-3 text-right">${varianceCell(r)}</td><td class="py-2 px-3 text-gray-600">${esc(r.explanation)}</td></tr>`;
+        return `<tr class="text-sm align-top"><td class="py-2 px-3 min-w-56">${esc(r.product?.display_name)}</td><td class="py-2 px-3">${esc(r.uom)}</td><td class="py-2 px-3 text-right tabular-nums">${r.storable ? nf.format(r.bookQty) : "-"}</td>
+          <td class="py-2 px-3 text-right tabular-nums">${nf.format(num(r.qty))}</td><td class="py-2 px-3 text-right">${varianceCell(r)}</td><td class="py-2 px-3 text-right tabular-nums">${esc(rupiah(num(r.unitCost)))}</td>
+          <td class="py-2 px-3 text-right tabular-nums text-gray-600">${bookValueCell(r)}</td><td class="py-2 px-3 text-right tabular-nums font-medium">${esc(rupiah(opValue(r)))}</td>
+          <td class="py-2 px-3 text-right tabular-nums">${valueDiffCell(r)}</td><td class="py-2 px-3 text-gray-600">${esc(r.explanation)}</td></tr>`;
       }
       return `<tr class="text-sm align-top">
         <td class="py-2 px-3 min-w-72"><input data-lookup="cogm-product" data-op="${i}" autocomplete="off" role="combobox" aria-autocomplete="list" value="${esc(r.product?.display_name ?? "")}" placeholder="Cari bahan baku..." class="${INPUT}"></td>
         <td class="py-2 px-3 whitespace-nowrap text-gray-600">${esc(r.uom)}</td>
         <td class="py-2 px-3 text-right tabular-nums text-gray-600" title="Jumlah menurut pergerakan stok sistem pada akhir periode">${r.storable ? nf.format(r.bookQty) : "-"}</td>
         <td class="py-2 px-3 w-36">${numInput(`data-op="${i}" data-field="qty" aria-label="Jumlah fisik"`, r.qty)}</td>
-        <td class="py-2 px-3 w-44">${numInput(`data-op="${i}" data-field="unitCost" aria-label="Biaya per unit"`, r.unitCost)}</td>
-        <td class="py-2 px-3 text-right tabular-nums" id="op-value-${i}">${esc(rupiah(opValue(r)))}</td>
         <td class="py-2 px-3 text-right tabular-nums" id="op-var-${i}">${varianceCell(r)}</td>
+        <td class="py-2 px-3 w-44">${numInput(`data-op="${i}" data-field="unitCost" aria-label="Biaya per unit"`, r.unitCost)}</td>
+        <td class="py-2 px-3 text-right tabular-nums text-gray-600" id="op-book-${i}" title="Stok sistem x biaya per unit">${bookValueCell(r)}</td>
+        <td class="py-2 px-3 text-right tabular-nums font-medium" id="op-value-${i}" title="Jumlah fisik x biaya per unit">${esc(rupiah(opValue(r)))}</td>
+        <td class="py-2 px-3 text-right tabular-nums" id="op-diffv-${i}" title="Nilai valuasi baru dikurangi nilai sistem">${valueDiffCell(r)}</td>
         <td class="py-2 px-3 min-w-44"><input data-op="${i}" data-field="explanation" value="${esc(r.explanation)}" placeholder="Wajib bila selisih besar" class="${INPUT}"></td>
         <td class="py-2 px-3"><button data-action="cogm-rm-op" data-i="${i}" class="text-rose-600 hover:text-rose-800" aria-label="Hapus baris"><i class="fas fa-trash"></i></button></td></tr>`;
     })
     .join("");
-  const total = form.ops.reduce((sum, r) => sum + opValue(r), 0);
-  return `<div class="overflow-x-auto"><table class="w-full text-left" data-list="on"><thead class="border-b border-gray-200"><tr>${th("Bahan Baku")}${th("Satuan")}${th("Stok Sistem", true)}${th("Jumlah Fisik", true)}${th("Biaya per Unit", true)}${th("Nilai", true)}${th("Selisih Jumlah", true)}${th("Alasan Selisih")}${draft ? th("") : ""}</tr></thead>
-    <tbody class="divide-y divide-gray-100">${rows || `<tr><td colspan="9" class="py-6 text-center text-sm text-gray-500">Belum ada hasil opname. ${draft ? "Tambahkan bahan baku yang dihitung (isi 0 bila habis)." : ""}</td></tr>`}</tbody>
-    <tfoot><tr class="border-t border-gray-200 text-sm font-semibold"><td class="py-2 px-3" colspan="5">Persediaan Bahan Baku Akhir (opname)</td><td class="py-2 px-3 text-right tabular-nums" id="op-total">${esc(rupiah(total))}</td><td colspan="${draft ? 3 : 2}"></td></tr></tfoot></table></div>
-    ${draft ? `<div class="px-5 py-3"><button data-action="cogm-add-op" class="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50"><i class="fas fa-plus mr-2"></i>Tambah Bahan Baku</button>
+  const diffTotal = sum(form.ops, valueDiff);
+  return `<div class="overflow-x-auto"><table class="w-full text-left" data-list="on"><thead class="border-b border-gray-200"><tr>${th("Bahan Baku")}${th("Satuan")}${th("Stok Sistem", true)}${th("Jumlah Fisik", true)}${th("Selisih Jumlah", true)}${th("Biaya per Unit", true)}${th("Nilai Sistem", true)}${th("Nilai Valuasi Baru", true)}${th("Selisih Nilai", true)}${th("Alasan Selisih")}${draft ? th("") : ""}</tr></thead>
+    <tbody class="divide-y divide-gray-100">${rows || `<tr><td colspan="11" class="py-6 text-center text-sm text-gray-500">Belum ada hasil opname. ${draft ? "Tambahkan bahan baku yang dihitung (isi 0 bila habis)." : ""}</td></tr>`}</tbody>
+    <tfoot><tr class="border-t border-gray-200 text-sm font-semibold"><td class="py-2 px-3" colspan="6">Persediaan Bahan Baku Akhir (opname)</td>
+      <td class="py-2 px-3 text-right tabular-nums text-gray-600" id="op-book-total">${esc(rupiah(sum(form.ops, bookValue)))}</td>
+      <td class="py-2 px-3 text-right tabular-nums" id="op-total">${esc(rupiah(sum(form.ops, opValue)))}</td>
+      <td class="py-2 px-3 text-right tabular-nums ${diffTotal < 0 ? "text-rose-700" : diffTotal > 0 ? "text-emerald-700" : ""}" id="op-diffv-total">${esc(diffTotal === 0 ? rupiah(0) : signed(diffTotal))}</td>
+      <td colspan="${draft ? 2 : 1}"></td></tr></tfoot></table></div>
+    <p class="px-5 py-2 text-xs text-gray-500 border-t border-gray-100"><b>Nilai Valuasi Baru</b> = jumlah fisik x biaya per unit: nilai persediaan bahan baku setelah disesuaikan ke hasil opname (menjadi saldo akhir akun persediaan saat jurnal COGM dieksekusi). <b>Nilai Sistem</b> = stok sistem x biaya per unit; <b>Selisih Nilai</b> = nilai baru dikurangi nilai sistem, hanya untuk bahan yang dilacak stoknya (kolom total Nilai Sistem dan Selisih Nilai tidak menghitung bahan yang tidak dilacak).</p>
+    ${draft ? `<div class="px-5 pb-3"><button data-action="cogm-add-op" class="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50"><i class="fas fa-plus mr-2"></i>Tambah Bahan Baku</button>
       <span class="text-xs text-gray-500 ml-3">Satu baris per bahan baku (gabungkan semua lokasi). Selisih terhadap stok sistem di atas toleransi ${nf.format(form.defaults.tolerance_pct ?? 0)}% perlu alasan.</span></div>` : ""}`;
 }
 
@@ -387,7 +414,19 @@ function refreshLive() {
     if (value) value.textContent = rupiah(opValue(r));
     const variance = document.getElementById(`op-var-${i}`);
     if (variance) variance.innerHTML = varianceCell(r);
+    const book = document.getElementById(`op-book-${i}`);
+    if (book) book.innerHTML = bookValueCell(r);
+    const diff = document.getElementById(`op-diffv-${i}`);
+    if (diff) diff.innerHTML = valueDiffCell(r);
   });
+  const bookTotal = document.getElementById("op-book-total");
+  if (bookTotal) bookTotal.textContent = rupiah(sum(form.ops, bookValue));
+  const diffTotalCell = document.getElementById("op-diffv-total");
+  if (diffTotalCell) {
+    const diffTotal = sum(form.ops, valueDiff);
+    diffTotalCell.textContent = diffTotal === 0 ? rupiah(0) : signed(diffTotal);
+    diffTotalCell.className = `py-2 px-3 text-right tabular-nums ${diffTotal < 0 ? "text-rose-700" : diffTotal > 0 ? "text-emerald-700" : ""}`;
+  }
   form.wips.forEach((r, i) => {
     const value = document.getElementById(`wip-value-${i}`);
     if (value) value.textContent = rupiah(wipValue(r));
