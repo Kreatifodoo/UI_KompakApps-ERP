@@ -42,6 +42,8 @@ class TestCogmWorksheet(AccountTestInvoicingCommon):
         common = {"type": "consu", "is_storable": False, "taxes_id": [Command.clear()], "supplier_taxes_id": [Command.clear()]}
         cls.resin = cls._create_product(name="Resin COGM", standard_price=50000.0, **common)
         cls.solvent = cls._create_product(name="Pelarut COGM", standard_price=150000.0, **common)
+        cls.kit_a = cls._create_product(name="Kit Reagen A COGM", standard_price=0.0, **common)
+        cls.kit_b = cls._create_product(name="Kit Reagen B COGM", standard_price=0.0, **common)
 
     @classmethod
     def _account(cls, code):
@@ -92,6 +94,7 @@ class TestCogmWorksheet(AccountTestInvoicingCommon):
                     Command.create({"product_id": self.solvent.id, "qty": 40.0}),
                 ],
                 "wip_ids": [Command.create({"name": "Batch WIP-1", "qty": 100.0, "material_cost": 30000.0, "material_pct": 100.0, "conversion_cost": 20000.0, "completion_pct": 50.0})],
+                "output_ids": [Command.create({"product_id": self.kit_a.id, "qty": 600.0}), Command.create({"product_id": self.kit_b.id, "qty": 400.0})],
             }
         )
         worksheet.action_pull()
@@ -514,3 +517,53 @@ class TestCogmWorksheet(AccountTestInvoicingCommon):
         adjust = next(c for c in result["checks"] if c["key"] == "adjust")
         self.assertEqual(adjust["status"], "warn")
         self.assertIn("manual", adjust["message"])
+
+    # ------------------------------------------------------------------ HPP per unit: total biaya aktual dibagi qty yang diproduksi (Q67)
+
+    def test_unit_cost_is_the_total_actual_cost_divided_by_the_produced_qty(self):
+        self._book_period()
+        worksheet = self._complete(self._worksheet())
+        self.assertEqual(worksheet.cogm, 61_000_000)
+        self.assertEqual(worksheet.qty_produced, 1000.0)
+        self.assertEqual(worksheet.unit_cogm, 61_000.0, "COGM 61 juta dibagi 1.000 unit")
+        self.assertEqual(
+            (worksheet.unit_material, worksheet.unit_labor, worksheet.unit_overhead, worksheet.unit_wip), (47_500.0, 8_000.0, 6_500.0, -1_000.0),
+            "bahan terpakai, tenaga kerja, overhead, dan perubahan WIP per unit",
+        )
+        self.assertEqual(sum([worksheet.unit_material, worksheet.unit_labor, worksheet.unit_overhead, worksheet.unit_wip]), worksheet.unit_cogm)
+        by_product = {line.product_id: line.cogm_value for line in worksheet.output_ids}
+        self.assertEqual(by_product, {self.kit_a: 36_600_000, self.kit_b: 24_400_000})
+        self.assertEqual(sum(by_product.values()), worksheet.cogm)
+        self.assertEqual(worksheet.action_check()["state"], "green")
+
+    def test_missing_produced_qty_turns_red_and_blocks_execute(self):
+        self._book_period()
+        worksheet = self._complete(self._worksheet())
+        worksheet.output_ids.unlink()
+        self.assertEqual((worksheet.qty_produced, worksheet.unit_cogm), (0.0, 0.0))
+        self.assertEqual(self._failing(worksheet), {"output"})
+        with self.assertRaises(UserError):
+            worksheet.action_post()
+        worksheet.write({"output_ids": [Command.create({"product_id": self.kit_a.id, "qty": 0.0})]})
+        self.assertEqual(self._failing(worksheet), {"output"}, "qty nol sama dengan belum diisi")
+        worksheet.output_ids.qty = 250.0
+        self.assertEqual(worksheet.unit_cogm, 244_000.0)
+        self.assertEqual(self._failing(worksheet), set())
+
+    def test_produced_qty_is_pulled_from_finished_manufacturing_orders_and_manual_edits_stay(self):
+        self.env.user.write({"group_ids": [Command.link(self.env.ref("mrp.group_mrp_manager").id)]})
+        finished = self._create_product(name="Barang Jadi MO COGM", type="consu", standard_price=0.0, taxes_id=[Command.clear()], supplier_taxes_id=[Command.clear()])
+        bom = self.env["mrp.bom"].create({"product_tmpl_id": finished.product_tmpl_id.id, "product_qty": 1.0, "product_uom_id": finished.uom_id.id})
+        production = self.env["mrp.production"].create({"product_id": finished.id, "product_qty": 5.0, "bom_id": bom.id})
+        production.action_confirm()
+        production.qty_producing = 5.0
+        production.button_mark_done()
+        self.assertEqual(production.state, "done")
+        worksheet = self._worksheet()
+        worksheet.action_pull()
+        line = worksheet.output_ids
+        self.assertEqual((line.product_id, line.mo_qty, line.qty, line.source), (finished, 5.0, 5.0, "mo"))
+        line.qty = 6.0
+        self.assertEqual(line.source, "manual", "qty yang diubah petugas ditandai manual")
+        worksheet.action_pull()
+        self.assertEqual((line.mo_qty, line.qty, line.source), (5.0, 6.0, "manual"), "tarik ulang tidak menimpa qty manual")

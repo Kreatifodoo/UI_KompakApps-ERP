@@ -284,6 +284,46 @@ class KompakappsCogmOpname(models.Model):
         return abs(self.book_qty) * tolerance_pct / 100.0
 
 
+class KompakappsCogmOutput(models.Model):
+    _name = "kompakapps.cogm.output"
+    _inherit = ["kompakapps.cogm.child"]
+    _description = "Hasil Produksi Kertas Kerja COGM"
+    _order = "worksheet_id, id"
+
+    worksheet_id = fields.Many2one("kompakapps.cogm.worksheet", string="Kertas Kerja", required=True, ondelete="cascade", index=True)
+    company_id = fields.Many2one(related="worksheet_id.company_id", store=True, index=True)
+    currency_id = fields.Many2one(related="worksheet_id.currency_id")
+    product_id = fields.Many2one("product.product", string="Barang Jadi", required=True, domain="[('type', '=', 'consu')]")
+    uom_id = fields.Many2one(related="product_id.uom_id", string="Satuan")
+    mo_qty = fields.Float(string="Qty dari MO", digits="Product Unit", copy=False, help="Jumlah yang diselesaikan Manufacturing Order dalam periode.")
+    qty = fields.Float(string="Qty Diproduksi", digits="Product Unit", help="Pembagi biaya produksi: HPP per unit = total biaya dibagi jumlah ini.")
+    source = fields.Selection([("mo", "Manufacturing Order"), ("manual", "Manual")], string="Sumber", default="manual", required=True)
+    cogm_value = fields.Monetary(string="Nilai COGM", compute="_compute_cogm_value", store=True, help="Bagian COGM untuk barang jadi ini: qty diproduksi x HPP per unit.")
+
+    _product_unique = models.Constraint("UNIQUE(worksheet_id, product_id)", "Barang jadi ini sudah ada pada hasil produksi. Ubah qty pada baris yang ada.")
+
+    @api.constrains("qty")
+    def _check_qty(self):
+        for line in self:
+            if line.qty < 0:
+                raise ValidationError(_("Qty diproduksi tidak boleh negatif (%s).", line.product_id.display_name))
+
+    @api.depends("qty", "worksheet_id.unit_cogm", "currency_id")
+    def _compute_cogm_value(self):
+        for line in self:
+            value = line.qty * line.worksheet_id.unit_cogm
+            line.cogm_value = line.currency_id.round(value) if line.currency_id else value
+
+    def write(self, vals):
+        if "qty" in vals and "source" not in vals and not self.env.context.get("kompakapps_output_auto"):
+            changed = self.filtered(lambda line: line.source == "mo" and abs(line.qty - vals["qty"]) > 1e-9)
+            if changed:
+                super(KompakappsCogmOutput, changed).write({**vals, "source": "manual"})  # qty dari MO diubah petugas: tidak ikut ditimpa saat data ditarik ulang
+                rest = self - changed
+                return super(KompakappsCogmOutput, rest).write(vals) if rest else True
+        return super().write(vals)
+
+
 class KompakappsCogmWip(models.Model):
     _name = "kompakapps.cogm.wip"
     _inherit = ["kompakapps.cogm.child"]
@@ -347,6 +387,7 @@ class KompakappsCogmWorksheet(models.Model):
     line_ids = fields.One2many("kompakapps.cogm.line", "worksheet_id", string="Data Buku Besar", copy=False)
     opname_ids = fields.One2many("kompakapps.cogm.opname", "worksheet_id", string="Opname Bahan Baku", copy=True)
     wip_ids = fields.One2many("kompakapps.cogm.wip", "worksheet_id", string="Opname WIP", copy=True)
+    output_ids = fields.One2many("kompakapps.cogm.output", "worksheet_id", string="Hasil Produksi", copy=True)
     pulled_at = fields.Datetime(string="Data Ditarik Pada", readonly=True, copy=False)
 
     rm_opening = fields.Monetary(string="Persediaan Bahan Baku Awal", compute="_compute_totals", store=True)
@@ -360,6 +401,12 @@ class KompakappsCogmWorksheet(models.Model):
     wip_opening = fields.Monetary(string="WIP Awal", compute="_compute_totals", store=True)
     wip_ending = fields.Monetary(string="WIP Akhir (Opname)", compute="_compute_totals", store=True)
     cogm = fields.Monetary(string="COGM", compute="_compute_totals", store=True)
+    qty_produced = fields.Float(string="Qty Diproduksi", digits="Product Unit", compute="_compute_totals", store=True, help="Pembagi HPP per unit.")
+    unit_cogm = fields.Monetary(string="HPP per Unit", compute="_compute_totals", store=True, help="COGM dibagi qty diproduksi.")
+    unit_material = fields.Monetary(string="Bahan Baku per Unit", compute="_compute_totals", store=True)
+    unit_labor = fields.Monetary(string="Tenaga Kerja per Unit", compute="_compute_totals", store=True)
+    unit_overhead = fields.Monetary(string="Overhead per Unit", compute="_compute_totals", store=True)
+    unit_wip = fields.Monetary(string="Penyesuaian WIP per Unit", compute="_compute_totals", store=True)
 
     control_state = fields.Selection(CONTROL, string="Control Balance", default="unchecked", copy=False)
     control_checked_at = fields.Datetime(string="Diperiksa Pada", readonly=True, copy=False)
@@ -374,7 +421,7 @@ class KompakappsCogmWorksheet(models.Model):
             if worksheet.date_from > worksheet.date_to:
                 raise ValidationError(_("Tanggal mulai periode tidak boleh setelah tanggal akhir."))
 
-    @api.depends("line_ids.section", "line_ids.amount", "opname_ids.value", "wip_ids.value", "currency_id")
+    @api.depends("line_ids.section", "line_ids.amount", "opname_ids.value", "wip_ids.value", "output_ids.qty", "currency_id")
     def _compute_totals(self):
         for worksheet in self:
             total = defaultdict(float)
@@ -392,6 +439,15 @@ class KompakappsCogmWorksheet(models.Model):
             worksheet.rm_used = worksheet.rm_available - worksheet.rm_ending
             worksheet.total_cost = worksheet.rm_used + worksheet.direct_labor + worksheet.overhead
             worksheet.cogm = worksheet.total_cost + worksheet.wip_opening - worksheet.wip_ending
+            # Seluruh biaya aktual dijumlahkan lebih dulu (COGM), baru dibagi qty yang diproduksi.
+            qty = sum(worksheet.output_ids.mapped("qty"))
+            worksheet.qty_produced = qty
+            divisor = qty if qty > 0 else 0.0
+            worksheet.unit_cogm = round_(worksheet.cogm / divisor) if divisor else 0.0
+            worksheet.unit_material = round_(worksheet.rm_used / divisor) if divisor else 0.0
+            worksheet.unit_labor = round_(worksheet.direct_labor / divisor) if divisor else 0.0
+            worksheet.unit_overhead = round_(worksheet.overhead / divisor) if divisor else 0.0
+            worksheet.unit_wip = round_((worksheet.wip_opening - worksheet.wip_ending) / divisor) if divisor else 0.0
 
     # ------------------------------------------------------------------ dasar
 
@@ -490,8 +546,35 @@ class KompakappsCogmWorksheet(models.Model):
             worksheet.write({"line_ids": [Command.create(v) for v in values], "pulled_at": fields.Datetime.now(), "control_state": "unchecked", "control_checked_at": False})
             worksheet.opname_ids.modified(["product_id"])  # stok sistem dan selisih dihitung ulang
             worksheet.opname_ids._refresh_cost_basis()
+            worksheet._pull_outputs()
             worksheet.message_post(body=_("Data ditarik dari buku besar: periode %(from)s s.d. %(to)s.", **{"from": worksheet.date_from, "to": worksheet.date_to}))
         return True
+
+    def _pull_outputs(self):
+        """Qty yang telah diproduksi: jumlah barang jadi dari Manufacturing Order selesai dalam periode, per produk. Baris yang qty-nya diubah petugas (manual) tidak ditimpa."""
+        self.ensure_one()
+        productions = self.env["mrp.production"].sudo().search(
+            [
+                ("company_id", "=", self.company_id.id), ("state", "=", "done"),
+                ("date_finished", ">", self._cutoff(self.date_from - timedelta(days=1))), ("date_finished", "<=", self._cutoff()),
+            ]
+        )
+        totals = defaultdict(float)
+        for production in productions:
+            totals[production.product_id] += production.product_uom_id._compute_quantity(production.qty_produced, production.product_id.uom_id)
+        existing = {line.product_id: line for line in self.output_ids}
+        commands = []
+        for product, qty in totals.items():
+            line = existing.get(product)
+            if not line:
+                commands.append(Command.create({"product_id": product.id, "mo_qty": qty, "qty": qty, "source": "mo"}))
+            else:
+                commands.append(Command.update(line.id, {"mo_qty": qty, **({"qty": qty} if line.source == "mo" else {})}))
+        for product, line in existing.items():
+            if product not in totals and line.source == "mo":
+                commands.append(Command.update(line.id, {"mo_qty": 0.0, "qty": 0.0}))
+        if commands:
+            self.with_context(kompakapps_output_auto=True).write({"output_ids": commands})
 
     # ------------------------------------------------------------------ bantuan untuk UI
 
@@ -714,6 +797,17 @@ class KompakappsCogmWorksheet(models.Model):
             add("cogm", _("COGM tidak negatif"), "error", _("COGM %s negatif. Periksa WIP akhir dan persediaan akhir.", self._fmt(self.cogm)))
         else:
             add("cogm", _("COGM tidak negatif"), "ok", _("COGM %s.", self._fmt(self.cogm)))
+
+        # Pembagi HPP per unit: qty yang telah diproduksi.
+        outputs = self.output_ids
+        if self.cogm != 0 and self.qty_produced <= 0:
+            add("output", _("Qty diproduksi terisi"), "error", _("COGM %s belum bisa dibagi: isi qty barang jadi yang diproduksi pada periode ini (otomatis dari MO selesai, atau ketik manual).", self._fmt(self.cogm)))
+        elif outputs and len(outputs.uom_id) > 1:
+            add("output", _("Qty diproduksi terisi"), "warn", _("Barang jadi memakai satuan berbeda (%s) tetapi qty-nya dijumlahkan sebagai pembagi. Pastikan satuannya sebanding.", ", ".join(outputs.uom_id.mapped("name"))))
+        elif outputs:
+            add("output", _("Qty diproduksi terisi"), "ok", _("%(qty)g unit diproduksi (%(n)d barang jadi); HPP per unit %(unit)s.", qty=self.qty_produced, n=len(outputs), unit=self._fmt(self.unit_cogm)))
+        else:
+            add("output", _("Qty diproduksi terisi"), "info", _("Tidak ada produksi dan COGM nol; tidak ada yang dibagi."))
 
         # Jurnal yang akan dibuat harus seimbang dan angka COGM-nya harus sama dengan kertas kerja.
         lines = self._journal_lines(config)
