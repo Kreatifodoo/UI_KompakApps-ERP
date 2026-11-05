@@ -42,6 +42,7 @@ class TestCogmWorksheet(AccountTestInvoicingCommon):
         common = {"type": "consu", "is_storable": False, "taxes_id": [Command.clear()], "supplier_taxes_id": [Command.clear()]}
         cls.resin = cls._create_product(name="Resin COGM", standard_price=50000.0, **common)
         cls.solvent = cls._create_product(name="Pelarut COGM", standard_price=150000.0, **common)
+        cls.cogs = cls.config.cogs_account_id
         cls.kit_a = cls._create_product(name="Kit Reagen A COGM", standard_price=0.0, **common)
         cls.kit_b = cls._create_product(name="Kit Reagen B COGM", standard_price=0.0, **common)
 
@@ -567,3 +568,129 @@ class TestCogmWorksheet(AccountTestInvoicingCommon):
         self.assertEqual(line.source, "manual", "qty yang diubah petugas ditandai manual")
         worksheet.action_pull()
         self.assertEqual((line.mo_qty, line.qty, line.source), (5.0, 6.0, "manual"), "tarik ulang tidak menimpa qty manual")
+
+    # ------------------------------------------------------------------ HPP penjualan periodik dan penyesuaian barang yang laku (Q68)
+
+    def _deliver(self, product, qty, day):
+        """Pengiriman ke pelanggan (barang laku) bertanggal `day`."""
+        stock = self.env["stock.warehouse"].search([("company_id", "=", self.company.id)], limit=1).lot_stock_id
+        move = self.env["stock.move"].create(
+            {
+                "product_id": product.id, "product_uom_qty": qty, "product_uom": product.uom_id.id, "location_id": stock.id,
+                "location_dest_id": self.env.ref("stock.stock_location_customers").id, "company_id": self.company.id,
+            }
+        )
+        move._action_confirm()
+        move._action_assign()
+        move.write({"quantity": qty, "picked": True})
+        move._action_done()
+        move.write({"date": datetime.combine(day, time(3, 0))})
+        move.move_line_ids.write({"date": datetime.combine(day, time(3, 0))})
+
+    def _provisional_cogs(self, product, amount, day):
+        """HPP sementara yang dibukukan saat penjualan: Dr HPP, Cr Inventory COGM, bertanda produk."""
+        self.env["account.move"].create(
+            {
+                "move_type": "entry", "journal_id": self.misc.id, "date": day,
+                "line_ids": [
+                    Command.create({"account_id": self.cogs.id, "debit": amount, "credit": 0.0, "product_id": product.id}),
+                    Command.create({"account_id": self.fg.id, "debit": 0.0, "credit": amount, "product_id": product.id}),
+                ],
+            }
+        ).action_post()
+
+    def _sold_kit(self):
+        """Barang jadi: stok awal 10 @80.000, produksi 1.000 unit, terjual 400 unit sebelum COGM dihitung dengan HPP sementara Rp60.000 per unit."""
+        kit = self._storable("Barang Jadi HPP COGM", cost=80000.0)
+        self._stock(kit, 10.0, self.before)
+        self._entry(self.before, self.fg, debit=800_000)
+        self._stock(kit, 1010.0, self.date_from + timedelta(days=1))
+        self._deliver(kit, 400.0, self.date_from + timedelta(days=5))
+        self._provisional_cogs(kit, 24_000_000.0, self.date_from + timedelta(days=5))
+        return kit
+
+    def _fg_worksheet(self, kit):
+        worksheet = self._complete(self._worksheet())
+        worksheet.output_ids.unlink()
+        worksheet.write({"output_ids": [Command.create({"product_id": kit.id, "qty": 1000.0})]})
+        worksheet.action_pull()
+        return worksheet
+
+    def test_cogs_is_trued_up_for_goods_already_sold_and_the_cost_carries_forward(self):
+        self._book_period()
+        kit = self._sold_kit()
+        worksheet = self._fg_worksheet(kit)
+        line = worksheet.fg_ids
+        self.assertEqual((line.opening_qty, line.opening_cost, line.delivered_qty, line.provisional_cogs), (10.0, 80000.0, 400.0, 24_000_000.0))
+        self.assertEqual((line.produced_qty, line.produced_value), (1000.0, 61_000_000.0), "seluruh COGM periode ini")
+        self.assertEqual((line.available_qty, line.available_value), (1010.0, 61_800_000.0))
+        self.assertEqual(line.unit_cost, 61188.12, "(800.000 + 61.000.000) / 1.010")
+        self.assertEqual(line.book_qty, 610.0)
+        line.qty = 605.0  # hitung fisik: susut 5 unit
+        self.assertEqual((line.sold_qty, line.ending_value, line.cogs), (405.0, 37_018_812.6, 24_781_187.4))
+        self.assertEqual(line.cogs_adjustment, 781_187.4, "HPP aktual 24.781.187,40 dikurangi HPP sementara 24.000.000")
+        self.assertEqual((worksheet.fg_cogs, worksheet.fg_provisional, worksheet.fg_adjustment), (24_781_187.4, 24_000_000.0, 781_187.4))
+        result = worksheet.action_check()
+        self.assertEqual(result["state"], "green", [c for c in result["checks"] if c["status"] == "error"])
+        self.assertEqual(next(c for c in result["checks"] if c["key"] == "cogs")["status"], "ok")
+        self.assertNotIn("fg_gl", {c["key"] for c in result["checks"]}, "saldo awal Inventory COGM Rp800.000 sama dengan nilai barang jadi awal")
+
+        worksheet.action_post()
+        self.assertEqual(self._balance(self.cogs), 24_781_187.4, "HPP sementara + penyesuaian = HPP aktual")
+        self.assertEqual(self._balance(self.fg), 37_018_812.6, "Inventory COGM = nilai stok akhir (605 x 61.188,12)")
+        self.assertEqual(self._standard_price(kit), 61188.12, "biaya barang jadi diperbarui untuk penjualan berikutnya")
+        self.assertEqual(kit.qty_available, 605.0, "stok sistem disamakan dengan hitung fisik")
+
+        second = self.env["kompakapps.cogm.worksheet"].create({"date_from": self.date_to + timedelta(days=1), "date_to": self.date_to + timedelta(days=28)})
+        basis = second._fg_basis(kit)
+        self.assertEqual((basis["opening_qty"], basis["opening_cost"]), (605.0, 61188.12), "periode berikutnya dibuka pada biaya akhir periode ini")
+
+        worksheet.action_reverse()
+        self.assertEqual(self._balance(self.cogs), 24_000_000.0, "tinggal HPP sementara")
+        self.assertEqual(self._standard_price(kit), 80000.0)
+        self.assertEqual(kit.qty_available, 610.0)
+
+    def test_finished_goods_checks_turn_red(self):
+        self._book_period()
+        kit = self._sold_kit()
+        worksheet = self._fg_worksheet(kit)
+        self.assertEqual(self._failing(worksheet), set())
+        self._provisional_cogs(kit, 1_000_000.0, self.date_from + timedelta(days=6))  # HPP sementara baru setelah data ditarik
+        self.assertIn("cogs", self._failing(worksheet))
+        worksheet.action_pull()
+        self.assertEqual(worksheet.fg_provisional, 25_000_000.0)
+        self.assertEqual(self._failing(worksheet), set())
+        worksheet.fg_ids.qty = 2000.0  # salah ketik: melebihi stok awal + produksi
+        failing = self._failing(worksheet)
+        self.assertIn("cogs", failing)
+        self.assertIn("fg_variance", failing)
+        with self.assertRaises(UserError):
+            worksheet.action_post()
+
+    def test_without_a_cogs_account_the_adjustment_is_not_journaled(self):
+        self._book_period()
+        kit = self._sold_kit()
+        self.config.cogs_account_id = False
+        worksheet = self._fg_worksheet(kit)
+        worksheet.fg_ids.qty = 605.0
+        cogs = next(c for c in worksheet.action_check()["checks"] if c["key"] == "cogs")
+        self.assertEqual(cogs["status"], "warn")
+        worksheet.action_post()
+        self.assertEqual(self._balance(self.cogs), 24_000_000.0, "hanya HPP sementara")
+
+    def test_cogm_allocation_to_finished_goods_adds_up_exactly(self):
+        self._book_period()
+        worksheet = self._complete(self._worksheet())
+        kit_c = self._create_product(name="Kit Reagen C COGM", type="consu", standard_price=0.0, taxes_id=[Command.clear()], supplier_taxes_id=[Command.clear()])
+        worksheet.output_ids.unlink()
+        worksheet.write({"output_ids": [Command.create({"product_id": product.id, "qty": 1.0}) for product in (self.kit_a, self.kit_b, kit_c)]})
+        self.assertEqual(sum(worksheet.output_ids.mapped("cogm_value")), worksheet.cogm, "sisa pembulatan masuk baris terbesar")
+
+    def test_opening_balance_of_the_finished_goods_account_that_does_not_match_the_stock_is_flagged(self):
+        self._book_period()
+        kit = self._sold_kit()
+        self._entry(self.before, self.fg, debit=5_000_000)  # COGM bulan lalu yang barang jadinya tidak dilacak
+        worksheet = self._fg_worksheet(kit)
+        check = next(c for c in worksheet.action_check()["checks"] if c["key"] == "fg_gl")
+        self.assertEqual(check["status"], "warn")
+        self.assertIn("5.000.000", check["message"])
