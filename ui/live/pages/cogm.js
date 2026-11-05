@@ -132,6 +132,8 @@ const WS_FIELDS = [
 
 const opRow = (r) => ({
   id: r.id, product: ref(r.product_id), uom: r.uom_id?.[1] ?? "", storable: r.is_storable, qty: String(r.qty), unitCost: String(r.unit_cost), bookQty: r.book_qty, explanation: r.explanation || "",
+  costSource: r.cost_source, openingQty: r.opening_qty, openingCost: r.opening_cost, purchaseQty: r.purchase_qty, purchaseValue: r.purchase_value, avgCost: r.avg_cost,
+  oldCost: r.old_cost, costUpdated: r.cost_updated, adjustQty: r.adjust_qty, autoCost: r.cost_source === "manual" ? null : r.unit_cost, autoSource: r.cost_source === "manual" ? null : r.cost_source,
 });
 const wipRow = (r) => ({
   id: r.id, name: r.name, product: ref(r.product_id), qty: String(r.qty), materialCost: String(r.material_cost), materialPct: String(r.material_pct),
@@ -141,15 +143,19 @@ const opValue = (r) => Math.round(num(r.qty) * num(r.unitCost));
 const wipValue = (r) => Math.round((num(r.qty) * (num(r.materialCost) * num(r.materialPct) + num(r.conversionCost) * num(r.completionPct))) / 100);
 
 async function loadForm(id) {
-  const [ws, lines, ops, wips, defaults] = await Promise.all([
-    readOne(MODEL, id, WS_FIELDS),
-    searchRead("kompakapps.cogm.line", [["worksheet_id", "=", id]], ["section", "account_id", "debit", "credit", "balance", "pct", "amount"], { order: "id" }),
-    searchRead("kompakapps.cogm.opname", [["worksheet_id", "=", id]], ["product_id", "uom_id", "is_storable", "qty", "unit_cost", "book_qty", "explanation"], { order: "id" }),
-    searchRead("kompakapps.cogm.wip", [["worksheet_id", "=", id]], ["name", "product_id", "qty", "material_cost", "material_pct", "conversion_cost", "completion_pct"], { order: "id" }),
-    call(MODEL, "kompakapps_defaults", {}),
-  ]);
+  const [ws, defaults] = await Promise.all([readOne(MODEL, id, WS_FIELDS), call(MODEL, "kompakapps_defaults", {})]);
   if (!ws) return null;
+  // Control Balance dijalankan lebih dulu: ia menghitung ulang stok sistem pembanding, yang lalu dibaca bersama baris opname.
   const check = ws.state === "draft" ? await call(MODEL, "action_check", { ids: [id] }) : null;
+  const [lines, ops, wips] = await Promise.all([
+    searchRead("kompakapps.cogm.line", [["worksheet_id", "=", id]], ["section", "account_id", "debit", "credit", "balance", "pct", "amount"], { order: "id" }),
+    searchRead(
+      "kompakapps.cogm.opname", [["worksheet_id", "=", id]],
+      ["product_id", "uom_id", "is_storable", "qty", "unit_cost", "book_qty", "explanation", "cost_source", "opening_qty", "opening_cost", "purchase_qty", "purchase_value", "avg_cost", "old_cost", "cost_updated", "adjust_qty"],
+      { order: "id" },
+    ),
+    searchRead("kompakapps.cogm.wip", [["worksheet_id", "=", id]], ["name", "product_id", "qty", "material_cost", "material_pct", "conversion_cost", "completion_pct"], { order: "id" }),
+  ]);
   return { id, ws, lines, ops: ops.map(opRow), wips: wips.map(wipRow), removed: { ops: [], wips: [] }, dirty: false, check, defaults, canExecute: defaults.can_execute };
 }
 
@@ -294,6 +300,15 @@ function varianceCell(r) {
   return `<span class="${tone}">${diff > 0 ? "+" : ""}${nf.format(diff)}</span>`;
 }
 
+const SOURCE_LABEL = { average: "rata-rata periode", standard: "biaya produk", manual: "manual" };
+
+/** Keterangan sumber biaya per unit di bawah isian biaya; baris manual yang sudah tersimpan punya tombol hitung ulang. */
+function costSourceHtml(r) {
+  const label = SOURCE_LABEL[r.costSource] ?? r.costSource;
+  const reset = r.costSource === "manual" && r.id ? ` <button type="button" data-action="cogm-cost-reset" data-id="${r.id}" class="underline text-indigo-700" title="Kembalikan ke hitungan otomatis">hitung ulang</button>` : "";
+  return `<span class="${r.costSource === "manual" ? "text-amber-700" : "text-gray-500"}">${esc(label)}</span>${reset}`;
+}
+
 /** Nilai persediaan menurut sistem (stok sistem x biaya per unit); kosong untuk bahan yang tidak dilacak stoknya. */
 const bookValue = (r) => (r.storable ? Math.round(r.bookQty * num(r.unitCost)) : null);
 /** Selisih nilai = nilai valuasi baru (hasil opname) dikurangi nilai sistem. */
@@ -313,6 +328,36 @@ function valueDiffCell(r) {
 
 const sum = (rows, fn) => rows.reduce((total, r) => total + (fn(r) ?? 0), 0);
 
+/** Rincian biaya rata-rata tertimbang periode dan, setelah Execute, penyesuaian stok dan biaya produk. */
+function costDetailHtml() {
+  const rows = form.ops.filter((r) => r.product && r.storable);
+  if (!rows.length) return "";
+  const posted = form.ws.state === "posted";
+  const body = rows
+    .map((r) => {
+      const openValue = Math.round(r.openingQty * r.openingCost);
+      const totalQty = r.openingQty + r.purchaseQty;
+      const totalValue = openValue + r.purchaseValue;
+      const adjust = posted && r.adjustQty ? `${r.adjustQty > 0 ? "+" : ""}${nf.format(r.adjustQty)}` : posted ? "-" : "";
+      const cost = posted && r.costUpdated ? `${rupiah(r.oldCost)} → ${rupiah(r.unitCost)}` : "-";
+      return `<tr class="text-sm"><td class="py-1.5 px-3">${esc(r.product.display_name)}</td>
+        <td class="py-1.5 px-3 text-right tabular-nums">${nf.format(r.openingQty)}</td><td class="py-1.5 px-3 text-right tabular-nums">${esc(rupiah(r.openingCost))}</td><td class="py-1.5 px-3 text-right tabular-nums">${esc(rupiah(openValue))}</td>
+        <td class="py-1.5 px-3 text-right tabular-nums">${nf.format(r.purchaseQty)}</td><td class="py-1.5 px-3 text-right tabular-nums">${esc(rupiah(r.purchaseValue))}</td>
+        <td class="py-1.5 px-3 text-right tabular-nums">${nf.format(totalQty)}</td><td class="py-1.5 px-3 text-right tabular-nums">${esc(rupiah(totalValue))}</td>
+        <td class="py-1.5 px-3 text-right tabular-nums font-medium">${esc(rupiah(r.avgCost))}</td><td class="py-1.5 px-3 text-gray-600">${esc(SOURCE_LABEL[r.costSource] ?? r.costSource)}</td>
+        ${posted ? `<td class="py-1.5 px-3 text-right tabular-nums">${esc(adjust)}</td><td class="py-1.5 px-3 text-right tabular-nums whitespace-nowrap">${esc(cost)}</td>` : ""}</tr>`;
+    })
+    .join("");
+  const head = ["Bahan Baku", "Jumlah Awal", "Biaya Awal", "Nilai Awal", "Jumlah Dibeli", "Nilai Pembelian", "Jumlah Total", "Nilai Total", "Biaya Rata-rata", "Sumber Biaya", ...(posted ? ["Penyesuaian Stok", "Biaya Produk Lama → Baru"] : [])]
+    .map((label, i) => th(label, i > 0 && i < 9 || i > 9))
+    .join("");
+  return `<details class="border-t border-gray-100" ${posted ? "open" : ""}><summary class="px-5 py-2 text-sm font-medium text-indigo-700 cursor-pointer">Rincian biaya rata-rata tertimbang periode${posted ? ", penyesuaian stok, dan biaya produk" : ""}</summary>
+    <div class="overflow-x-auto"><table class="w-full text-left" data-list="on"><thead class="border-b border-gray-200"><tr>${head}</tr></thead><tbody class="divide-y divide-gray-100">${body}</tbody></table></div>
+    <p class="px-5 py-2 text-xs text-gray-500">Biaya rata-rata = (jumlah awal x biaya awal + nilai pembelian) / (jumlah awal + jumlah dibeli). Jumlah awal: stok sistem akhir hari sebelum periode; biaya awal: biaya akhir kertas kerja terposting sebelumnya (atau biaya produk); pembelian: tagihan vendor terposting dalam periode dikurangi retur.${
+      form.defaults.update_product_cost && form.defaults.cost_method === "average" ? " Saat Execute, biaya produk diganti dengan biaya rata-rata (baris bersumber rata-rata)." : ""
+    }${form.defaults.adjust_stock ? " Saat Execute, stok sistem juga disamakan dengan hasil opname (penyesuaian stok bertanggal akhir periode)." : ""} Keduanya dikembalikan bila jurnal dibatalkan.</p></details>`;
+}
+
 function opsHtml() {
   const draft = form.ws.state === "draft";
   const rows = form.ops
@@ -329,7 +374,7 @@ function opsHtml() {
         <td class="py-2 px-3 text-right tabular-nums text-gray-600" title="Jumlah menurut pergerakan stok sistem pada akhir periode">${r.storable ? nf.format(r.bookQty) : "-"}</td>
         <td class="py-2 px-3 w-36">${numInput(`data-op="${i}" data-field="qty" aria-label="Jumlah fisik"`, r.qty)}</td>
         <td class="py-2 px-3 text-right tabular-nums" id="op-var-${i}">${varianceCell(r)}</td>
-        <td class="py-2 px-3 w-44">${numInput(`data-op="${i}" data-field="unitCost" aria-label="Biaya per unit"`, r.unitCost)}</td>
+        <td class="py-2 px-3 w-44">${numInput(`data-op="${i}" data-field="unitCost" aria-label="Biaya per unit"`, r.unitCost)}<div class="text-xs mt-1 text-right" id="op-src-${i}">${costSourceHtml(r)}</div></td>
         <td class="py-2 px-3 text-right tabular-nums text-gray-600" id="op-book-${i}" title="Stok sistem x biaya per unit">${bookValueCell(r)}</td>
         <td class="py-2 px-3 text-right tabular-nums font-medium" id="op-value-${i}" title="Jumlah fisik x biaya per unit">${esc(rupiah(opValue(r)))}</td>
         <td class="py-2 px-3 text-right tabular-nums" id="op-diffv-${i}" title="Nilai valuasi baru dikurangi nilai sistem">${valueDiffCell(r)}</td>
@@ -345,7 +390,8 @@ function opsHtml() {
       <td class="py-2 px-3 text-right tabular-nums" id="op-total">${esc(rupiah(sum(form.ops, opValue)))}</td>
       <td class="py-2 px-3 text-right tabular-nums ${diffTotal < 0 ? "text-rose-700" : diffTotal > 0 ? "text-emerald-700" : ""}" id="op-diffv-total">${esc(diffTotal === 0 ? rupiah(0) : signed(diffTotal))}</td>
       <td colspan="${draft ? 2 : 1}"></td></tr></tfoot></table></div>
-    <p class="px-5 py-2 text-xs text-gray-500 border-t border-gray-100"><b>Nilai Valuasi Baru</b> = jumlah fisik x biaya per unit: nilai persediaan bahan baku setelah disesuaikan ke hasil opname (menjadi saldo akhir akun persediaan saat jurnal COGM dieksekusi). <b>Nilai Sistem</b> = stok sistem x biaya per unit; <b>Selisih Nilai</b> = nilai baru dikurangi nilai sistem, hanya untuk bahan yang dilacak stoknya (kolom total Nilai Sistem dan Selisih Nilai tidak menghitung bahan yang tidak dilacak).</p>
+    <p class="px-5 py-2 text-xs text-gray-500 border-t border-gray-100"><b>Nilai Valuasi Baru</b> = jumlah fisik x biaya per unit (rata-rata tertimbang periode bila tidak diubah manual): nilai persediaan bahan baku setelah disesuaikan ke hasil opname (menjadi saldo akhir akun persediaan saat jurnal COGM dieksekusi). <b>Nilai Sistem</b> = stok sistem x biaya per unit; <b>Selisih Nilai</b> = nilai baru dikurangi nilai sistem, hanya untuk bahan yang dilacak stoknya (kolom total Nilai Sistem dan Selisih Nilai tidak menghitung bahan yang tidak dilacak).</p>
+    ${costDetailHtml()}
     ${draft ? `<div class="px-5 pb-3"><button data-action="cogm-add-op" class="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50"><i class="fas fa-plus mr-2"></i>Tambah Bahan Baku</button>
       <span class="text-xs text-gray-500 ml-3">Satu baris per bahan baku (gabungkan semua lokasi). Selisih terhadap stok sistem di atas toleransi ${nf.format(form.defaults.tolerance_pct ?? 0)}% perlu alasan.</span></div>` : ""}`;
 }
@@ -517,7 +563,7 @@ const markDirty = () => {
 
 /* ---------- Pengaturan ---------- */
 
-const CFG_FIELDS = ["company_id", "journal_id", "raw_account_id", "wip_account_id", "fg_account_id", "summary_account_id", "scan_prefix", "tolerance_pct", "account_ids"];
+const CFG_FIELDS = ["company_id", "journal_id", "raw_account_id", "wip_account_id", "fg_account_id", "summary_account_id", "scan_prefix", "tolerance_pct", "cost_method", "update_product_cost", "adjust_stock", "account_ids"];
 const ROLES = [
   ["raw", "Persediaan Bahan Baku", "Saldo awal diambil dari akun ini; saat jurnal COGM dieksekusi akun disesuaikan ke hasil opname."],
   ["wip", "Barang Dalam Proses (WIP)", "Saldo awal WIP diambil dari akun ini; disesuaikan ke estimasi WIP akhir."],
@@ -566,6 +612,7 @@ async function renderSetting() {
     : [];
   cfg = {
     id: config.id, canEdit, journals, journal: config.journal_id[0], scan: config.scan_prefix || "", tolerance: String(config.tolerance_pct),
+    costMethod: config.cost_method, updateCost: config.update_product_cost, adjustStock: config.adjust_stock,
     accounts: { raw: ref(config.raw_account_id), wip: ref(config.wip_account_id), fg: ref(config.fg_account_id), summary: ref(config.summary_account_id) },
     maps: mappings.map((m) => ({ id: m.id, account: ref(m.account_id), section: m.section, pct: String(m.pct) })), initialMaps: mappings.map((m) => ({ id: m.id, account: m.account_id[0], section: m.section, pct: String(m.pct) })), removed: [],
   };
@@ -594,6 +641,11 @@ function paintSetting() {
       <div></div>${roles}
       ${fieldBlock("Awalan Kode Akun yang Diperiksa", `<input data-cfg="scan" value="${esc(cfg.scan)}" ${edit ? "" : "disabled"} class="${INPUT}"><div class="text-xs text-gray-500 mt-1">Akun beban berawalan kode ini yang bergerak pada periode tetapi belum diklasifikasikan membuat Control Balance Merah. Pisahkan dengan koma; kosong = tidak diperiksa.</div>`)}
       ${fieldBlock("Toleransi Selisih Opname (%)", `<input type="number" min="0" step="any" data-cfg="tolerance" value="${esc(cfg.tolerance)}" ${edit ? "" : "disabled"} class="${INPUT} text-right"><div class="text-xs text-gray-500 mt-1">Selisih jumlah fisik terhadap stok sistem sampai persentase ini dianggap wajar; di atasnya perlu Alasan Selisih.</div>`)}
+      ${fieldBlock("Metode Biaya Persediaan Akhir", `<select data-cfg="costMethod" ${edit ? "" : "disabled"} class="${INPUT}"><option value="average" ${cfg.costMethod === "average" ? "selected" : ""}>Rata-rata tertimbang periode</option><option value="standard" ${cfg.costMethod === "standard" ? "selected" : ""}>Biaya standar produk</option></select><div class="text-xs text-gray-500 mt-1">Rata-rata: (jumlah awal x biaya awal + pembelian periode) / (jumlah awal + jumlah dibeli). Hanya untuk bahan yang stoknya dilacak.</div>`)}
+      <div class="space-y-3 self-end">
+        <label class="flex items-start gap-3 text-sm"><input type="checkbox" data-cfg="updateCost" ${cfg.updateCost ? "checked" : ""} ${edit ? "" : "disabled"} class="mt-1 rounded border-gray-300 text-indigo-600"><span><span class="font-medium text-gray-900">Perbarui biaya produk saat Execute</span><span class="block text-gray-500">Biaya produk diganti dengan biaya rata-rata tertimbang periode; dikembalikan saat Reverse.</span></span></label>
+        <label class="flex items-start gap-3 text-sm"><input type="checkbox" data-cfg="adjustStock" ${cfg.adjustStock ? "checked" : ""} ${edit ? "" : "disabled"} class="mt-1 rounded border-gray-300 text-indigo-600"><span><span class="font-medium text-gray-900">Samakan stok sistem dengan hasil opname saat Execute</span><span class="block text-gray-500">Selisih jumlah menjadi penyesuaian stok bertanggal akhir periode; dikembalikan saat Reverse. Bahan berlacak lot atau serial dilewati.</span></span></label>
+      </div>
     </section>
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 max-w-5xl">
       <div class="px-5 py-3 border-b border-gray-200 font-semibold text-gray-900">Pemetaan Akun Biaya Produksi</div>
@@ -630,7 +682,7 @@ async function saveSetting() {
     ids: [cfg.id],
     vals: {
       journal_id: cfg.journal, raw_account_id: cfg.accounts.raw.id, wip_account_id: cfg.accounts.wip.id, fg_account_id: cfg.accounts.fg.id, summary_account_id: cfg.accounts.summary.id,
-      scan_prefix: cfg.scan.trim() || false, tolerance_pct: num(cfg.tolerance), account_ids: accountCommands,
+      scan_prefix: cfg.scan.trim() || false, tolerance_pct: num(cfg.tolerance), cost_method: cfg.costMethod, update_product_cost: cfg.updateCost, adjust_stock: cfg.adjustStock, account_ids: accountCommands,
     },
   });
   return true;
@@ -649,8 +701,12 @@ registerLookup("cogm-product", {
       toast(`${item.display_name} sudah ada pada lembar opname.`, "error");
       return;
     }
-    const info = (await call(MODEL, "kompakapps_product_info", { product_ids: [item.id], date_to: form.ws.date_to }))[item.id];
-    Object.assign(row, { product: { id: item.id, display_name: item.display_name }, uom: item.uom_id?.[1] ?? "", storable: item.is_storable, unitCost: String(info?.unit_cost ?? item.standard_price), bookQty: info?.book_qty ?? 0 });
+    const info = (await call(MODEL, "kompakapps_product_info", { product_ids: [item.id], date_to: form.ws.date_to, date_from: form.ws.date_from }))[item.id];
+    Object.assign(row, {
+      product: { id: item.id, display_name: item.display_name }, uom: item.uom_id?.[1] ?? "", storable: item.is_storable, unitCost: String(info?.unit_cost ?? item.standard_price), bookQty: info?.book_qty ?? 0,
+      costSource: info?.cost_source ?? "standard", openingQty: info?.opening_qty ?? 0, openingCost: info?.opening_cost ?? 0, purchaseQty: info?.purchase_qty ?? 0,
+      purchaseValue: info?.purchase_value ?? 0, avgCost: info?.avg_cost ?? 0, autoCost: info?.unit_cost ?? null, autoSource: info?.cost_source ?? "standard",
+    });
     form.dirty = true;
     document.getElementById("ops-box").innerHTML = opsHtml();
     refreshLive();
@@ -673,7 +729,10 @@ registerLookup("cogm-wip-product", {
   },
 });
 
-const blankOp = () => ({ id: null, product: null, uom: "", storable: false, qty: "", unitCost: "", bookQty: 0, explanation: "" });
+const blankOp = () => ({
+  id: null, product: null, uom: "", storable: false, qty: "", unitCost: "", bookQty: 0, explanation: "", costSource: "standard", openingQty: 0, openingCost: 0, purchaseQty: 0, purchaseValue: 0, avgCost: 0,
+  oldCost: 0, costUpdated: false, adjustQty: 0, autoCost: null, autoSource: null,
+});
 const blankWip = () => ({ id: null, name: "", product: null, qty: "", materialCost: "", materialPct: "100", conversionCost: "", completionPct: "50" });
 
 export async function onClick(event, el) {
@@ -757,6 +816,17 @@ export async function onClick(event, el) {
       toast("Pengaturan COGM disiapkan.");
       await renderSetting();
     }
+  } else if (action === "cogm-cost-reset") {
+    const id = form.id;
+    const done = await guarded(el, async () => {
+      if (form.dirty) await persist();
+      await call("kompakapps.cogm.opname", "action_reset_cost", { ids: [Number(el.dataset.id)] });
+      return true;
+    });
+    if (done) {
+      form = null;
+      await renderForm(id);
+    }
   } else if (action === "cogm-map-add") {
     cfg.maps.push({ id: null, account: null, section: "overhead", pct: "100" });
     paintSetting();
@@ -790,12 +860,18 @@ export function onInput(event, el) {
     form.ws[dataset.ws] = el.value;
     markDirty();
   } else if (dataset.op !== undefined && dataset.field && form) {
-    form.ops[Number(dataset.op)][dataset.field] = el.value;
+    const row = form.ops[Number(dataset.op)];
+    row[dataset.field] = el.value;
+    if (dataset.field === "unitCost") {
+      row.costSource = row.autoSource && row.autoCost !== null && Math.abs(num(el.value) - row.autoCost) <= 0.005 ? row.autoSource : "manual";
+      const label = document.getElementById(`op-src-${dataset.op}`);
+      if (label) label.innerHTML = costSourceHtml(row);
+    }
     markDirty();
   } else if (dataset.wip !== undefined && dataset.field && form) {
     form.wips[Number(dataset.wip)][dataset.field] = el.value;
     markDirty();
-  } else if (dataset.cfg && cfg) cfg[dataset.cfg] = dataset.cfg === "journal" ? Number(el.value) : el.value;
+  } else if (dataset.cfg && cfg) cfg[dataset.cfg] = el.type === "checkbox" ? el.checked : dataset.cfg === "journal" ? Number(el.value) : el.value;
   else if (dataset.map !== undefined && dataset.field && cfg) {
     const row = cfg.maps[Number(dataset.map)];
     row[dataset.field] = el.value;

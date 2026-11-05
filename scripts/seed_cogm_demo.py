@@ -5,10 +5,12 @@ Persediaan pada perusahaan ini TIDAK dijurnal per transaksi (periodik): pembelia
 dan nilai persediaan baru disesuaikan lewat jurnal COGM setelah stock opname. Perusahaan terpisah dipakai supaya laporan perusahaan utama (yang memakai
 jurnal perpetual, skema 1) tidak tercampur. Isinya dua bulan terakhir:
 
-* bulan sebelum bulan lalu: kertas kerja COGM sudah dieksekusi (Terposting, Control Balance Hijau), dengan satu selisih opname yang dijelaskan;
+* bulan sebelum bulan lalu: kertas kerja COGM sudah dieksekusi (Terposting, Control Balance Hijau), dengan satu selisih opname yang dijelaskan; saat Execute
+  stok sistem disamakan dengan hasil opname (tanpa penyesuaian manual) dan biaya produk diperbarui ke rata-rata tertimbang;
 * bulan lalu, dua kertas kerja dari buku besar yang sama: satu **Hijau dan belum dieksekusi** (tombol Execute aktif) dan satu **Merah** karena salah ketik
   pada hasil opname (260 seharusnya 20). Perbaiki angkanya pada yang Merah, simpan, lalu periksa: Hijau. Bila yang Hijau dieksekusi lebih dulu, yang lain
-  menjadi Merah karena periodenya sudah terposting.
+  menjadi Merah karena periodenya sudah terposting. Harga beli bulan lalu naik (3 sampai 6 persen) sehingga biaya rata-rata tertimbang berbeda dari biaya
+  produk; Execute memperbarui biaya produk dan menyesuaikan stok, Reverse mengembalikannya.
 
 Dijalankan lewat `odoo shell` (variabel `env` disediakan shell); database harus sudah memasang kompakapps_base. Aman dijalankan ulang: bila perusahaannya sudah
 ada, tidak ada yang diubah.
@@ -88,6 +90,8 @@ for code, name, uom, cost, *_ in RAW:
         }
     )
 
+# Kenaikan harga beli per bahan pada bulan kedua (bulan pertama sama dengan biaya produk).
+PRICE_UP = {"RM-REG-KOL": 1.05, "RM-ENZ-CHO": 1.03, "RM-BTL-50": 1.0, "RM-LBL-KIT": 1.04, "RM-BUF-FOS": 1.06}
 warehouse = env["stock.warehouse"].search([("company_id", "=", company.id)], limit=1)
 stock_loc = warehouse.lot_stock_id
 production_loc = env["stock.location"].search([("usage", "=", "production"), ("company_id", "=", company.id)], limit=1)
@@ -125,11 +129,11 @@ def consume(product, qty, when):
 
 
 def purchase(vendor, when, lines):
-    """PO, penerimaan barang, lalu tagihan terposting (Dr Pembelian). lines = [(produk, jumlah)]."""
+    """PO, penerimaan barang, lalu tagihan terposting (Dr Pembelian). lines = [(produk, jumlah, harga satuan)]."""
     order = env["purchase.order"].create(
         {
             "partner_id": vendor.id, "date_order": when, "company_id": company.id,
-            "order_line": [Command.create({"product_id": p.id, "product_qty": q, "price_unit": p.standard_price, "tax_ids": [Command.clear()]}) for p, q in lines],
+            "order_line": [Command.create({"product_id": p.id, "product_qty": q, "price_unit": price, "tax_ids": [Command.clear()]}) for p, q, price in lines],
         }
     )
     order.button_confirm()
@@ -174,7 +178,7 @@ journal(opening_day, "Saldo awal persediaan", [(raw_acc, opening_raw, 0.0), (wip
 
 def run_month(index, first, last, spec):
     """Transaksi satu bulan: pembelian, pemakaian, tenaga kerja, dan overhead."""
-    receipts = [(products[r[0]], float(r[5][index])) for r in RAW if r[5][index]]
+    receipts = [(products[r[0]], float(r[5][index]), round(r[3] * (PRICE_UP[r[0]] if index else 1.0), 2)) for r in RAW if r[5][index]]
     purchase(vendors["kimia"], at(first + timedelta(days=4)), [r for r in receipts if r[0].default_code in ("RM-REG-KOL", "RM-ENZ-CHO", "RM-BUF-FOS")])
     purchase(vendors["kemasan"], at(first + timedelta(days=9)), [r for r in receipts if r[0].default_code in ("RM-BTL-50", "RM-LBL-KIT")])
     expense_bill(vendors["ekspedisi"], first + timedelta(days=10), freight, spec["freight"], "Ongkos angkut pembelian bahan baku")
@@ -218,8 +222,9 @@ sheet1 = worksheet(
 result = sheet1.action_check()
 assert result["state"] == "green", [c for c in result["checks"] if c["status"] == "error"]
 sheet1.action_post()
-for row in RAW:  # stok sistem disamakan dengan hasil hitung fisik setelah opname
-    adjust_stock(products[row[0]], float(row[7][0]), at(m2_from, hour=1))
+for row in RAW:  # Execute sudah menyamakan stok sistem dengan hasil hitung fisik dan memperbarui biaya produk
+    product = products[row[0]]
+    assert product.qty_available == float(row[7][0]), (product.name, product.qty_available, row[7][0])
 
 # ---- bulan kedua: satu kertas kerja Hijau (siap Execute) dan satu Merah (salah ketik), dari buku besar yang sama ----
 run_month(1, m2_from, m2_to, {"freight": 1_600_000.0, "returns": 0.0, "labor": 41_200_000.0, "indirect": 9_600_000.0, "power": 15_300_000.0, "depreciation": 6_750_000.0, "maintenance": 4_900_000.0, "supplies": 2_700_000.0})
