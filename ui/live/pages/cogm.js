@@ -53,7 +53,7 @@ async function renderList(query) {
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
   const filter = query.get("state") ?? "";
   const [rows, defaults] = await Promise.all([
-    searchRead(MODEL, filter ? [["state", "=", filter]] : [], ["name", "date_from", "date_to", "state", "control_state", "cogm", "move_id"], { order: "date_to desc, id desc", limit: 80 }),
+    searchRead(MODEL, filter ? [["state", "=", filter]] : [], ["name", "date_from", "date_to", "state", "control_state", "cogm", "unit_cogm", "qty_produced", "move_id"], { order: "date_to desc, id desc", limit: 80 }),
     call(MODEL, "kompakapps_defaults", {}),
   ]);
   const options = [["", "Semua status"], ...Object.entries(STATE).map(([key, value]) => [key, value[0]])];
@@ -65,6 +65,7 @@ async function renderList(query) {
         cell(badge(STATE, r.state), { raw: true }),
         cell(r.state === "posted" ? badge(CONTROL, "green") : badge(CONTROL, r.control_state), { raw: true }),
         cell(rupiah(r.cogm), { right: true }),
+        cell(r.qty_produced > 0 ? rupiah(r.unit_cogm) : "-", { right: true }),
         cell(moveName(r.move_id)),
       ]),
     )
@@ -79,7 +80,7 @@ async function renderList(query) {
     (defaults.configured ? "" : notConfigured()) +
     `<p class="text-sm text-gray-600 mb-3 max-w-4xl">Skema periodik: biaya bahan, tenaga kerja, dan overhead dikumpulkan sepanjang bulan; setelah stock opname, kertas kerja menghitung <b>COGM = Bahan Baku Terpakai + Tenaga Kerja + Overhead + WIP Awal - WIP Akhir</b>. Jurnal COGM baru bisa dieksekusi bila Control Balance berstatus Hijau.</p>` +
     table(
-      [{ label: "Nomor" }, { label: "Periode" }, { label: "Status" }, { label: "Control Balance" }, { label: "COGM", right: true }, { label: "Jurnal" }],
+      [{ label: "Nomor" }, { label: "Periode" }, { label: "Status" }, { label: "Control Balance" }, { label: "COGM", right: true }, { label: "HPP / Unit", right: true }, { label: "Jurnal" }],
       body,
       "Belum ada kertas kerja COGM. Buat dengan tombol Kertas Kerja Baru setelah akhir periode.",
     );
@@ -127,7 +128,7 @@ async function createWorksheet() {
 
 const WS_FIELDS = [
   "name", "company_id", "date_from", "date_to", "state", "note", "pulled_at", "rm_opening", "purchases", "rm_available", "rm_ending", "rm_used", "direct_labor", "overhead",
-  "total_cost", "wip_opening", "wip_ending", "cogm", "control_state", "move_id", "post_user_id", "post_date",
+  "total_cost", "wip_opening", "wip_ending", "cogm", "qty_produced", "unit_cogm", "unit_material", "unit_labor", "unit_overhead", "unit_wip", "control_state", "move_id", "post_user_id", "post_date",
 ];
 
 const opRow = (r) => ({
@@ -135,19 +136,21 @@ const opRow = (r) => ({
   costSource: r.cost_source, openingQty: r.opening_qty, openingCost: r.opening_cost, purchaseQty: r.purchase_qty, purchaseValue: r.purchase_value, avgCost: r.avg_cost,
   oldCost: r.old_cost, costUpdated: r.cost_updated, adjustQty: r.adjust_qty, autoCost: r.cost_source === "manual" ? null : r.unit_cost, autoSource: r.cost_source === "manual" ? null : r.cost_source,
 });
+const outRow = (r) => ({ id: r.id, product: ref(r.product_id), uom: r.uom_id?.[1] ?? "", moQty: r.mo_qty, qty: String(r.qty), source: r.source, cogmValue: r.cogm_value });
 const wipRow = (r) => ({
   id: r.id, name: r.name, product: ref(r.product_id), qty: String(r.qty), materialCost: String(r.material_cost), materialPct: String(r.material_pct),
   conversionCost: String(r.conversion_cost), completionPct: String(r.completion_pct),
 });
-const opValue = (r) => Math.round(num(r.qty) * num(r.unitCost));
-const wipValue = (r) => Math.round((num(r.qty) * (num(r.materialCost) * num(r.materialPct) + num(r.conversionCost) * num(r.completionPct))) / 100);
+const cents = (value) => Math.round(value * 100) / 100; // pembulatan mata uang server (dua desimal), supaya pratinjau sama dengan angka tersimpan
+const opValue = (r) => cents(num(r.qty) * num(r.unitCost));
+const wipValue = (r) => cents((num(r.qty) * (num(r.materialCost) * num(r.materialPct) + num(r.conversionCost) * num(r.completionPct))) / 100);
 
 async function loadForm(id) {
   const [ws, defaults] = await Promise.all([readOne(MODEL, id, WS_FIELDS), call(MODEL, "kompakapps_defaults", {})]);
   if (!ws) return null;
   // Control Balance dijalankan lebih dulu: ia menghitung ulang stok sistem pembanding, yang lalu dibaca bersama baris opname.
   const check = ws.state === "draft" ? await call(MODEL, "action_check", { ids: [id] }) : null;
-  const [lines, ops, wips] = await Promise.all([
+  const [lines, ops, wips, outs] = await Promise.all([
     searchRead("kompakapps.cogm.line", [["worksheet_id", "=", id]], ["section", "account_id", "debit", "credit", "balance", "pct", "amount"], { order: "id" }),
     searchRead(
       "kompakapps.cogm.opname", [["worksheet_id", "=", id]],
@@ -155,8 +158,9 @@ async function loadForm(id) {
       { order: "id" },
     ),
     searchRead("kompakapps.cogm.wip", [["worksheet_id", "=", id]], ["name", "product_id", "qty", "material_cost", "material_pct", "conversion_cost", "completion_pct"], { order: "id" }),
+    searchRead("kompakapps.cogm.output", [["worksheet_id", "=", id]], ["product_id", "uom_id", "mo_qty", "qty", "source", "cogm_value"], { order: "id" }),
   ]);
-  return { id, ws, lines, ops: ops.map(opRow), wips: wips.map(wipRow), removed: { ops: [], wips: [] }, dirty: false, check, defaults, canExecute: defaults.can_execute };
+  return { id, ws, lines, ops: ops.map(opRow), wips: wips.map(wipRow), outs: outs.map(outRow), removed: { ops: [], wips: [], outs: [] }, dirty: false, check, defaults, canExecute: defaults.can_execute };
 }
 
 async function renderForm(id) {
@@ -200,9 +204,12 @@ function paintForm() {
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4">
       <div class="px-5 py-3 border-b border-gray-200 font-semibold text-gray-900">3. Formulir Opname Barang Dalam Proses (WIP) <span class="text-xs font-normal text-gray-500">estimasi tingkat penyelesaian</span></div>
       <div id="wip-box">${wipsHtml()}</div></section>
+    <section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4">
+      <div class="px-5 py-3 border-b border-gray-200 font-semibold text-gray-900">4. Hasil Produksi <span class="text-xs font-normal text-gray-500">qty yang telah diproduksi: pembagi HPP per unit</span></div>
+      <div id="out-box">${outsHtml()}</div></section>
     ${draft ? `<div class="flex gap-2 mt-4"><button data-action="cogm-save" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">Simpan Kertas Kerja</button><span id="dirty-note" class="text-sm text-amber-700 self-center ${form.dirty ? "" : "hidden"}">Ada perubahan yang belum disimpan</span></div>` : ""}
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4">
-      <div class="px-5 py-3 border-b border-gray-200 font-semibold text-gray-900">4. Kalkulasi COGM <span id="preview-note" class="text-xs font-normal text-amber-700">${form.dirty ? "pratinjau, belum disimpan" : ""}</span></div>
+      <div class="px-5 py-3 border-b border-gray-200 font-semibold text-gray-900">5. Kalkulasi COGM dan HPP per Unit <span id="preview-note" class="text-xs font-normal text-amber-700">${form.dirty ? "pratinjau, belum disimpan" : ""}</span></div>
       <div id="calc-box">${calcHtml()}</div></section>
     ${chatterHtml(MODEL, ws.id)}`;
 }
@@ -310,7 +317,7 @@ function costSourceHtml(r) {
 }
 
 /** Nilai persediaan menurut sistem (stok sistem x biaya per unit); kosong untuk bahan yang tidak dilacak stoknya. */
-const bookValue = (r) => (r.storable ? Math.round(r.bookQty * num(r.unitCost)) : null);
+const bookValue = (r) => (r.storable ? cents(r.bookQty * num(r.unitCost)) : null);
 /** Selisih nilai = nilai valuasi baru (hasil opname) dikurangi nilai sistem. */
 const valueDiff = (r) => (r.storable ? opValue(r) - bookValue(r) : null);
 const signed = (n) => `${n > 0 ? "+" : ""}${rupiah(n)}`;
@@ -427,6 +434,38 @@ function wipsHtml() {
       <span class="text-xs text-gray-500 ml-3">Nilai = jumlah x (biaya bahan x bahan terpakai% + biaya konversi x penyelesaian%). Konversi = tenaga kerja dan overhead.</span></div>` : ""}`;
 }
 
+/* ----- hasil produksi ----- */
+
+const outQty = () => form.outs.reduce((total, r) => total + num(r.qty), 0);
+
+function outsHtml() {
+  const draft = form.ws.state === "draft";
+  const f = figures();
+  const rows = form.outs
+    .map((r, i) => {
+      const source = r.source === "mo" ? "MO selesai" : r.moQty ? `manual (MO: ${nf.format(r.moQty)})` : "manual";
+      if (!draft) {
+        return `<tr class="text-sm"><td class="py-2 px-3 min-w-56">${esc(r.product?.display_name)}</td><td class="py-2 px-3">${esc(r.uom)}</td><td class="py-2 px-3 text-right tabular-nums">${nf.format(num(r.qty))}</td>
+          <td class="py-2 px-3 text-gray-600">${esc(source)}</td><td class="py-2 px-3 text-right tabular-nums">${esc(rupiah(form.ws.unit_cogm))}</td><td class="py-2 px-3 text-right tabular-nums font-medium">${esc(rupiah(r.cogmValue))}</td></tr>`;
+      }
+      return `<tr class="text-sm align-top">
+        <td class="py-2 px-3 min-w-72"><input data-lookup="cogm-out-product" data-out="${i}" autocomplete="off" role="combobox" aria-autocomplete="list" value="${esc(r.product?.display_name ?? "")}" placeholder="Cari barang jadi..." class="${INPUT}"></td>
+        <td class="py-2 px-3 whitespace-nowrap text-gray-600">${esc(r.uom)}</td>
+        <td class="py-2 px-3 w-40">${numInput(`data-out="${i}" data-field="qty" aria-label="Qty diproduksi"`, r.qty)}</td>
+        <td class="py-2 px-3 text-gray-600" id="out-src-${i}">${esc(source)}</td>
+        <td class="py-2 px-3 text-right tabular-nums" id="out-unit-${i}">${esc(rupiah(f.unit))}</td>
+        <td class="py-2 px-3 text-right tabular-nums font-medium" id="out-value-${i}">${esc(rupiah(Math.round(num(r.qty) * f.unit)))}</td>
+        <td class="py-2 px-3"><button data-action="cogm-rm-out" data-i="${i}" class="text-rose-600 hover:text-rose-800" aria-label="Hapus baris"><i class="fas fa-trash"></i></button></td></tr>`;
+    })
+    .join("");
+  return `<div class="overflow-x-auto"><table class="w-full text-left" data-list="on"><thead class="border-b border-gray-200"><tr>${th("Barang Jadi")}${th("Satuan")}${th("Qty Diproduksi", true)}${th("Sumber")}${th("HPP per Unit", true)}${th("Nilai COGM", true)}${draft ? th("") : ""}</tr></thead>
+    <tbody class="divide-y divide-gray-100">${rows || `<tr><td colspan="7" class="py-6 text-center text-sm text-gray-500">Belum ada hasil produksi. ${draft ? "Tarik dari Buku Besar mengambil barang jadi dari Manufacturing Order selesai; atau tambahkan manual." : ""}</td></tr>`}</tbody>
+    <tfoot><tr class="border-t border-gray-200 text-sm font-semibold"><td class="py-2 px-3" colspan="2">Total qty diproduksi (pembagi)</td><td class="py-2 px-3 text-right tabular-nums" id="out-total">${nf.format(f.qty)}</td><td></td>
+      <td class="py-2 px-3 text-right tabular-nums" id="out-unit-total">${esc(rupiah(f.unit))}</td><td class="py-2 px-3 text-right tabular-nums" id="out-value-total">${esc(rupiah(f.cogm))}</td>${draft ? "<td></td>" : ""}</tr></tfoot></table></div>
+    <p class="px-5 py-2 text-xs text-gray-500 border-t border-gray-100">Seluruh biaya aktual bulan ini (bahan baku terpakai, tenaga kerja, dan overhead, termasuk listrik dan upah) dijumlahkan lebih dulu menjadi COGM, lalu <b>HPP per unit = COGM ÷ total qty yang diproduksi</b>. Nilai COGM tiap barang jadi = qty x HPP per unit. Gunakan satuan yang sebanding antarbarang karena qty dijumlahkan.</p>
+    ${draft ? `<div class="px-5 pb-3"><button data-action="cogm-add-out" class="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50"><i class="fas fa-plus mr-2"></i>Tambah Barang Jadi</button></div>` : ""}`;
+}
+
 /* ----- kalkulasi ----- */
 
 function figures() {
@@ -437,7 +476,12 @@ function figures() {
   const available = ws.rm_opening + ws.purchases;
   const used = available - ending;
   const total = used + ws.direct_labor + ws.overhead;
-  return { ending, wipEnd, available, used, total, cogm: total + ws.wip_opening - wipEnd };
+  const cogm = total + ws.wip_opening - wipEnd;
+  const qty = draft ? outQty() : ws.qty_produced;
+  const per = (amount) => (qty > 0 ? cents(amount / qty) : 0);
+  return {
+    ending, wipEnd, available, used, total, cogm, qty, unit: per(cogm), unitMaterial: per(used), unitLabor: per(ws.direct_labor), unitOverhead: per(ws.overhead), unitWip: per(ws.wip_opening - wipEnd),
+  };
 }
 
 function calcHtml() {
@@ -446,12 +490,15 @@ function calcHtml() {
   const row = (sign, label, amount, kind = "") =>
     `<tr class="text-sm ${kind === "sum" ? "font-semibold bg-gray-50" : ""} ${kind === "final" ? "font-bold bg-indigo-50 text-indigo-900" : ""}">
       <td class="py-2 px-5 w-12 text-gray-400">${sign}</td><td class="py-2 pr-4">${esc(label)}</td><td class="py-2 px-5 text-right tabular-nums ${amount < 0 ? "text-rose-700" : ""}">${esc(rupiah(amount))}</td></tr>`;
+  const text = (sign, label, value) =>
+    `<tr class="text-sm"><td class="py-2 px-5 w-12 text-gray-400">${sign}</td><td class="py-2 pr-4">${esc(label)}</td><td class="py-2 px-5 text-right tabular-nums">${esc(value)}</td></tr>`;
   return `<table class="w-full text-left"><tbody class="divide-y divide-gray-100">
     ${row("", "Persediaan Bahan Baku Awal", ws.rm_opening)}${row("+", "Pembelian Bersih (setelah retur dan potongan)", ws.purchases)}
     ${row("=", "Bahan Baku Tersedia", f.available, "sum")}${row("-", "Persediaan Bahan Baku Akhir (opname)", f.ending)}
     ${row("=", "Bahan Baku Terpakai", f.used, "sum")}${row("+", "Tenaga Kerja Langsung", ws.direct_labor)}${row("+", "Overhead Pabrik", ws.overhead)}
     ${row("=", "Total Biaya Produksi", f.total, "sum")}${row("+", "Barang Dalam Proses Awal", ws.wip_opening)}${row("-", "Barang Dalam Proses Akhir (estimasi)", f.wipEnd)}
-    ${row("=", "Harga Pokok Produksi (COGM)", f.cogm, "final")}</tbody></table>`;
+    ${row("=", "Harga Pokok Produksi (COGM)", f.cogm, "final")}
+    ${f.qty > 0 ? `${text("÷", "Qty yang diproduksi (pembagi)", `${nf.format(f.qty)} unit`)}${row("", "Bahan baku terpakai per unit", f.unitMaterial)}${row("", "Tenaga kerja langsung per unit", f.unitLabor)}${row("", "Overhead pabrik per unit", f.unitOverhead)}${row("", "Perubahan barang dalam proses per unit", f.unitWip)}${row("=", "HPP per Unit (COGM ÷ qty diproduksi)", f.unit, "final")}` : text("÷", "Isi qty yang diproduksi pada bagian Hasil Produksi untuk menghitung HPP per unit.", "-")}</tbody></table>`;
 }
 
 function refreshLive() {
@@ -477,6 +524,19 @@ function refreshLive() {
     const value = document.getElementById(`wip-value-${i}`);
     if (value) value.textContent = rupiah(wipValue(r));
   });
+  const f = figures();
+  form.outs.forEach((r, i) => {
+    const unit = document.getElementById(`out-unit-${i}`);
+    if (unit) unit.textContent = rupiah(f.unit);
+    const value = document.getElementById(`out-value-${i}`);
+    if (value) value.textContent = rupiah(Math.round(num(r.qty) * f.unit));
+    const src = document.getElementById(`out-src-${i}`);
+    if (src) src.textContent = r.source === "mo" ? "MO selesai" : r.moQty ? `manual (MO: ${nf.format(r.moQty)})` : "manual";
+  });
+  for (const [id, text] of [["out-total", nf.format(f.qty)], ["out-unit-total", rupiah(f.unit)], ["out-value-total", rupiah(f.cogm)]]) {
+    const cell = document.getElementById(id);
+    if (cell) cell.textContent = text;
+  }
   const opTotal = document.getElementById("op-total");
   if (opTotal) opTotal.textContent = rupiah(form.ops.reduce((sum, r) => sum + opValue(r), 0));
   const wipTotal = document.getElementById("wip-total");
@@ -538,6 +598,19 @@ async function persist() {
     }),
     (a, b) => ["name", "qty", "materialCost", "materialPct", "conversionCost", "completionPct"].every((k) => String(a[k]) === String(b[k])) && a.product?.id === b.product?.id,
   );
+  const outRows = form.outs.filter((r) => r.product || r.id);
+  if (outRows.some((r) => !r.product)) throw new Error("Pilih barang jadi dari kotak saran pada setiap baris hasil produksi.");
+  const seenOut = new Set();
+  for (const r of outRows) {
+    if (!(num(r.qty) >= 0)) throw new Error(`Qty diproduksi ${r.product.display_name} tidak boleh negatif.`);
+    if (seenOut.has(r.product.id)) throw new Error(`${r.product.display_name} muncul dua kali pada hasil produksi.`);
+    seenOut.add(r.product.id);
+  }
+  const outCommands = commands(
+    outRows, form.initialOuts ?? [], form.removed.outs,
+    (r) => ({ product_id: r.product.id, qty: num(r.qty) }),
+    (a, b) => a.product?.id === b.product?.id && num(a.qty) === num(b.qty),
+  );
   const vals = {};
   if (form.headerDirty) {
     const header = form.headerValues;
@@ -546,6 +619,7 @@ async function persist() {
   }
   if (opCommands.length) vals.opname_ids = opCommands;
   if (wipCommands.length) vals.wip_ids = wipCommands;
+  if (outCommands.length) vals.output_ids = outCommands;
   if (Object.keys(vals).length) await call(MODEL, "write", { ids: [ws.id], vals });
   form = null;
   return true;
@@ -554,6 +628,7 @@ async function persist() {
 const snapshotInitial = () => {
   form.initialOps = form.ops.map((r) => ({ ...r }));
   form.initialWips = form.wips.map((r) => ({ ...r }));
+  form.initialOuts = form.outs.map((r) => ({ ...r }));
   form.headerValues = { date_from: form.ws.date_from, date_to: form.ws.date_to, note: form.ws.note || "" };
 };
 const markDirty = () => {
@@ -649,10 +724,10 @@ function paintSetting() {
     </section>
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 max-w-5xl">
       <div class="px-5 py-3 border-b border-gray-200 font-semibold text-gray-900">Pemetaan Akun Biaya Produksi</div>
-      <div class="overflow-x-auto"><table class="w-full text-left"><thead class="border-b border-gray-200"><tr>${th("Akun")}${th("Bagian COGM")}${th("Porsi Produksi (%)", true)}${th("")}</tr></thead>
+      <div class="overflow-x-auto"><table class="w-full text-left"><thead class="border-b border-gray-200"><tr>${th("Akun")}${th("Bagian COGM")}${th("Bagian untuk Produksi (%)", true)}${th("")}</tr></thead>
         <tbody class="divide-y divide-gray-100">${maps || '<tr><td colspan="4" class="py-6 text-center text-sm text-gray-500">Belum ada akun yang dipetakan.</td></tr>'}</tbody></table></div>
       ${edit ? '<div class="px-5 py-3"><button data-action="cogm-map-add" class="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50"><i class="fas fa-plus mr-2"></i>Tambah Akun</button></div>' : ""}
-      <p class="px-5 pb-4 text-xs text-gray-500">Porsi produksi: bagian saldo akun yang dibebankan ke produksi, mis. 70 untuk listrik yang dipakai pabrik 70%. "Bukan Biaya Produksi" menandai akun berawalan kode yang diperiksa tetapi sengaja tidak masuk COGM (mis. harga pokok penjualan).</p>
+      <p class="px-5 pb-4 text-xs text-gray-500">Seluruh biaya aktual akun-akun ini (listrik, upah, dan lainnya) dijumlahkan lebih dulu pada akhir bulan, lalu dibagi qty yang diproduksi untuk mendapat HPP per unit. Bagian untuk produksi (%) biasanya 100; kurangi hanya bila akun juga dipakai di luar pabrik, mis. 70 untuk listrik yang 70% dipakai pabrik. "Bukan Biaya Produksi" menandai akun berawalan kode yang diperiksa tetapi sengaja tidak masuk COGM (mis. harga pokok penjualan).</p>
     </section>
     ${edit ? `<div class="flex gap-2 mt-4">${button("cogm-cfg-save", "Simpan Pengaturan", "primary")}${button("cogm-setup", "Lengkapi Bawaan", "plain")}</div>` : ""}`;
 }
@@ -713,6 +788,24 @@ registerLookup("cogm-product", {
     document.querySelector(`[data-op="${form.ops.indexOf(row)}"][data-field="qty"]`)?.focus();
   },
 });
+registerLookup("cogm-out-product", {
+  pageSize: PRODUCT_PAGE,
+  search: (q, _input, page) => searchProducts(q, page, { domain: [["type", "=", "consu"]], fields: ["display_name", "uom_id"] }),
+  sub: (r) => r.uom_id?.[1] ?? "",
+  isChosen: (input) => Boolean(form?.outs[Number(input.dataset.out)]?.product) && form.outs[Number(input.dataset.out)].product.display_name === input.value,
+  choose: (input, item) => {
+    const row = form.outs[Number(input.dataset.out)];
+    if (form.outs.some((r) => r !== row && r.product?.id === item.id)) {
+      toast(`${item.display_name} sudah ada pada hasil produksi.`, "error");
+      return;
+    }
+    Object.assign(row, { product: { id: item.id, display_name: item.display_name }, uom: item.uom_id?.[1] ?? "" });
+    form.dirty = true;
+    document.getElementById("out-box").innerHTML = outsHtml();
+    refreshLive();
+    document.querySelector(`[data-out="${form.outs.indexOf(row)}"][data-field="qty"]`)?.focus();
+  },
+});
 registerLookup("cogm-wip-product", {
   pageSize: PRODUCT_PAGE,
   search: (q, _input, page) => searchProducts(q, page, { domain: [["product_tmpl_id.bom_ids", "!=", false]], fields: ["display_name", "uom_id"] }),
@@ -733,6 +826,7 @@ const blankOp = () => ({
   id: null, product: null, uom: "", storable: false, qty: "", unitCost: "", bookQty: 0, explanation: "", costSource: "standard", openingQty: 0, openingCost: 0, purchaseQty: 0, purchaseValue: 0, avgCost: 0,
   oldCost: 0, costUpdated: false, adjustQty: 0, autoCost: null, autoSource: null,
 });
+const blankOut = () => ({ id: null, product: null, uom: "", moQty: 0, qty: "", source: "manual", cogmValue: 0 });
 const blankWip = () => ({ id: null, name: "", product: null, qty: "", materialCost: "", materialPct: "100", conversionCost: "", completionPct: "50" });
 
 export async function onClick(event, el) {
@@ -753,6 +847,18 @@ export async function onClick(event, el) {
     document.getElementById("ops-box").innerHTML = opsHtml();
     refreshLive();
     document.querySelector(`[data-lookup="cogm-product"][data-op="${form.ops.length - 1}"]`)?.focus();
+  } else if (action === "cogm-add-out") {
+    form.outs.push(blankOut());
+    form.dirty = true;
+    document.getElementById("out-box").innerHTML = outsHtml();
+    refreshLive();
+    document.querySelector(`[data-lookup="cogm-out-product"][data-out="${form.outs.length - 1}"]`)?.focus();
+  } else if (action === "cogm-rm-out") {
+    const [removed] = form.outs.splice(Number(el.dataset.i), 1);
+    if (removed.id) form.removed.outs.push(removed.id);
+    form.dirty = true;
+    document.getElementById("out-box").innerHTML = outsHtml();
+    refreshLive();
   } else if (action === "cogm-add-wip") {
     form.wips.push(blankWip());
     form.dirty = true;
@@ -850,6 +956,7 @@ export function onInput(event, el) {
     // mengetik di kotak saran membatalkan pilihan sebelumnya sampai salah satu saran dipilih lagi
     if (dataset.lookup === "cogm-product" && form) form.ops[Number(dataset.op)].product = null;
     if (dataset.lookup === "cogm-wip-product" && form) form.wips[Number(dataset.wip)].product = null;
+    if (dataset.lookup === "cogm-out-product" && form) form.outs[Number(dataset.out)].product = null;
     if (dataset.lookup === "cogm-cfg-account" && cfg) cfg.accounts[dataset.role] = null;
     if (dataset.lookup === "cogm-map-account" && cfg) cfg.maps[Number(dataset.map)].account = null;
     runLookup(el, 250);
@@ -867,6 +974,11 @@ export function onInput(event, el) {
       const label = document.getElementById(`op-src-${dataset.op}`);
       if (label) label.innerHTML = costSourceHtml(row);
     }
+    markDirty();
+  } else if (dataset.out !== undefined && dataset.field && form) {
+    const row = form.outs[Number(dataset.out)];
+    row[dataset.field] = el.value;
+    if (row.source === "mo" && Math.abs(num(el.value) - row.moQty) > 1e-9) row.source = "manual";
     markDirty();
   } else if (dataset.wip !== undefined && dataset.field && form) {
     form.wips[Number(dataset.wip)][dataset.field] = el.value;

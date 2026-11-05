@@ -10,7 +10,8 @@ jurnal perpetual, skema 1) tidak tercampur. Isinya dua bulan terakhir:
 * bulan lalu, dua kertas kerja dari buku besar yang sama: satu **Hijau dan belum dieksekusi** (tombol Execute aktif) dan satu **Merah** karena salah ketik
   pada hasil opname (260 seharusnya 20). Perbaiki angkanya pada yang Merah, simpan, lalu periksa: Hijau. Bila yang Hijau dieksekusi lebih dulu, yang lain
   menjadi Merah karena periodenya sudah terposting. Harga beli bulan lalu naik (3 sampai 6 persen) sehingga biaya rata-rata tertimbang berbeda dari biaya
-  produk; Execute memperbarui biaya produk dan menyesuaikan stok, Reverse mengembalikannya.
+  produk; Execute memperbarui biaya produk dan menyesuaikan stok, Reverse mengembalikannya. Qty barang jadi yang diproduksi menjadi pembagi: HPP per unit =
+  total biaya aktual (COGM) dibagi qty itu.
 
 Dijalankan lewat `odoo shell` (variabel `env` disediakan shell); database harus sudah memasang kompakapps_base. Aman dijalankan ulang: bila perusahaannya sudah
 ada, tidak ada yang diubah.
@@ -92,6 +93,14 @@ for code, name, uom, cost, *_ in RAW:
 
 # Kenaikan harga beli per bahan pada bulan kedua (bulan pertama sama dengan biaya produk).
 PRICE_UP = {"RM-REG-KOL": 1.05, "RM-ENZ-CHO": 1.03, "RM-BTL-50": 1.0, "RM-LBL-KIT": 1.04, "RM-BUF-FOS": 1.06}
+# Barang jadi yang diproduksi: qty-nya menjadi pembagi HPP per unit pada kertas kerja.
+FINISHED = {
+    code: env["product.product"].with_company(company).create(
+        {"name": name, "default_code": code, "type": "consu", "categ_id": category.id, "company_id": company.id, "taxes_id": [Command.clear()], "supplier_taxes_id": [Command.clear()], "standard_price": 0.0}
+    )
+    for code, name in (("FG-KIT-KOL", "Kit Reagen Kolesterol 4 x 50 ml (Demo)"), ("FG-KIT-GLU", "Kit Reagen Glukosa 4 x 50 ml (Demo)"))
+}
+PRODUCED = {0: {"FG-KIT-KOL": 1200.0, "FG-KIT-GLU": 800.0}, 1: {"FG-KIT-KOL": 1100.0, "FG-KIT-GLU": 900.0}}  # qty diproduksi per bulan
 warehouse = env["stock.warehouse"].search([("company_id", "=", company.id)], limit=1)
 stock_loc = warehouse.lot_stock_id
 production_loc = env["stock.location"].search([("usage", "=", "production"), ("company_id", "=", company.id)], limit=1)
@@ -203,6 +212,7 @@ def worksheet(first, last, index, wip_lines, note, counts=None):
         {
             "opname_ids": [Command.create({"product_id": products[r[0]].id, "qty": float(counts.get(r[0], r[7][index])), "explanation": explanation.get(r[0], False)}) for r in RAW],
             "wip_ids": [Command.create(line) for line in wip_lines],
+            "output_ids": [Command.create({"product_id": FINISHED[code].id, "qty": qty}) for code, qty in PRODUCED[index].items()],
         }
     )
     sheet.action_pull()
