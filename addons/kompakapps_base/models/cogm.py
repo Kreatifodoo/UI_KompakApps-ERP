@@ -11,13 +11,14 @@ COGM = Bahan Baku Terpakai + Tenaga Kerja Langsung + Overhead + WIP Awal - WIP A
 Bahan Baku Terpakai = Persediaan Bahan Baku Awal + Pembelian Bersih - Persediaan Bahan Baku Akhir.
 """
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, time, timedelta
 
 import pytz
 
 from odoo import Command, _, api, fields, models
 from odoo.exceptions import AccessError, UserError, ValidationError
+from odoo.tools import float_is_zero, float_round
 
 SECTIONS = [
     ("purchase", "Pembelian Bahan Baku"),
@@ -36,6 +37,9 @@ COST_SECTIONS = ("purchase", "labor", "overhead")
 STATES = [("draft", "Draft"), ("posted", "Diposting"), ("cancel", "Dibatalkan")]
 CONTROL = [("unchecked", "Belum Diperiksa"), ("green", "Hijau (Seimbang)"), ("red", "Merah (Ada Selisih)")]
 LOCKED_WHEN_NOT_DRAFT = {"company_id", "date_from", "date_to", "line_ids", "opname_ids", "wip_ids"}
+COST_METHODS = [("average", "Rata-rata tertimbang periode"), ("standard", "Biaya standar produk")]
+COST_SOURCES = [("standard", "Biaya produk"), ("average", "Rata-rata periode"), ("manual", "Manual")]
+BASIS_KEYS = ("opening_qty", "opening_cost", "purchase_qty", "purchase_value", "avg_cost")
 
 
 class KompakappsCogmConfig(models.Model):
@@ -60,6 +64,21 @@ class KompakappsCogmConfig(models.Model):
     )
     tolerance_pct = fields.Float(
         string="Toleransi Selisih Opname (%)", default=2.0, help="Selisih jumlah fisik terhadap stok sistem sampai persentase ini dianggap wajar. Di atasnya perlu alasan selisih per baris."
+    )
+    cost_method = fields.Selection(
+        COST_METHODS,
+        string="Metode Biaya Persediaan Akhir",
+        required=True,
+        default="average",
+        help="Rata-rata tertimbang periode: biaya per unit = (jumlah awal x biaya awal + pembelian periode) / (jumlah awal + jumlah dibeli). Biaya standar produk: memakai biaya produk apa adanya.",
+    )
+    update_product_cost = fields.Boolean(
+        string="Perbarui Biaya Produk saat Execute", default=True, help="Saat jurnal COGM dieksekusi, biaya produk diganti dengan biaya rata-rata tertimbang periode (baris bersumber rata-rata). Dikembalikan saat Reverse."
+    )
+    adjust_stock = fields.Boolean(
+        string="Samakan Stok Sistem dengan Hasil Opname saat Execute",
+        default=True,
+        help="Saat jurnal COGM dieksekusi, selisih jumlah fisik terhadap stok sistem dibuat menjadi penyesuaian stok (Inventory Adjustment) bertanggal akhir periode. Dikembalikan saat Reverse.",
     )
     account_ids = fields.One2many("kompakapps.cogm.account", "config_id", string="Akun Biaya Produksi")
 
@@ -176,6 +195,16 @@ class KompakappsCogmOpname(models.Model):
     variance_qty = fields.Float(string="Selisih Jumlah", digits="Product Unit", compute="_compute_variance", store=True)
     variance_value = fields.Monetary(string="Selisih Nilai", compute="_compute_variance", store=True)
     explanation = fields.Char(string="Alasan Selisih", help="Wajib bila selisih jumlah melebihi toleransi, mis. susut, rusak, atau salah catat penerimaan.")
+    cost_source = fields.Selection(COST_SOURCES, string="Sumber Biaya", default="standard", required=True, help="Rata-rata periode dihitung dari saldo awal dan pembelian terposting; Manual bila biaya per unit diubah petugas.")
+    opening_qty = fields.Float(string="Jumlah Awal", digits="Product Unit", copy=False, help="Stok sistem pada akhir hari sebelum periode.")
+    opening_cost = fields.Float(string="Biaya Awal per Unit", digits="Product Price", copy=False, help="Biaya akhir periode sebelumnya (kertas kerja terposting) atau biaya produk saat ini.")
+    purchase_qty = fields.Float(string="Jumlah Dibeli", digits="Product Unit", copy=False, help="Jumlah pada tagihan vendor terposting dalam periode, dikurangi retur.")
+    purchase_value = fields.Monetary(string="Nilai Pembelian", copy=False, help="Nilai pada tagihan vendor terposting dalam periode, dikurangi retur.")
+    avg_cost = fields.Float(string="Biaya Rata-rata Periode", digits="Product Price", copy=False)
+    old_cost = fields.Float(string="Biaya Produk Sebelum Execute", digits="Product Price", copy=False)
+    cost_updated = fields.Boolean(string="Biaya Produk Diperbarui", copy=False)
+    adjust_qty = fields.Float(string="Penyesuaian Stok", digits="Product Unit", copy=False, help="Selisih yang dijadikan penyesuaian stok saat Execute.")
+    adjust_move_ids = fields.Many2many("stock.move", "kompakapps_cogm_opname_move_rel", "opname_id", "move_id", string="Pergerakan Penyesuaian Stok", copy=False, readonly=True)
 
     _product_unique = models.Constraint("UNIQUE(worksheet_id, product_id)", "Bahan baku ini sudah ada pada lembar opname. Ubah jumlahnya pada baris yang ada (gabungkan semua lokasi).")
 
@@ -214,10 +243,41 @@ class KompakappsCogmOpname(models.Model):
     @api.model_create_multi
     def create(self, vals_list):
         for vals in vals_list:
-            if vals.get("unit_cost") is None and vals.get("product_id") and vals.get("worksheet_id"):
-                company = self.env["kompakapps.cogm.worksheet"].browse(vals["worksheet_id"]).company_id
-                vals["unit_cost"] = self.env["product.product"].browse(vals["product_id"]).sudo().with_company(company).standard_price
+            if vals.get("product_id") and vals.get("worksheet_id"):
+                worksheet = self.env["kompakapps.cogm.worksheet"].browse(vals["worksheet_id"])
+                basis = worksheet._cost_basis(self.env["product.product"].browse(vals["product_id"]))
+                for key in BASIS_KEYS:
+                    vals.setdefault(key, basis[key])
+                given = vals.get("unit_cost")
+                if given is None or abs(given - basis["unit_cost"]) <= 0.005:
+                    vals["unit_cost"], vals["cost_source"] = basis["unit_cost"], basis["cost_source"]
+                else:
+                    vals["cost_source"] = "manual"
         return super().create(vals_list)
+
+    def write(self, vals):
+        if "unit_cost" in vals and "cost_source" not in vals and not self.env.context.get("kompakapps_cost_auto"):
+            changed = self.filtered(lambda line: abs(line.unit_cost - vals["unit_cost"]) > 0.005)
+            if changed:
+                super(KompakappsCogmOpname, changed).write({**vals, "cost_source": "manual"})  # biaya diubah petugas: tidak ikut dihitung ulang saat data ditarik
+                rest = self - changed
+                return super(KompakappsCogmOpname, rest).write(vals) if rest else True
+        return super().write(vals)
+
+    def _refresh_cost_basis(self):
+        """Hitung ulang dasar biaya rata-rata (saldo awal dan pembelian) dan, kecuali yang diubah manual, biaya per unit."""
+        for line in self:
+            basis = line.worksheet_id._cost_basis(line.product_id)
+            vals = {key: basis[key] for key in BASIS_KEYS}
+            if line.cost_source != "manual":
+                vals.update(unit_cost=basis["unit_cost"], cost_source=basis["cost_source"])
+            line.with_context(kompakapps_cost_auto=True).write(vals)
+
+    def action_reset_cost(self):
+        """Kembalikan biaya per unit ke hitungan otomatis (menurut metode biaya pada pengaturan)."""
+        self.with_context(kompakapps_cost_auto=True).write({"cost_source": "standard"})
+        self._refresh_cost_basis()
+        return True
 
     def _tolerance_qty(self, tolerance_pct):
         self.ensure_one()
@@ -360,11 +420,11 @@ class KompakappsCogmWorksheet(models.Model):
         text = f"{abs(amount):,.{decimals}f}".replace(",", "\x00").replace(".", ",").replace("\x00", ".")
         return f"{'-' if amount < 0 else ''}{self.currency_id.symbol} {text}"
 
-    def _cutoff(self):
-        """Batas akhir hitung stok: akhir hari `date_to` menurut zona waktu pengguna, dalam UTC."""
+    def _cutoff(self, day=None):
+        """Batas akhir hitung stok: akhir hari `day` (bawaan `date_to`) menurut zona waktu pengguna, dalam UTC."""
         self.ensure_one()
         tz = pytz.timezone(self.env.user.tz or self.env.context.get("tz") or "UTC")
-        return tz.localize(datetime.combine(self.date_to, time.max)).astimezone(pytz.utc).replace(tzinfo=None)
+        return tz.localize(datetime.combine(day or self.date_to, time.max)).astimezone(pytz.utc).replace(tzinfo=None)
 
     def _config(self):
         self.ensure_one()
@@ -429,6 +489,7 @@ class KompakappsCogmWorksheet(models.Model):
             worksheet.line_ids.unlink()
             worksheet.write({"line_ids": [Command.create(v) for v in values], "pulled_at": fields.Datetime.now(), "control_state": "unchecked", "control_checked_at": False})
             worksheet.opname_ids.modified(["product_id"])  # stok sistem dan selisih dihitung ulang
+            worksheet.opname_ids._refresh_cost_basis()
             worksheet.message_post(body=_("Data ditarik dari buku besar: periode %(from)s s.d. %(to)s.", **{"from": worksheet.date_from, "to": worksheet.date_to}))
         return True
 
@@ -444,19 +505,66 @@ class KompakappsCogmWorksheet(models.Model):
             "configured": bool(config),
             "can_execute": bool(self.env.su or self.env.user.has_group("account.group_account_user")),
             "tolerance_pct": config.tolerance_pct if config else 0.0,
+            "cost_method": config.cost_method if config else "standard",
+            "update_product_cost": bool(config and config.update_product_cost),
+            "adjust_stock": bool(config and config.adjust_stock),
         }
 
     @api.model
-    def kompakapps_product_info(self, product_ids, date_to=None):
-        """Satuan, biaya per unit, dan stok sistem untuk bahan baku yang dipilih di formulir opname."""
+    def kompakapps_product_info(self, product_ids, date_to=None, date_from=None):
+        """Satuan, stok sistem pada akhir periode, dan dasar biaya (saldo awal, pembelian, rata-rata tertimbang) untuk bahan baku di formulir opname."""
         products = self.env["product.product"].browse(product_ids).sudo().with_company(self.env.company)
-        proxy = self.new({"company_id": self.env.company.id, "date_to": date_to or self._default_date_to()})
+        date_to = fields.Date.to_date(date_to) or self._default_date_to()
+        date_from = fields.Date.to_date(date_from) or date_to.replace(day=1)
+        proxy = self.new({"company_id": self.env.company.id, "date_from": date_from, "date_to": date_to})
         cutoff = proxy._cutoff()
         result = {}
         for product in products:
             stock = product.with_context(to_date=cutoff, allowed_company_ids=[self.env.company.id]).qty_available if product.is_storable else 0.0
-            result[product.id] = {"uom": product.uom_id.display_name, "unit_cost": product.standard_price, "is_storable": product.is_storable, "book_qty": stock}
+            result[product.id] = {"uom": product.uom_id.display_name, "is_storable": product.is_storable, "book_qty": stock, **proxy._cost_basis(product)}
         return result
+
+    def _cost_basis(self, product):
+        """Dasar biaya satu bahan baku untuk periode kertas kerja ini.
+
+        Rata-rata tertimbang periode = (jumlah awal x biaya awal + nilai pembelian) / (jumlah awal + jumlah dibeli). Jumlah awal adalah stok sistem akhir hari
+        sebelum periode; biaya awal adalah biaya akhir kertas kerja terposting sebelumnya (atau biaya produk bila belum ada); pembelian adalah baris tagihan vendor
+        terposting pada akun pembelian periode itu, dikurangi retur. Bahan yang stoknya tidak dilacak tidak punya jumlah awal, jadi memakai biaya produk.
+        """
+        self.ensure_one()
+        company = self.company_id
+        product = product.sudo().with_company(company)
+        standard = product.standard_price
+        config = self.env["kompakapps.cogm.config"]._for_company(company)
+        basis = {"opening_qty": 0.0, "opening_cost": standard, "purchase_qty": 0.0, "purchase_value": 0.0, "avg_cost": standard, "unit_cost": standard, "cost_source": "standard"}
+        if not product.is_storable:
+            return basis
+        precision = self.env["decimal.precision"].precision_get("Product Price")
+        opening_qty = max(product.with_context(to_date=self._cutoff(self.date_from - timedelta(days=1)), allowed_company_ids=[company.id]).qty_available, 0.0)
+        previous = self.env["kompakapps.cogm.opname"].sudo().search(
+            [("product_id", "=", product.id), ("worksheet_id.company_id", "=", company.id), ("worksheet_id.state", "=", "posted"), ("worksheet_id.date_to", "<", self.date_from)]
+        )
+        previous = previous.sorted(lambda line: line.worksheet_id.date_to, reverse=True)[:1]
+        opening_cost = previous.unit_cost if previous else standard
+        purchase_accounts = config.account_ids.filtered(lambda m: m.section == "purchase").account_id
+        lines = self.env["account.move.line"].sudo().search(
+            [
+                ("company_id", "=", company.id), ("parent_state", "=", "posted"), ("product_id", "=", product.id), ("move_id.move_type", "in", ("in_invoice", "in_refund")),
+                ("account_id", "in", purchase_accounts.ids), ("date", ">=", self.date_from), ("date", "<=", self.date_to),
+            ]
+        )
+        purchase_qty = purchase_value = 0.0
+        for line in lines:
+            sign = -1.0 if line.move_id.move_type == "in_refund" else 1.0
+            purchase_qty += sign * line.product_uom_id._compute_quantity(line.quantity, product.uom_id)
+            purchase_value += line.balance
+        total_qty = opening_qty + purchase_qty
+        total_value = opening_qty * opening_cost + purchase_value
+        avg_cost = float_round(total_value / total_qty, precision_digits=precision) if total_qty > 0 and total_value > 0 else opening_cost
+        basis.update(opening_qty=opening_qty, opening_cost=opening_cost, purchase_qty=purchase_qty, purchase_value=purchase_value, avg_cost=avg_cost)
+        if config and config.cost_method == "average":
+            basis.update(unit_cost=avg_cost, cost_source="average")
+        return basis
 
     @api.model
     def bom_cost_split(self, product_id):
@@ -567,7 +675,11 @@ class KompakappsCogmWorksheet(models.Model):
             names = ", ".join((no_cost.mapped("product_id.display_name") + no_cost_wip.mapped("name"))[:4])
             add("cost", _("Biaya per unit terisi"), "error", _("Ada jumlah tanpa biaya per unit: %s. Nilai persediaan akan nol dan COGM salah.", names))
         else:
-            add("cost", _("Biaya per unit terisi"), "ok", _("Semua baris opname bahan baku dan WIP punya biaya per unit."))
+            sources = Counter(opname.mapped("cost_source"))
+            add(
+                "cost", _("Biaya per unit terisi"), "ok",
+                _("Semua baris punya biaya per unit (%(avg)d rata-rata tertimbang periode, %(std)d biaya produk, %(man)d manual).", avg=sources["average"], std=sources["standard"], man=sources["manual"]),
+            )
 
         # Hitung fisik vs stok sistem: salah ketik terlihat sebagai selisih besar.
         tracked = opname.filtered("is_storable")
@@ -617,6 +729,22 @@ class KompakappsCogmWorksheet(models.Model):
         else:
             add("journal", _("Jurnal COGM seimbang"), "ok", _("Debit = Kredit = %(total)s; selisih 0.", total=self._fmt(debit_total)), expected=debit_total, actual=credit_total)
 
+        # Penyesuaian stok dan biaya produk yang akan dilakukan saat Execute.
+        if config.adjust_stock and opname:
+            todo, skipped = self._adjustment_plan(config)
+            manual = self._manual_adjustments_after_period(opname)
+            notes = []
+            if todo:
+                notes.append(_("Saat Execute stok sistem disesuaikan ke hasil opname untuk %(n)d bahan (bersih %(net)+g).", n=len(todo), net=sum(delta for _line, delta in todo)))
+            if skipped:
+                notes.append(_("%(n)d bahan tidak disesuaikan otomatis: %(names)s. Sesuaikan lewat Physical Inventory.", n=len(skipped), names="; ".join(f"{line.product_id.display_name} ({reason})" for line, reason in skipped[:3])))
+            if manual:
+                notes.append(_("Sudah ada %(n)d penyesuaian stok manual setelah akhir periode pada bahan ini; pastikan tidak menyesuaikan dua kali.", n=manual))
+            if notes:
+                add("adjust", _("Penyesuaian stok saat Execute"), "warn" if (skipped or manual) else "info", " ".join(notes))
+            else:
+                add("adjust", _("Penyesuaian stok saat Execute"), "ok", _("Stok sistem sudah sama dengan hasil opname; tidak ada penyesuaian."))
+
         # Dokumen belum diposting pada periode untuk akun terkait.
         related = config.account_ids.filtered(lambda m: m.section in COST_SECTIONS).account_id | config.raw_account_id | config.wip_account_id
         drafts = self.env["account.move.line"].sudo().search_count(
@@ -631,6 +759,8 @@ class KompakappsCogmWorksheet(models.Model):
     def action_check(self):
         """Jalankan Control Balance, simpan statusnya (Hijau atau Merah), dan kembalikan rinciannya untuk ditampilkan."""
         self.ensure_one()
+        if self.state == "draft":
+            self.opname_ids.modified(["product_id"])  # stok sistem pembanding dihitung ulang (pergerakan stok bisa berubah sejak ditarik)
         checks = self._run_checks()
         errors = [check for check in checks if check["status"] == "error"]
         state = "red" if errors else "green"
@@ -700,9 +830,138 @@ class KompakappsCogmWorksheet(models.Model):
             )
             move.action_post()
             worksheet._verify_posted(config)
+            costs = worksheet._apply_costs(config)
+            adjusted, skipped = worksheet._apply_stock_adjustments(config)
             worksheet.write({"state": "posted", "move_id": move.id, "post_user_id": self.env.user.id, "post_date": fields.Datetime.now(), "control_state": "green", "control_checked_at": fields.Datetime.now()})
-            worksheet.message_post(body=_("Jurnal COGM %(move)s dieksekusi: COGM %(cogm)s.", move=move.name, cogm=worksheet._fmt(worksheet.cogm)))
+            worksheet.message_post(
+                body=_(
+                    "Jurnal COGM %(move)s dieksekusi: COGM %(cogm)s. Biaya produk diperbarui: %(costs)d bahan. Stok disesuaikan: %(adjusted)d bahan, dilewati: %(skipped)d.",
+                    move=move.name, cogm=worksheet._fmt(worksheet.cogm), costs=costs, adjusted=adjusted, skipped=skipped,
+                )
+            )
         return True
+
+    # ------------------------------------------------------------------ biaya produk dan penyesuaian stok saat Execute
+
+    def _adjustment_plan(self, config):
+        """([(baris, selisih jumlah)], [(baris, alasan dilewati)]) penyesuaian stok yang dilakukan saat Execute: jumlah fisik dikurangi stok sistem akhir periode."""
+        self.ensure_one()
+        todo, skipped = [], []
+        for line in self.opname_ids:
+            product = line.product_id.sudo().with_company(self.company_id)
+            if not product.is_storable:
+                continue
+            delta = line.qty - line.book_qty
+            if float_is_zero(delta, precision_rounding=product.uom_id.rounding):
+                continue
+            if product.tracking != "none":
+                skipped.append((line, _("berlacak lot atau serial")))
+            elif product.categ_id.property_valuation == "real_time":
+                skipped.append((line, _("kategori valuasi perpetual")))
+            else:
+                todo.append((line, delta))
+        return todo, skipped
+
+    def _manual_adjustments_after_period(self, opname):
+        """Jumlah penyesuaian stok (inventory adjustment) terselesaikan setelah akhir periode pada bahan yang diopname, di luar yang dibuat kertas kerja ini."""
+        self.ensure_one()
+        return self.env["stock.move"].sudo().search_count(
+            [
+                ("company_id", "=", self.company_id.id), ("product_id", "in", opname.product_id.ids), ("is_inventory", "=", True), ("state", "=", "done"),
+                ("date", ">", self._cutoff()), ("id", "not in", opname.adjust_move_ids.ids),
+            ]
+        )
+
+    def _apply_costs(self, config):
+        """Ganti biaya produk dengan biaya rata-rata tertimbang periode (baris bersumber rata-rata). Mengembalikan jumlah bahan yang berubah."""
+        self.ensure_one()
+        if not (config.update_product_cost and config.cost_method == "average"):
+            return 0
+        changed = 0
+        for line in self.opname_ids.filtered(lambda line: line.cost_source == "average"):
+            product = line.product_id.sudo().with_company(self.company_id)
+            if product.categ_id.property_valuation == "real_time" or abs(product.standard_price - line.unit_cost) <= 0.004:
+                continue
+            line.write({"old_cost": product.standard_price, "cost_updated": True})
+            product.standard_price = line.unit_cost
+            changed += 1
+        return changed
+
+    def _apply_inventory(self, product, location, signed, when):
+        """Penyesuaian stok `signed` pada satu lokasi (Inventory Adjustment) bertanggal `when`; mengembalikan pergerakan stok yang terbentuk."""
+        Move = self.env["stock.move"].sudo()
+        Quant = self.env["stock.quant"].sudo().with_context(inventory_mode=True)
+        known = Move.search([("product_id", "=", product.id), ("is_inventory", "=", True)]).ids
+        quant = Quant.search([("product_id", "=", product.id), ("location_id", "=", location.id), ("company_id", "=", self.company_id.id)], limit=1)
+        if quant:
+            quant.inventory_quantity = quant.quantity + signed
+        else:
+            quant = Quant.create({"product_id": product.id, "location_id": location.id, "inventory_quantity": signed})
+        quant.action_apply_inventory()
+        moves = Move.search([("product_id", "=", product.id), ("is_inventory", "=", True), ("id", "not in", known)])
+        moves.write({"date": when})
+        moves.move_line_ids.write({"date": when})
+        return moves
+
+    def _adjust_product_stock(self, product, delta, when):
+        """Wujudkan `delta` sebagai penyesuaian stok: tambahan masuk ke lokasi stok utama gudang; pengurangan diambil dari lokasi dengan stok terbanyak lebih dulu."""
+        self.ensure_one()
+        product = product.sudo().with_company(self.company_id)
+        main = self.env["stock.warehouse"].sudo().search([("company_id", "=", self.company_id.id)], limit=1).lot_stock_id
+        steps = {}
+        if delta > 0:
+            steps[main] = delta
+        else:
+            need = -delta
+            quants = self.env["stock.quant"].sudo().search([("product_id", "=", product.id), ("company_id", "=", self.company_id.id), ("location_id.usage", "=", "internal")])
+            for quant in quants.sorted("quantity", reverse=True):
+                take = min(need, max(quant.quantity, 0.0))
+                if take > 0:
+                    steps[quant.location_id] = steps.get(quant.location_id, 0.0) - take
+                    need -= take
+                if need <= 1e-9:
+                    break
+            if need > 1e-9:
+                steps[main] = steps.get(main, 0.0) - need  # stok sekarang kurang dari pengurangan: sisanya menjadi saldo negatif di lokasi utama
+        moves = self.env["stock.move"]
+        for location, signed in steps.items():
+            moves |= self._apply_inventory(product, location, signed, when)
+        return moves
+
+    def _apply_stock_adjustments(self, config):
+        """Samakan stok sistem dengan hasil opname. Mengembalikan (jumlah bahan disesuaikan, jumlah dilewati)."""
+        self.ensure_one()
+        if not config.adjust_stock:
+            return 0, 0
+        todo, skipped = self._adjustment_plan(config)
+        when = self._cutoff()
+        for line, delta in todo:
+            moves = self._adjust_product_stock(line.product_id, delta, when)
+            line.write({"adjust_qty": delta, "adjust_move_ids": [Command.link(move.id) for move in moves]})
+        return len(todo), len(skipped)
+
+    def _reverse_costs_and_stock(self):
+        """Kembalikan biaya produk dan penyesuaian stok yang dibuat saat Execute (dipanggil setelah kertas kerja kembali ke draft)."""
+        self.ensure_one()
+        when = self._cutoff()
+        for line in self.opname_ids:
+            product = line.product_id.sudo().with_company(self.company_id)
+            if line.cost_updated:
+                if abs(product.standard_price - line.unit_cost) <= 0.004:  # tidak menimpa biaya yang sudah diubah pihak lain sesudah Execute
+                    product.standard_price = line.old_cost
+                line.write({"cost_updated": False, "old_cost": 0.0})
+            if line.adjust_move_ids:
+                net = defaultdict(float)
+                for move in line.adjust_move_ids.sudo():
+                    if move.location_dest_id.usage == "internal" and move.location_id.usage != "internal":
+                        net[move.location_dest_id] += move.quantity
+                    elif move.location_id.usage == "internal" and move.location_dest_id.usage != "internal":
+                        net[move.location_id] -= move.quantity
+                moves = self.env["stock.move"]
+                for location, signed in net.items():
+                    if not float_is_zero(signed, precision_rounding=product.uom_id.rounding):
+                        moves |= self._apply_inventory(product, location, -signed, when)
+                line.write({"adjust_qty": 0.0, "adjust_move_ids": [Command.link(move.id) for move in moves]})
 
     def _verify_posted(self, config):
         """Rekonsiliasi pasca-posting: saldo persediaan dan WIP sama dengan hasil opname dan akun ikhtisar berakhir nol. Gagal = seluruh transaksi dibatalkan."""
@@ -727,7 +986,8 @@ class KompakappsCogmWorksheet(models.Model):
             move = worksheet.move_id
             reversal = move._reverse_moves([{"date": move.date, "ref": _("Pembalik %s", move.name), "kompakapps_cogm_id": worksheet.id}], cancel=True)
             worksheet.write({"state": "draft", "move_id": False, "post_user_id": False, "post_date": False, "control_state": "unchecked", "control_checked_at": False})
-            worksheet.message_post(body=_("Jurnal COGM %(move)s dibatalkan dengan %(reversal)s; kertas kerja kembali ke draft.", move=move.name, reversal=reversal.name))
+            worksheet._reverse_costs_and_stock()
+            worksheet.message_post(body=_("Jurnal COGM %(move)s dibatalkan dengan %(reversal)s; biaya produk dan penyesuaian stok dikembalikan; kertas kerja kembali ke draft.", move=move.name, reversal=reversal.name))
         return True
 
     def action_cancel(self):

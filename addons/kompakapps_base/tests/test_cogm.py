@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 
 from odoo import Command, fields
 from odoo.addons.account.tests.common import AccountTestInvoicingCommon
@@ -365,3 +365,152 @@ class TestCogmWorksheet(AccountTestInvoicingCommon):
         self.assertNotIn(mine, in_b)
         self.assertFalse(self.env["kompakapps.cogm.opname"].with_context(allowed_company_ids=[self.company.id]).search([("worksheet_id", "=", theirs.id)]))
         self.assertEqual(self.env["kompakapps.cogm.config"].with_context(allowed_company_ids=[other.id]).search([]).company_id, other)
+
+    # ------------------------------------------------------------------ biaya rata-rata tertimbang dan penyesuaian stok (Q66)
+
+    def _storable(self, name, cost=10000.0, **extra):
+        return self._create_product(name=name, type="consu", is_storable=True, standard_price=cost, taxes_id=[Command.clear()], supplier_taxes_id=[Command.clear()], **extra)
+
+    def _stock(self, product, qty, day):
+        """Stok awal lewat penyesuaian stok bertanggal `day` (riwayat stok pada akhir hari itu memuatnya)."""
+        location = self.env["stock.warehouse"].search([("company_id", "=", self.company.id)], limit=1).lot_stock_id
+        known = self.env["stock.move"].search([("product_id", "=", product.id)]).ids
+        self.env["stock.quant"].with_context(inventory_mode=True).create({"product_id": product.id, "location_id": location.id, "inventory_quantity": qty}).action_apply_inventory()
+        moves = self.env["stock.move"].search([("product_id", "=", product.id), ("id", "not in", known)])
+        moves.write({"date": datetime.combine(day, time(3, 0))})
+        moves.move_line_ids.write({"date": datetime.combine(day, time(3, 0))})
+
+    def _bill(self, product, qty, price, day, refund=False):
+        self.env["account.move"].create(
+            {
+                "move_type": "in_refund" if refund else "in_invoice", "partner_id": self.partner_a.id, "invoice_date": day, "date": day,
+                "invoice_line_ids": [Command.create({"product_id": product.id, "quantity": qty, "price_unit": price, "account_id": self.purchases.id, "tax_ids": [Command.clear()]})],
+            }
+        ).action_post()
+
+    def _priced_product(self):
+        """Bahan berlacak stok: 100 unit awal @10.000, beli 50 @12.000 dan 50 @14.000, retur 10 @14.000 pada periode."""
+        product = self._storable("Bahan Rata-rata COGM")
+        self._stock(product, 100.0, self.before)
+        self._bill(product, 50.0, 12000.0, self.date_from)
+        self._bill(product, 50.0, 14000.0, self.date_from + timedelta(days=1))
+        self._bill(product, 10.0, 14000.0, self.date_from + timedelta(days=2), refund=True)
+        return product
+
+    def test_weighted_average_cost_from_opening_stock_and_period_purchases(self):
+        product = self._priced_product()
+        worksheet = self._worksheet()
+        worksheet.write({"opname_ids": [Command.create({"product_id": product.id, "qty": 150.0})]})
+        worksheet.action_pull()
+        line = worksheet.opname_ids
+        self.assertEqual((line.opening_qty, line.opening_cost), (100.0, 10000.0))
+        self.assertEqual((line.purchase_qty, line.purchase_value), (90.0, 1_160_000.0), "100 dibeli dikurangi retur 10; 1.300.000 dikurangi retur 140.000")
+        self.assertEqual(line.avg_cost, 11368.42, "(100 x 10.000 + 1.160.000) / 190")
+        self.assertEqual((line.unit_cost, line.cost_source), (11368.42, "average"))
+        self.assertEqual(line.value, round(150 * 11368.42))
+        line.unit_cost = 13000.0
+        self.assertEqual(line.cost_source, "manual", "biaya yang diubah petugas ditandai manual")
+        worksheet.action_pull()
+        self.assertEqual((line.unit_cost, line.cost_source, line.avg_cost), (13000.0, "manual", 11368.42), "tarik ulang tidak menimpa biaya manual")
+        line.action_reset_cost()
+        self.assertEqual((line.unit_cost, line.cost_source), (11368.42, "average"))
+
+    def test_standard_method_and_untracked_products_use_the_product_cost(self):
+        product = self._priced_product()
+        self.config.cost_method = "standard"
+        worksheet = self._worksheet()
+        worksheet.write({"opname_ids": [Command.create({"product_id": product.id, "qty": 10.0}), Command.create({"product_id": self.resin.id, "qty": 1.0})]})
+        self.assertEqual(set(worksheet.opname_ids.mapped("cost_source")), {"standard"})
+        self.assertEqual(worksheet.opname_ids.filtered(lambda line: line.product_id == product).unit_cost, 10000.0)
+        self.config.cost_method = "average"
+        worksheet.action_pull()
+        by_product = {line.product_id: line for line in worksheet.opname_ids}
+        self.assertEqual((by_product[product].unit_cost, by_product[product].cost_source), (11368.42, "average"))
+        self.assertEqual((by_product[self.resin].unit_cost, by_product[self.resin].cost_source), (50000.0, "standard"), "stok tidak dilacak: tidak ada jumlah awal untuk dirata-ratakan")
+
+    def test_next_period_opens_at_the_cost_of_the_previous_closing(self):
+        product = self._priced_product()
+        self._book_period()
+        first = self._complete(self._worksheet())
+        first.write({"opname_ids": [Command.create({"product_id": product.id, "qty": 100.0, "explanation": "contoh"})]})
+        first.action_pull()
+        first.action_post()
+        self.assertEqual(self._standard_price(product), 11368.42)
+        second = self.env["kompakapps.cogm.worksheet"].create({"date_from": self.date_to + timedelta(days=1), "date_to": self.date_to + timedelta(days=28)})
+        second.write({"opname_ids": [Command.create({"product_id": product.id, "qty": 1.0})]})
+        self.assertEqual(second.opname_ids.opening_cost, 11368.42, "biaya akhir periode sebelumnya")
+
+    def _standard_price(self, product):
+        return product.with_company(self.company).standard_price
+
+    def test_execute_updates_product_cost_and_adjusts_stock_and_reverse_restores_both(self):
+        self._book_period()
+        product = self._priced_product()
+        worksheet = self._complete(self._worksheet())
+        worksheet.write({"opname_ids": [Command.create({"product_id": product.id, "qty": 95.0, "explanation": "Susut penyimpanan"})]})
+        worksheet.action_pull()
+        line = worksheet.opname_ids.filtered(lambda line: line.product_id == product)
+        self.assertEqual((line.book_qty, line.variance_qty), (100.0, -5.0))
+        result = worksheet.action_check()
+        self.assertEqual(result["state"], "green", [c for c in result["checks"] if c["status"] == "error"])
+        adjust = next(c for c in result["checks"] if c["key"] == "adjust")
+        self.assertEqual(adjust["status"], "info", adjust)
+        moves_before = self.env["account.move"].search_count([("company_id", "=", self.company.id)])
+
+        worksheet.action_post()
+        self.assertEqual(self.env["account.move"].search_count([("company_id", "=", self.company.id)]), moves_before + 1, "penyesuaian stok periodik tidak membuat jurnal")
+        self.assertEqual(self._standard_price(product), 11368.42, "biaya produk = rata-rata tertimbang periode")
+        self.assertEqual(product.qty_available, 95.0, "stok sistem disamakan dengan hasil opname")
+        cutoff = worksheet._cutoff()
+        self.assertEqual(product.with_context(to_date=cutoff).qty_available, 95.0, "bertanggal akhir periode")
+        self.assertEqual((line.adjust_qty, line.old_cost, line.cost_updated), (-5.0, 10000.0, True))
+        self.assertEqual(line.adjust_move_ids.mapped("date"), [cutoff] * len(line.adjust_move_ids))
+        self.assertEqual(self._balance(self.raw), round(11_000_000 + 95 * 11368.42, 2), "persediaan bahan baku = nilai opname semua baris")
+
+        worksheet.action_reverse()
+        self.assertEqual(worksheet.state, "draft")
+        self.assertEqual(self._standard_price(product), 10000.0, "biaya produk dikembalikan")
+        self.assertEqual(product.qty_available, 100.0, "penyesuaian stok dikembalikan")
+        self.assertEqual((line.adjust_qty, line.cost_updated), (0.0, False))
+        worksheet.action_pull()
+        self.assertEqual(line.book_qty, 100.0)
+        worksheet.action_post()
+        self.assertEqual(product.qty_available, 95.0, "eksekusi ulang menyesuaikan lagi")
+
+    def test_switches_turn_off_cost_update_and_stock_adjustment(self):
+        self._book_period()
+        product = self._priced_product()
+        self.config.write({"update_product_cost": False, "adjust_stock": False})
+        worksheet = self._complete(self._worksheet())
+        worksheet.write({"opname_ids": [Command.create({"product_id": product.id, "qty": 95.0, "explanation": "Susut"})]})
+        worksheet.action_pull()
+        worksheet.action_post()
+        self.assertEqual(self._standard_price(product), 10000.0)
+        self.assertEqual(product.qty_available, 100.0)
+        self.assertFalse(worksheet.opname_ids.adjust_move_ids)
+
+    def test_lot_tracked_products_are_not_adjusted_automatically(self):
+        self._book_period()
+        tracked = self._storable("Bahan Berlot COGM", tracking="lot")
+        worksheet = self._complete(self._worksheet())
+        worksheet.write({"opname_ids": [Command.create({"product_id": tracked.id, "qty": 3.0, "explanation": "Hitungan awal"})]})
+        worksheet.action_pull()
+        result = worksheet.action_check()
+        adjust = next(c for c in result["checks"] if c["key"] == "adjust")
+        self.assertEqual(adjust["status"], "warn")
+        self.assertIn("lot", adjust["message"])
+        worksheet.action_post()
+        self.assertEqual(worksheet.opname_ids.filtered(lambda line: line.product_id == tracked).adjust_qty, 0.0)
+
+    def test_manual_adjustment_after_the_period_is_flagged(self):
+        self._book_period()
+        product = self._priced_product()
+        worksheet = self._complete(self._worksheet())
+        worksheet.write({"opname_ids": [Command.create({"product_id": product.id, "qty": 100.0})]})
+        worksheet.action_pull()
+        self._stock(product, 100.0, self.date_to)  # penyesuaian manual yang tidak mengubah jumlah, bertanggal di akhir periode: bukan peringatan
+        self._stock(product, 99.0, self.date_to + timedelta(days=1))
+        result = worksheet.action_check()
+        adjust = next(c for c in result["checks"] if c["key"] == "adjust")
+        self.assertEqual(adjust["status"], "warn")
+        self.assertIn("manual", adjust["message"])
