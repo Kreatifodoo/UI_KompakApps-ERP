@@ -794,3 +794,12 @@ Data demo yang ada memakai penyesuaian stok untuk produksi dan faktur langsung u
 - **Kewajaran**: hitung fisik mengikuti stok sistem kecuali beberapa selisih kecil yang dijelaskan; skrip menolak stok bahan baku negatif dan menegaskan Control Balance Hijau sebelum Execute tiap bulan. Semua barang jadi dalam satu kertas kerja menerima HPP per unit yang sama (D94), jadi harga jual dan komposisi bahan dipilih agar margin tiap barang tetap wajar.
 - **Temuan**: konfirmasi Sales Order menimpa `date_order` dengan waktu sekarang, jadi skrip menulis ulang tanggal pesanan setelah konfirmasi; pada database pemilik tanggal 112 pesanan ditambal dari tanggal fakturnya.
 - **Tidak ada perubahan kode modul**; skema dan versi modul tetap.
+
+## D99. Transaksi bulan berjalan di PROLINE Periodik (Demo) (Q72)
+
+Atas permintaan pemilik, `scripts/seed_cogm_demo_bulan_berjalan.py` menambah Manufacturing Order, Sales Order, pembelian, BoM, dan produk master baru ke "PROLINE Periodik (Demo)" **hanya untuk bulan berjalan sampai kemarin**.
+
+- **Periode yang sudah ada tidak disentuh.** Kertas kerja September dan Oktober sudah Terposting atau menjadi dasar angka panduan. Dokumen yang tanggalnya di bulan berjalan tidak masuk ke buku besar, stok akhir periode, maupun pengiriman pada kertas kerja itu, sehingga angkanya tidak berubah. Pada salinan database dicoba alur demo (Reverse 0002, tarik dan perbaiki 0003 sampai Hijau, Execute, Reverse) dan hasilnya sama seperti sebelum penambahan: COGM Rp 186.242.994, HPP aktual Rp 142,12 juta dibanding HPP sementara Rp 132 juta.
+- **Isi**: 3 BoM (Kit Kolesterol, Kit Glukosa, dan Kit Trigliserida yang baru; komponen per 100 kit karena kuantitas BoM hanya dua desimal, sehingga pemakaian bahan yang kecil per kit tetap bisa dinyatakan), 5 bahan baku baru (Reagen Glukosa, Enzim Glucose Oxidase, Reagen Trigliserida, Buffer Tris) dan 1 barang jadi baru, 8 pelanggan baru, serta 4 PO, 12 MO selesai (per 100 kit), dan 14 SO yang dikirim dan difakturkan dengan HPP sementara pada biaya produk saat itu.
+- **Konsekuensi periodik**: tidak ada kertas kerja bulan berjalan, dan saldo Inventory COGM sementara negatif oleh HPP sementara sampai kertas kerja bulan itu dieksekusi.
+- **Aman diulang**: bila BoM sudah ada, skrip tidak mengubah apa pun. Tidak ada perubahan kode modul.
