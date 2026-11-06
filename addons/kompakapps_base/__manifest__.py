@@ -38,7 +38,7 @@
         # OCA (server-tools)
         "auditlog",  # jejak audit: siapa mengubah apa, kapan, nilai lama dan baru
     ],
-    "data": ["security/ir.model.access.csv", "security/access_scope.xml", "security/cogm_security.xml", "security/payroll_security.xml", "data/mis_reports.xml", "data/cogm_data.xml"],
+    "data": ["security/ir.model.access.csv", "security/access_scope.xml", "security/cogm_security.xml", "security/payroll_security.xml", "data/mis_reports.xml", "data/cogm_data.xml", "data/system_user_data.xml"],
     "installable": True,
     "application": False,
 }

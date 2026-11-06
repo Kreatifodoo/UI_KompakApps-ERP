@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <!--
+        Pengguna sistem Odoo bernama "OdooBot" menulis catatan otomatis di chatter dan menjadi penanggung jawab dokumen yang dibuat lewat skrip atau proses
+        terjadwal. Di Nusara ERP namanya diganti "Sistem Nusara" (Q78, D103). Dipasang sebagai pemanggilan fungsi, bukan record: partner_root bertanda noupdate
+        di modul base, dan pemanggilan fungsi dijalankan pada setiap pemasangan dan pembaruan modul sehingga nama itu bertahan.
+    -->
+    <function model="res.partner" name="write">
+        <value eval="[ref('base.partner_root')]" />
+        <value eval="{'name': 'Sistem Nusara'}" />
+    </function>
+</odoo>
