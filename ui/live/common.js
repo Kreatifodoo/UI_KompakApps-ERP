@@ -399,6 +399,27 @@ export const referenceSelection = (model, field) =>
     return info[field]?.selection ?? [];
   });
 
+/**
+ * Petunjuk saat daftar kosong pada perusahaan aktif (Q77): data Odoo terpisah per perusahaan, jadi bila model yang sama punya data di perusahaan lain yang
+ * diizinkan pengguna, sebutkan perusahaan itu beserta jumlahnya dan beri tombol pindah. Kosong bila pengguna hanya punya satu perusahaan atau tidak ada data di tempat lain.
+ */
+export async function otherCompaniesNote(model, noun, domain = [], context = {}) {
+  if (!ctx.multiCompany || !ctx.company) return "";
+  const rows = await searchRead(model, domain, ["company_id"], { limit: 2000, context: { allowed_company_ids: activeCompany.allowed, ...context } }).catch(() => []);
+  const counts = new Map();
+  for (const row of rows) {
+    const id = row.company_id?.[0];
+    if (id && id !== ctx.company.id) counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  const places = ctx.companies.filter((c) => counts.has(c.id));
+  if (!places.length) return "";
+  const buttons = places
+    .map((c) => `<button data-action="switch-company" data-id="${c.id}" class="px-3 py-1 bg-white border border-sky-300 rounded-lg hover:bg-sky-100">${esc(c.display_name)} (${counts.get(c.id)})</button>`)
+    .join("");
+  return `<div class="mb-4 text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-4 py-3 flex flex-wrap items-center gap-3">
+    <span>Belum ada ${esc(noun)} di <b>${esc(ctx.company.display_name || ctx.company.name)}</b>. Data dipisahkan per perusahaan; ${esc(noun)} ada di perusahaan lain. Pindah ke:</span>${buttons}</div>`;
+}
+
 /** Nama perusahaan di header; pengguna dengan lebih dari satu perusahaan mendapat pemilih (D62). */
 function companyLine() {
   if (!ctx.multiCompany) return `<p class="text-xs text-gray-500">${esc(ctx.company.name)}</p>`;

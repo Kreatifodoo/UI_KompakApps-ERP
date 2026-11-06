@@ -3,7 +3,7 @@
 // diharapkan, probabilitas, prioritas, tag, aktivitas terjadwal, Menang, Kalah, konversi, dan Quotation.
 import {
   INPUT, actionBar, app, badge, button, call, cell, changedValues, attachmentsPendingHtml, chatterHtml, closeLookup, closeModal, ctx, dateText, esc, fieldBlock, filterSelect, guarded,
-  hasGroup, loadMessages, money, openModal, pageHeader, plain, readOne, readonlyValue, referenceCountries, referenceUsers, registerLookup, resetReferences,
+  hasGroup, loadMessages, money, openModal, otherCompaniesNote, pageHeader, plain, readOne, readonlyValue, referenceCountries, referenceUsers, registerLookup, resetReferences,
   rowLink, runLookup, scopeNote, searchBox, searchRead, selectOptions, statTiles, statusbar, table, toast,
 } from "../common.js";
 
@@ -107,6 +107,7 @@ export function createLeadPage(config) {
       ) +
       (enabled ? "" : leadsOff()) +
       (await scopeNote("sale")) +
+      (rows.length || query.get("q") || query.get("state") ? "" : await otherCompaniesNote("crm.lead", config.noun.toLowerCase(), [["type", "=", config.type]])) +
       table(heads, body, config.empty);
   }
 
@@ -155,6 +156,7 @@ export function createLeadPage(config) {
          <a href="#/${config.route}/new" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fas fa-plus mr-2"></i>${config.newLabel}</a>`,
       ) +
       (await scopeNote("sale")) +
+      (rows.length || query.get("q") || query.get("state") ? "" : await otherCompaniesNote("crm.lead", config.noun.toLowerCase(), [["type", "=", config.type]])) +
       `<div class="grid md:grid-cols-3 gap-4 mb-4">
          <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4"><div class="text-xs font-medium text-gray-500 uppercase">Peluang berjalan</div><div class="text-xl font-semibold mt-1">${open.length}</div></div>
          <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4"><div class="text-xs font-medium text-gray-500 uppercase">Pendapatan diharapkan</div><div class="text-xl font-semibold mt-1">${esc(money(totalOpen))}</div></div>
