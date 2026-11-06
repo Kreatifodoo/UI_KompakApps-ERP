@@ -206,6 +206,12 @@ document.addEventListener("click", async (event) => {
     route();
   } else if (action === "goto") {
     location.hash = el.dataset.href;
+  } else if (action === "switch-company") {
+    // sama dengan pemilih perusahaan di header, dipakai oleh petunjuk "data ada di perusahaan lain"
+    activeCompany.set(Number(el.dataset.id));
+    const base = location.hash.replace(/^#\/?/, "").split("?")[0].split("/")[0];
+    location.hash = base ? `#/${base}` : "";
+    location.reload();
   } else if (action === "scroll") {
     event.preventDefault();
     document.getElementById(el.dataset.target)?.scrollIntoView({ behavior: "smooth", block: "start" });
