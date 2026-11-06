@@ -803,3 +803,13 @@ Atas permintaan pemilik, `scripts/seed_cogm_demo_bulan_berjalan.py` menambah Man
 - **Isi**: 3 BoM (Kit Kolesterol, Kit Glukosa, dan Kit Trigliserida yang baru; komponen per 100 kit karena kuantitas BoM hanya dua desimal, sehingga pemakaian bahan yang kecil per kit tetap bisa dinyatakan), 5 bahan baku baru (Reagen Glukosa, Enzim Glucose Oxidase, Reagen Trigliserida, Buffer Tris) dan 1 barang jadi baru, 8 pelanggan baru, serta 4 PO, 12 MO selesai (per 100 kit), dan 14 SO yang dikirim dan difakturkan dengan HPP sementara pada biaya produk saat itu.
 - **Konsekuensi periodik**: tidak ada kertas kerja bulan berjalan, dan saldo Inventory COGM sementara negatif oleh HPP sementara sampai kertas kerja bulan itu dieksekusi.
 - **Aman diulang**: bila BoM sudah ada, skrip tidak mengubah apa pun. Tidak ada perubahan kode modul.
+
+## D100. Transaksi biaya pada perusahaan demo COGM (Q73)
+
+Perusahaan demo punya penjualan dan produksi tetapi laporan biayanya hampir diam: tidak ada biaya operasional, tidak ada pembayaran, dan bulan berjalan tanpa biaya. `scripts/seed_cogm_biaya.py` menambahkannya ke "PROLINE Manufaktur (Demo)" dan "PROLINE Periodik (Demo)".
+
+- **Biaya operasional di luar COGM** (akun 61 sampai 66, dan dua akun baru 62100010 Biaya Pemasaran dan Promosi dan 62100020 Biaya Perjalanan Dinas dan Pameran) tiap bulan tertutup: gaji dan bonus staf, sewa, telepon dan internet, BBM, listrik kantor, ongkos kirim penjualan, asuransi, jasa akuntan, promosi, perjalanan dinas, perawatan gedung, parkir dan tol, biaya bank. Sebagian tagihan vendor, sebagian jurnal bank. Akun ini tidak diperiksa kertas kerja (hanya akun berawalan 51 yang dipindai), jadi kertas kerja yang sudah ada tidak terpengaruh.
+- **Biaya produksi bulan berjalan** pada akun yang dipetakan ke COGM, hanya sampai kemarin: ongkos angkut pembelian, gas dan air, perawatan mesin, bahan penolong, upah mingguan langsung dan tidak langsung. Bulan yang sudah ditutup tidak diberi tambahan pada akun COGM, supaya buku besar di bawah kertas kerja Agustus sampai Oktober tetap sama.
+- **Arus kas**: modal kerja disetor ke bank pada tanggal saldo awal; utang upah dan overhead pabrik yang dibukukan sebagai kewajiban pada bulan-bulan sebelumnya dilunasi pada tanggal 5 bulan berikutnya; tagihan vendor yang sudah lewat 15 hari dibayar lewat jurnal bank (sekitar 85%, jatuh tempo 14, 21, atau 30 hari).
+- **Pengujian**: pada salinan database pemilik, hasil `action_check` seluruh kertas kerja (termasuk yang Merah) identik sebelum dan sesudah skrip, dan kertas kerja Agustus, September, dan Oktober di Manufaktur tetap Rp 366.395.000, Rp 414.363.189, dan Rp 401.038.938.
+- **Tidak ada perubahan kode modul.**
