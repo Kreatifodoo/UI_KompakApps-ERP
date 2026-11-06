@@ -595,6 +595,14 @@ class KompakappsCogmWorksheet(models.Model):
     def unlink(self):
         if any(worksheet.state == "posted" for worksheet in self):
             raise UserError(_("Kertas kerja yang sudah diposting tidak bisa dihapus. Batalkan jurnal COGM-nya lebih dulu."))
+        journaled = self.filtered(lambda worksheet: worksheet.sudo().move_ids)
+        if journaled:
+            raise UserError(
+                _(
+                    "Kertas kerja %s pernah dijurnalkan. Jurnal COGM dan jurnal pembaliknya tercatat sebagai jejak audit, jadi kertas kerjanya tidak bisa dihapus. Gunakan Batalkan Kertas Kerja.",
+                    ", ".join(journaled.mapped("name")),
+                )
+            )
         return super().unlink()
 
     def _fmt(self, amount):

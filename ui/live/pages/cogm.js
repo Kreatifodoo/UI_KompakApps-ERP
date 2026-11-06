@@ -53,7 +53,7 @@ async function renderList(query) {
   app.innerHTML = '<p class="text-sm text-gray-500">Memuat...</p>';
   const filter = query.get("state") ?? "";
   const [rows, defaults] = await Promise.all([
-    searchRead(MODEL, filter ? [["state", "=", filter]] : [], ["name", "date_from", "date_to", "state", "control_state", "cogm", "unit_cogm", "qty_produced", "move_id"], { order: "date_to desc, id desc", limit: 80 }),
+    searchRead(MODEL, filter ? [["state", "=", filter]] : [], ["name", "date_from", "date_to", "state", "control_state", "cogm", "unit_cogm", "qty_produced", "move_id", "move_ids"], { order: "date_to desc, id desc", limit: 80 }),
     call(MODEL, "kompakapps_defaults", {}),
   ]);
   const options = [["", "Semua status"], ...Object.entries(STATE).map(([key, value]) => [key, value[0]])];
@@ -67,6 +67,7 @@ async function renderList(query) {
         cell(rupiah(r.cogm), { right: true }),
         cell(r.qty_produced > 0 ? rupiah(r.unit_cogm) : "-", { right: true }),
         cell(moveName(r.move_id)),
+        cell(deletable(r, defaults.can_execute) ? deleteButton("cogm-delete-row", r) : "", { raw: true }),
       ]),
     )
     .join("");
@@ -80,11 +81,16 @@ async function renderList(query) {
     (defaults.configured ? "" : notConfigured()) +
     `<p class="text-sm text-gray-600 mb-3 max-w-4xl">Skema periodik: biaya bahan, tenaga kerja, dan overhead dikumpulkan sepanjang bulan; setelah stock opname, kertas kerja menghitung <b>COGM = Bahan Baku Terpakai + Tenaga Kerja + Overhead + WIP Awal - WIP Akhir</b>. Jurnal COGM baru bisa dieksekusi bila Control Balance berstatus Hijau.</p>` +
     table(
-      [{ label: "Nomor" }, { label: "Periode" }, { label: "Status" }, { label: "Control Balance" }, { label: "COGM", right: true }, { label: "HPP / Unit", right: true }, { label: "Jurnal" }],
+      [{ label: "Nomor" }, { label: "Periode" }, { label: "Status" }, { label: "Control Balance" }, { label: "COGM", right: true }, { label: "HPP / Unit", right: true }, { label: "Jurnal" }, { label: "" }],
       body,
       "Belum ada kertas kerja COGM. Buat dengan tombol Kertas Kerja Baru setelah akhir periode.",
     );
 }
+
+/** Hanya draf yang belum pernah dijurnalkan yang boleh dihapus (jurnal asli dan pembaliknya adalah jejak audit); hanya peran Accounting. */
+const deletable = (r, canExecute) => canExecute && r.state === "draft" && !(r.move_ids || []).length;
+const deleteButton = (action, r) =>
+  `<button data-action="${action}" data-id="${r.id}" data-name="${esc(r.name)}" title="Hapus kertas kerja draf ini" class="px-3 py-1 rounded-lg text-xs font-medium bg-white text-red-700 border border-red-300 hover:bg-red-50"><i class="fas fa-trash mr-1"></i>Hapus</button>`;
 
 const notConfigured = () =>
   `<div class="bg-amber-50 border border-amber-200 rounded-xl px-5 py-4 mb-4 text-sm text-amber-900"><b>Pengaturan COGM belum dibuat untuk perusahaan ini.</b>
@@ -128,7 +134,7 @@ async function createWorksheet() {
 
 const WS_FIELDS = [
   "name", "company_id", "date_from", "date_to", "state", "note", "pulled_at", "rm_opening", "purchases", "rm_available", "rm_ending", "rm_used", "direct_labor", "overhead",
-  "total_cost", "wip_opening", "wip_ending", "cogm", "qty_produced", "unit_cogm", "unit_material", "unit_labor", "unit_overhead", "unit_wip", "fg_ending_value", "fg_cogs", "fg_provisional", "fg_adjustment", "control_state", "move_id", "post_user_id", "post_date",
+  "total_cost", "wip_opening", "wip_ending", "cogm", "qty_produced", "unit_cogm", "unit_material", "unit_labor", "unit_overhead", "unit_wip", "fg_ending_value", "fg_cogs", "fg_provisional", "fg_adjustment", "control_state", "move_id", "move_ids", "post_user_id", "post_date",
 ];
 
 const opRow = (r) => ({
@@ -241,6 +247,7 @@ function headerButtons() {
       );
     }
     out.push(button("cogm-cancel", "Batalkan Kertas Kerja", "danger"));
+    if (deletable(ws, canExecute)) out.push(`<button data-action="cogm-delete" data-id="${ws.id}" data-name="${esc(ws.name)}" title="Hapus kertas kerja draf ini beserta isinya" class="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700"><i class="fas fa-trash mr-2"></i>Hapus</button>`);
   } else if (ws.state === "posted") {
     if (ws.move_id) out.push(`<a href="#/journal/${ws.move_id[0]}" class="px-4 py-2 rounded-lg text-sm font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50">Lihat Jurnal COGM</a>`);
     if (canExecute) out.push(button("cogm-reverse", "Batalkan Jurnal (Reverse)", "danger"));
@@ -1061,6 +1068,16 @@ export async function onClick(event, el) {
       toast("Jurnal COGM dieksekusi.");
       form = null;
       await renderForm(id);
+    }
+  } else if (["cogm-delete", "cogm-delete-row"].includes(action)) {
+    const id = Number(el.dataset.id);
+    if (!window.confirm(`Hapus kertas kerja ${el.dataset.name}? Kertas kerja dan seluruh isinya dihapus permanen dan tidak bisa dikembalikan.`)) return;
+    const done = await guarded(el, () => call(MODEL, "unlink", { ids: [id] }).then(() => true));
+    if (done) {
+      toast("Kertas kerja dihapus.");
+      form = null;
+      if (action === "cogm-delete") location.hash = "#/cogm";
+      else await render(last.sub, last.query);
     }
   } else if (["cogm-reverse", "cogm-cancel", "cogm-draft"].includes(action)) {
     const id = form.id;

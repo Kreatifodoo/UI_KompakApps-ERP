@@ -319,6 +319,27 @@ class TestCogmWorksheet(AccountTestInvoicingCommon):
         self.assertEqual(worksheet.state, "draft")
         worksheet.unlink()
 
+    def test_draft_worksheet_is_deleted_with_its_content_but_not_one_that_was_ever_journaled(self):
+        self._book_period()
+        draft = self._complete(self._worksheet())
+        content = [draft.line_ids, draft.opname_ids, draft.wip_ids, draft.output_ids]
+        self.assertTrue(all(content))
+        draft.unlink()
+        self.assertFalse(draft.exists())
+        self.assertFalse(any(records.exists() for records in content), "isi kertas kerja ikut terhapus")
+        cancelled = self._worksheet()
+        cancelled.action_cancel()
+        cancelled.unlink()
+        self.assertFalse(cancelled.exists())
+        reversed_ = self._complete(self._worksheet())
+        reversed_.action_post()
+        reversed_.action_reverse()
+        self.assertEqual(reversed_.state, "draft")
+        with self.assertRaises(UserError) as caught:
+            reversed_.unlink()
+        self.assertIn("jejak audit", str(caught.exception))
+        self.assertTrue(reversed_.exists() and len(reversed_.move_ids) == 2, "jurnal asli dan pembaliknya tetap ada")
+
     def test_duplicate_product_on_the_count_sheet_is_refused(self):
         worksheet = self._worksheet()
         worksheet.write({"opname_ids": [Command.create({"product_id": self.resin.id, "qty": 1.0})]})
