@@ -813,3 +813,13 @@ Perusahaan demo punya penjualan dan produksi tetapi laporan biayanya hampir diam
 - **Arus kas**: modal kerja disetor ke bank pada tanggal saldo awal; utang upah dan overhead pabrik yang dibukukan sebagai kewajiban pada bulan-bulan sebelumnya dilunasi pada tanggal 5 bulan berikutnya; tagihan vendor yang sudah lewat 15 hari dibayar lewat jurnal bank (sekitar 85%, jatuh tempo 14, 21, atau 30 hari).
 - **Pengujian**: pada salinan database pemilik, hasil `action_check` seluruh kertas kerja (termasuk yang Merah) identik sebelum dan sesudah skrip, dan kertas kerja Agustus, September, dan Oktober di Manufaktur tetap Rp 366.395.000, Rp 414.363.189, dan Rp 401.038.938.
 - **Tidak ada perubahan kode modul.**
+
+## D101. Tombol Hapus pada kertas kerja COGM berstatus draft (Q74)
+
+Kertas kerja yang salah buat atau sudah tidak dipakai tidak punya cara dihapus dari UI (hanya Batalkan, yang membiarkan barisnya tetap ada di daftar).
+
+- **UI**: tombol Hapus (merah) di formulir kertas kerja berstatus Draft, di samping Batalkan Kertas Kerja, dan tombol Hapus kecil pada baris daftar. Keduanya meminta konfirmasi, memanggil `unlink`, lalu kembali ke daftar. Hanya muncul untuk peran Accounting (`can_execute`), karena hak hapus pada model kertas kerja hanya dimiliki Accounting.
+- **Jejak audit tetap aman**: kertas kerja yang pernah dijurnalkan (diposting lalu di-Reverse) punya jurnal asli dan jurnal pembalik yang tertaut dengan `ondelete="restrict"`. Tombolnya disembunyikan untuk kertas kerja itu (cek `move_ids`), dan `unlink` di server menolaknya dengan pesan yang jelas ("pernah dijurnalkan ... jejak audit ... gunakan Batalkan Kertas Kerja") sebagai pengaman bila API dipanggil langsung. Tanpa penjaga ini galat yang muncul adalah pelanggaran kunci asing database yang sulit dipahami. Kertas kerja Terposting tetap ditolak seperti sebelumnya.
+- **Isi ikut terhapus**: baris data buku besar, opname, WIP, hasil produksi, dan barang jadi dihapus oleh `ondelete="cascade"`; riwayat obrolan ikut terhapus oleh mixin.
+- **Pengujian**: `TestCogmWorksheet` 36 uji (tambahan: draf dan yang dibatalkan terhapus beserta isinya; yang pernah dijurnalkan ditolak dan jurnalnya tetap ada). Di browser pada salinan database: tombol muncul hanya pada draf tanpa jurnal, hapus dari daftar dan dari formulir berhasil, kertas kerja Terposting tidak punya tombol, dan pemanggilan API untuk kertas kerja yang pernah dijurnalkan ditolak dengan HTTP 422 dan pesan itu.
+- **Tidak ada perubahan skema**; versi modul tetap.
