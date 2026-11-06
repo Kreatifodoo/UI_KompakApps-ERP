@@ -26,3 +26,4 @@ from . import test_access_scope
 from . import test_inventory_split
 from . import test_foh
 from . import test_cogm
+from . import test_system_user
