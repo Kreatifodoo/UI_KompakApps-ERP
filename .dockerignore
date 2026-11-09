@@ -3,6 +3,7 @@
 .env
 oca
 forms
+demo-data
 docs
 deploy
 __pycache__
