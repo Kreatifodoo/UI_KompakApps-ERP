@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo noupdate="1">
+    <!-- Nomor revaluasi mata uang (Q80, D105): RVL/<tahun>/0001. -->
+    <record id="seq_fx_revaluation" model="ir.sequence">
+        <field name="name">Revaluasi Mata Uang</field>
+        <field name="code">kompakapps.fx.revaluation</field>
+        <field name="prefix">RVL/%(year)s/</field>
+        <field name="padding">4</field>
+        <field name="company_id" eval="False" />
+    </record>
+</odoo>

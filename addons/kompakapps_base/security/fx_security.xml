@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <!-- Revaluasi mata uang (Q80, D105): milik satu perusahaan, jadi hanya perusahaan yang diizinkan dan aktif yang terlihat. -->
+    <record id="fx_revaluation_company_rule" model="ir.rule">
+        <field name="name">Revaluasi Mata Uang: perusahaan</field>
+        <field name="model_id" ref="model_kompakapps_fx_revaluation" />
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
+    <record id="fx_revaluation_line_company_rule" model="ir.rule">
+        <field name="name">Baris Revaluasi Mata Uang: perusahaan</field>
+        <field name="model_id" ref="model_kompakapps_fx_revaluation_line" />
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
+</odoo>

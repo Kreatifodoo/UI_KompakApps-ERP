@@ -31,3 +31,9 @@ access_kompakapps_cogm_output_account,kompakapps.cogm.output akuntan,model_kompa
 access_kompakapps_cogm_fg_stock,kompakapps.cogm.fg stock,model_kompakapps_cogm_fg,stock.group_stock_user,1,1,1,1
 access_kompakapps_cogm_fg_mrp,kompakapps.cogm.fg mrp,model_kompakapps_cogm_fg,mrp.group_mrp_user,1,1,1,1
 access_kompakapps_cogm_fg_account,kompakapps.cogm.fg akuntan,model_kompakapps_cogm_fg,account.group_account_user,1,1,1,1
+access_kompakapps_fx_revaluation_account,kompakapps.fx.revaluation akuntan,model_kompakapps_fx_revaluation,account.group_account_user,1,1,1,1
+access_kompakapps_fx_revaluation_manager,kompakapps.fx.revaluation advisor,model_kompakapps_fx_revaluation,account.group_account_manager,1,1,1,1
+access_kompakapps_fx_revaluation_readonly,kompakapps.fx.revaluation baca,model_kompakapps_fx_revaluation,account.group_account_readonly,1,0,0,0
+access_kompakapps_fx_revaluation_line_account,kompakapps.fx.revaluation.line akuntan,model_kompakapps_fx_revaluation_line,account.group_account_user,1,1,1,1
+access_kompakapps_fx_revaluation_line_manager,kompakapps.fx.revaluation.line advisor,model_kompakapps_fx_revaluation_line,account.group_account_manager,1,1,1,1
+access_kompakapps_fx_revaluation_line_readonly,kompakapps.fx.revaluation.line baca,model_kompakapps_fx_revaluation_line,account.group_account_readonly,1,0,0,0

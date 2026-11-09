@@ -1,7 +1,7 @@
 {
     "name": "KompakApps Base",
     "summary": "Fondasi KompakApps: dependensi modul inti, OCA, dan lokalisasi Indonesia",
-    "version": "19.0.1.16.0",
+    "version": "19.0.1.17.0",
     "category": "Uncategorized",
     "author": "KompakApps",
     "license": "LGPL-3",
@@ -38,7 +38,7 @@
         # OCA (server-tools)
         "auditlog",  # jejak audit: siapa mengubah apa, kapan, nilai lama dan baru
     ],
-    "data": ["security/ir.model.access.csv", "security/access_scope.xml", "security/cogm_security.xml", "security/payroll_security.xml", "data/mis_reports.xml", "data/cogm_data.xml", "data/system_user_data.xml"],
+    "data": ["security/ir.model.access.csv", "security/access_scope.xml", "security/cogm_security.xml", "security/fx_security.xml", "security/payroll_security.xml", "data/mis_reports.xml", "data/cogm_data.xml", "data/fx_data.xml", "data/system_user_data.xml"],
     "installable": True,
     "application": False,
 }
