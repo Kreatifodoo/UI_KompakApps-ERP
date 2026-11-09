@@ -14,7 +14,7 @@ Asset Model, Budget, Bank Transaction, Analytic Account, kurs mata uang, dan Tax
 * akun analitik (departemen dan lini produk) yang dipasang pada faktur, tagihan, dan jurnal sehingga Analytic Report berisi.
 
 Akun COGM (awalan 51), persediaan, dan WIP tidak disentuh pada bulan yang sudah punya kertas kerja: transaksi baru hanya memakai akun pendapatan, biaya operasional,
-aset, pajak, dan bank, dan mesin baru baru mulai disusutkan bulan depan. Kertas kerja COGM Agustus sampai Oktober tidak berubah. Aman dijalankan ulang: bila Credit Note
+aset, pajak, dan bank, dan mesin baru baru mulai disusutkan bulan depan. Kertas kerja COGM Agustus sampai Oktober tidak berubah. Aman dijalankan ulang: bila produk jasa JASA-INST
 sudah ada, tidak ada yang diubah. Dijalankan lewat `odoo shell`:
 
     docker compose run --rm -T odoo odoo shell -d kompakapps --no-http < scripts/seed_akuntansi_lengkap.py
@@ -35,8 +35,8 @@ admin = BASE_ENV.ref("base.user_admin")
 env = BASE_ENV(user=admin, context={**BASE_ENV.context, "allowed_company_ids": [company.id]})
 company = env["res.company"].browse(company.id)
 RETAG_ONLY = os.environ.get("AKUN_RETAG") == "1"  # hanya pasang ulang akun analitik pada semua baris jurnal (aturan penandaan), tanpa transaksi baru
-if not RETAG_ONLY and env["account.move"].search_count([("company_id", "=", company.id), ("move_type", "=", "out_refund")]):
-    print(f"{NAME}: sudah punya Credit Note, tidak ada yang diubah.")
+if not RETAG_ONLY and env["product.product"].search_count([("default_code", "=", "JASA-INST"), ("company_id", "=", company.id)]):
+    print(f"{NAME}: transaksi Accounting lengkap sudah pernah dibuat, tidak ada yang diubah.")
     raise SystemExit(0)
 
 rnd = random.Random(20261109)
@@ -85,19 +85,25 @@ def ensure_account(code, name, account_type):
 
 
 def partner(name, supplier=False, country="base.id"):
-    found = Partner.search([("company_id", "=", company.id), ("name", "=", name)], limit=1)
+    found = Partner.search([("company_id", "in", [company.id, False]), ("name", "=", name)], limit=1)
     return found or Partner.create(
         {"name": name, "is_company": True, "company_id": company.id, "country_id": env.ref(country).id, "supplier_rank" if supplier else "customer_rank": 1}
     )
 
 
-def tax(name, use):
-    found = env["account.tax"].search([("company_id", "=", company.id), ("name", "=", name), ("type_tax_use", "=", use)], limit=1)
-    assert found, (name, use)
-    return found
+def tax(names, use):
+    """Pajak pertama yang ada menurut daftar nama (perusahaan utama memakai "VAT Out 11%" dan "VAT In 11%", perusahaan demo COGM memakai pajak bawaan l10n_id)."""
+    for name in names:
+        found = env["account.tax"].search([("company_id", "=", company.id), ("name", "=", name), ("type_tax_use", "=", use)], limit=1)
+        if found:
+            return found
+    raise AssertionError((names, use))
 
 
-ppn_sale, ppn_buy, export_tax = tax("12% (Non-Luxury Good)", "sale"), tax("12% (Non-Luxury Good)", "purchase"), tax("0% EXPORT", "sale")
+ensure_account("62100010", "Biaya Pemasaran dan Promosi", "expense")
+ensure_account("62100020", "Biaya Perjalanan Dinas dan Pameran", "expense")
+ppn_sale, ppn_buy = tax(("12% (Non-Luxury Good)", "VAT Out 11%"), "sale"), tax(("12% (Non-Luxury Good)", "VAT In 11%"), "purchase")
+export_tax = tax(("0% EXPORT", "0% EXEMPT", "0%"), "sale")
 
 
 def pay(move, pay_day, amount=None):
@@ -116,7 +122,7 @@ if not RETAG_ONLY:
         company.expense_currency_exchange_account_id = account("91100020")
 
     # ---- 1. kurs USD (rupiah per dolar) ----
-    for day, idr in ((date(2026, 7, 15), 16150), (when(0, 0), 16180), (when(0, 1), 16310), (when(0, 2), 16480), (when(19, 2), 16420), (when(2, 3), 16350)):
+    for day, idr in () if env["res.currency.rate"].search_count([("currency_id", "=", usd.id), ("company_id", "=", company.id)]) else ((date(2026, 7, 15), 16150), (when(0, 0), 16180), (when(0, 1), 16310), (when(0, 2), 16480), (when(19, 2), 16420), (when(2, 3), 16350)):
         env["res.currency.rate"].create({"currency_id": usd.id, "name": day, "rate": 1.0 / idr, "company_id": company.id})
         count("kurs")
 
@@ -136,7 +142,7 @@ if not RETAG_ONLY:
     svc_install = service("JASA-INST", "Jasa Instalasi dan Pelatihan Penggunaan Alat", 12_500_000)
     svc_calibrate = service("JASA-KAL", "Jasa Kalibrasi Alat Laboratorium", 6_800_000)
     svc_export = service("JASA-EKS", "Jasa Pelatihan dan Kalibrasi (Ekspor Jasa)", 2_400)
-    customers = Partner.search([("company_id", "=", company.id), ("customer_rank", ">", 0)], order="id")
+    customers = Partner.search([("company_id", "in", [company.id, False]), ("customer_rank", ">", 0), ("is_company", "=", True)], order="id", limit=12)
     overseas = [partner("Medika Diagnostics Pte Ltd (Singapura)", country="base.sg"), partner("Klinik Prima Diagnostik Sdn Bhd (Malaysia)", country="base.my")]
 
     # ---- 3. faktur jasa dengan PPN, dan faktur ekspor jasa dalam USD ----
@@ -232,9 +238,8 @@ if not RETAG_ONLY:
 
     # ---- 5. Credit Note pelanggan (koreksi harga dan potongan volume) ----
     goods_invoices = Move.search(
-        [("company_id", "=", company.id), ("move_type", "=", "out_invoice"), ("state", "=", "posted"), ("invoice_line_ids.product_id.default_code", "like", "FG-%")],
-        order="invoice_date, id",
-    )
+        [("company_id", "=", company.id), ("move_type", "=", "out_invoice"), ("state", "=", "posted"), ("currency_id", "=", company.currency_id.id)], order="invoice_date, id"
+    ).filtered(lambda inv: inv.invoice_line_ids.filtered(lambda row: row.product_id and row.product_id.type != "service") and inv.amount_total >= 5_000_000)
     unpaid = goods_invoices.filtered(lambda inv: inv.payment_state == "not_paid" and inv.invoice_date < today - timedelta(days=10))
     paid = goods_invoices.filtered(lambda inv: inv.payment_state in ("paid", "in_payment"))
     reasons = ("Potongan volume pembelian", "Koreksi harga sesuai kontrak", "Kit rusak saat pengiriman, kompensasi harga", "Selisih harga e-Katalog")
@@ -284,6 +289,9 @@ if not RETAG_ONLY:
 
 
     def profile(name, asset_acc, accum_acc, expense_acc, months):
+        existing = Profile.search([("name", "=", name), ("company_id", "=", company.id)], limit=1)
+        if existing:
+            return existing
         return Profile.create(
             {
                 "name": name, "journal_id": general_journal.id, "account_asset_id": asset_acc.id, "account_depreciation_id": accum_acc.id, "account_expense_depreciation_id": expense_acc.id,
@@ -295,7 +303,7 @@ if not RETAG_ONLY:
     p_reno = profile("Renovasi Gedung (10 tahun)", account("12210010"), account("12281010"), account("67100010"), 120)
     p_car = profile("Kendaraan Operasional (8 tahun)", account("12210020"), account("12281020"), account("67100020"), 96)
     p_office = profile("Peralatan Kantor dan Komputer (4 tahun)", account("12210030"), account("12281030"), account("67100030"), 48)
-    p_machine = profile("Mesin dan Peralatan Produksi (8 tahun)", machine_asset, machine_accum, account("51300030"), 96)
+    p_machine = profile("Mesin dan Peralatan Produksi (8 tahun)", machine_asset, machine_accum, Account.search([("code", "=", "51300030"), ("company_ids", "in", company.id)], limit=1) or account("67100030"), 96)
     known_assets = env["account.asset"].search([]).ids
     for month, offset, vendor_name, label, prof, price, paid_flag in (
         (0, 3, "CV Renovasi Pabrik Sentosa", "Renovasi ruang produksi dan gudang bahan baku", p_reno, 150_000_000, True),
@@ -330,7 +338,9 @@ if not RETAG_ONLY:
     # ---- 8. anggaran 2026 per akun ----
     budget_model = env["mis.budget.by.account"]
     year = today.year
-    budget = budget_model.create({"name": f"Anggaran {year}", "date_from": date(year, 1, 1), "date_to": date(year, 12, 31), "company_id": company.id})
+    budget = budget_model.search([("company_id", "=", company.id), ("name", "=", f"Anggaran {year}")], limit=1) or budget_model.create(
+        {"name": f"Anggaran {year}", "date_from": date(year, 1, 1), "date_to": date(year, 12, 31), "company_id": company.id}
+    )
     # akun, debit atau kredit per bulan (Rp): pendapatan, HPP penjualan, dan biaya operasional
     PLAN = [
         ("41000010", "credit", 600_000_000), ("51000010", "debit", 410_000_000), ("61100010", "debit", 38_500_000), ("61100020", "debit", 6_000_000), ("65110040", "debit", 12_000_000),
@@ -338,14 +348,14 @@ if not RETAG_ONLY:
         ("62100010", "debit", 17_000_000), ("63110080", "debit", 4_200_000), ("62100020", "debit", 5_600_000), ("65110060", "debit", 9_000_000), ("65110010", "debit", 12_000_000),
         ("67100010", "debit", 1_250_000), ("67100020", "debit", 2_400_000), ("67100030", "debit", 1_900_000),
     ]
-    for month in range(1, 13):
+    for month in range(1, 13) if not budget.item_ids else ():
         first = date(year, month, 1)
         last = (date(year + (month == 12), month % 12 + 1, 1)) - timedelta(days=1)
         growth = 1.0 + 0.012 * month
         for code, side, amount in PLAN:
             budget.write({"item_ids": [Command.create({"account_id": account(code).id, "date_from": first, "date_to": last, side: m(amount * (growth if code == "41000010" else 1.0))})]})
     count("item anggaran", len(budget.item_ids))
-    if hasattr(budget, "action_confirm"):
+    if hasattr(budget, "action_confirm") and budget.state == "draft":
         budget.action_confirm()
 
     # ---- 9. jurnal umum tambahan ----
@@ -450,6 +460,8 @@ def distribution(row):
 
 tagged = 0
 for row in env["account.move.line"].search([("company_id", "=", company.id), ("parent_state", "=", "posted"), ("display_type", "=", "product")]):
+    if row.analytic_distribution and not RETAG_ONLY:
+        continue  # tag yang sudah ada (mis. dari data presales) tidak ditimpa
     wanted = distribution(row)
     if wanted and row.analytic_distribution != wanted:
         row.analytic_distribution = wanted
