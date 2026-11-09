@@ -192,7 +192,7 @@ async function renderList(query) {
     "purchase.order",
     domain,
     ["name", "partner_id", "user_id", "date_order", "origin", "amount_total", "currency_id", "state", "invoice_status", "receipt_status"],
-    { order: "id desc", limit: 80 },
+    { order: "id desc", limit: 300 },
   );
   const options = [["", "Semua status"], ["rfq", "RFQ (draft, terkirim, menunggu)"], ["purchase", "Purchase Order"], ["done", "Terkunci"], ["cancel", "Dibatalkan"]];
   const body = rows

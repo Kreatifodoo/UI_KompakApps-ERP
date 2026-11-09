@@ -95,7 +95,7 @@ async function renderList(query) {
     "account.payment",
     domain,
     ["name", "date", "partner_id", "journal_id", "payment_method_line_id", "amount", "currency_id", "state", "payment_type"],
-    { order: "id desc", limit: 80 },
+    { order: "id desc", limit: 300 },
   );
   const options = [["", "Semua status"], ...Object.entries(STATES).map(([k, v]) => [k, v[0]])];
   const createMenu = type
