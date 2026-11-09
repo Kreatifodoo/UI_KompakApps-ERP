@@ -46,7 +46,7 @@ async function renderList(query) {
   else if (filter === "entries") domain.push(["move_type", "=", "entry"]);
   if (text) domain.push("|", "|", ["name", "ilike", text], ["ref", "ilike", text], ["partner_id.name", "ilike", text]);
   const rows = await searchRead("account.move", domain, ["name", "date", "journal_id", "ref", "partner_id", "move_type", "amount_total", "currency_id", "state"], {
-    order: "date desc, id desc", limit: 100,
+    order: "date desc, id desc", limit: 300,
   });
   const body = rows
     .map((r) =>

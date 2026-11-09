@@ -258,7 +258,7 @@ export function createInvoicePage(config) {
       "account.move",
       domain,
       ["name", "partner_id", "invoice_date", "invoice_date_due", "invoice_origin", "amount_total", "amount_residual", "currency_id", "state", "payment_state"],
-      { order: "id desc", limit: 80 },
+      { order: "id desc", limit: 300 },
     );
     const options = [["", "Semua"], ["draft", "Draft"], ["posted", "Terposting"], ["unpaid", "Belum dibayar"], ["paid", "Sudah dibayar"], ["cancel", "Dibatalkan"]];
     const body = rows

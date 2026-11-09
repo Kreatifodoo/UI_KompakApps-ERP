@@ -197,7 +197,7 @@ async function renderList(query) {
     "sale.order",
     domain,
     ["name", "partner_id", "user_id", "date_order", "amount_total", "currency_id", "state", "invoice_status", "delivery_status"],
-    { order: "id desc", limit: 80 },
+    { order: "id desc", limit: 300 },
   );
   const note = await scopeNote("sale");
   const options = [["", "Semua status"], ["quotation", "Quotation (draft, terkirim)"], ["sale", "Sales Order"], ["cancel", "Dibatalkan"]];
