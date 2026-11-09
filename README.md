@@ -79,6 +79,8 @@ docker compose up
 
 5. Buka http://localhost:8069 dan login dengan `admin` / `admin`, lalu **segera ganti password** di menu profil. Nama database di langkah 2 dan 3 harus sama dengan `ODOO_DB` di `.env` (default `kompakapps`).
 
+**Jalan pintas:** untuk memakai database yang sudah terisi data contoh (perusahaan demo, jurnal, penjualan, pembelian, COGM) tanpa langkah 2 dan 3, pulihkan dari [demo-data/](demo-data/README.md); panduannya ada di sana.
+
 Menjalankan test modul `kompakapps_base` (di database terpisah, tidak menyentuh data Anda):
 
 ```bash
