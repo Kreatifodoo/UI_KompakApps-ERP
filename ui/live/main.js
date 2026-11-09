@@ -46,6 +46,8 @@ import * as lot from "./pages/lot.js";
 import * as bom from "./pages/bom.js";
 import * as workcenter from "./pages/workcenter.js";
 import * as cogm from "./pages/cogm.js";
+import * as fxreval from "./pages/fxreval.js";
+import * as fxreport from "./pages/fxreport.js";
 import * as mo from "./pages/mo.js";
 import * as schedule from "./pages/schedule.js";
 import * as production from "./pages/production.js";
@@ -107,7 +109,7 @@ import * as myslip from "./pages/myslip.js";
 
 const PAGES = { pr, po, receipt, bill, payment, vendor, pricelist, product, category, journal, customer, sale, invoice, delivery, creditnote, debitnote, report, aging, ledger, bank, stock, moves, count, scrap, orderpoint, replenish, warehouse, location: location_, uom, putaway, lot, bom, workcenter, mo, schedule, production, lead, opportunity, crmsetting, crmreport, posconfig, possession, posorder, kasir, salespricelist, acctreport, dashboard, account, tax, currency, analytic, analyticplan, assetprofile, asset, journalmaster, analysis, modsetting, users, company, companies, dataimport, auditlog, budgetplan, budget, budgetreport, transfer, soon };
 Object.assign(PAGES, { loyalty });
-Object.assign(PAGES, { valuation, cogm });
+Object.assign(PAGES, { valuation, cogm, fxreval, fxreport });
 Object.assign(PAGES, { route: routes, rule: rules });
 Object.assign(PAGES, { employee, department, job, attendance, timeoff, leavealloc, leavetype, leavebalance, expense, contract });
 Object.assign(PAGES, { salarystruct, salaryrule, rulecategory, contribreg, payslip, payslipbatch, payrollparam, payrolltable, myslip });

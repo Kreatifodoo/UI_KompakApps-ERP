@@ -128,6 +128,7 @@ export const MENU = [
       { title: "Asset", route: "asset" },
       { title: "Budget", route: "budget" },
       { title: "Bank Transaction", route: "bank" },
+      { title: "Currency Revaluation", route: "fxreval" },
       {
         title: "Reporting",
         items: [
@@ -135,7 +136,7 @@ export const MENU = [
           { title: "Cash Flow Statement", route: "report/arus-kas" }, { title: "General Ledger", route: "ledger/general" },
           { title: "Trial Balance", route: "report/neraca-saldo" }, { title: "Partner Ledger", route: "ledger/partner" },
           { title: "Aged Receivable", route: "aging/receivable" }, { title: "Aged Payable", route: "aging/payable" }, { title: "Tax Report", route: "acctreport/tax" },
-          { title: "Invoice Analysis", route: "acctreport/invoice" }, { title: "Executive Summary", route: "report/ringkasan" }, { title: "Analytic Report", route: "acctreport/analytic" }, { title: "Budget Report", route: "budgetreport" },
+          { title: "Exchange Gain/Loss", route: "fxreport" }, { title: "Invoice Analysis", route: "acctreport/invoice" }, { title: "Executive Summary", route: "report/ringkasan" }, { title: "Analytic Report", route: "acctreport/analytic" }, { title: "Budget Report", route: "budgetreport" },
         ],
       },
       { title: "Setting", route: "modsetting/accounting" },

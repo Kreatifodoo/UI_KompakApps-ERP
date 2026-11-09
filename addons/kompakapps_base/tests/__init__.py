@@ -27,3 +27,4 @@ from . import test_inventory_split
 from . import test_foh
 from . import test_cogm
 from . import test_system_user
+from . import test_fx_revaluation
